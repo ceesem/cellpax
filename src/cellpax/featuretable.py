@@ -210,6 +210,7 @@ class FeatureTable:
         self._collections: dict[str, FeatureCollection] = {}
         self._transforms: dict[str, str | None] = {}
         self._clusterings: dict[str, Any] = {}
+        self._embeddings: dict[tuple[str, str], pl.DataFrame] = {}
 
     # -- accessors -------------------------------------------------------------
 
@@ -531,6 +532,65 @@ class FeatureTable:
         self._df = self._df.join(frame.select(keep), on=self._id_column, how="left")
         return self
 
+    # -- embeddings ------------------------------------------------------------
+
+    def embed(
+        self,
+        mask: str | None = None,
+        *,
+        method: str = "pca",
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        n_components: int = 2,
+        name: str | None = None,
+        seed: int | None = None,
+        **kwargs: Any,
+    ) -> pl.DataFrame:
+        """Compute a low-dimensional embedding of a mask's scaled features.
+
+        ``method="pca"`` (default) uses scikit-learn; ``method="umap"`` requires
+        ``umap-learn`` (imported lazily). Coordinates are stored under
+        ``(mask, name)`` and returned as ``cell_id`` + ``{name}0..{name}{k-1}``.
+        """
+        label = name or method
+        data = self.features(mask, scaled=True, columns=columns)
+        if method == "pca":
+            from sklearn.decomposition import PCA
+
+            coords = PCA(n_components=n_components, random_state=seed).fit_transform(
+                data
+            )
+        elif method == "umap":
+            try:
+                import umap
+            except ImportError as error:
+                raise ImportError(
+                    "method='umap' requires the optional 'umap-learn' package"
+                ) from error
+            coords = umap.UMAP(
+                n_components=n_components, random_state=seed, **kwargs
+            ).fit_transform(data)
+        else:
+            raise ValueError(f"Unknown embedding method {method!r}")
+        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        frame = pl.DataFrame(
+            {
+                self._id_column: cell_ids,
+                **{f"{label}{i}": coords[:, i] for i in range(n_components)},
+            }
+        )
+        self._embeddings[(mask or _DEFAULT_MASK, label)] = frame
+        return frame
+
+    def embedding(self, mask: str | None = None, *, name: str = "pca") -> pl.DataFrame:
+        """Return a stored embedding's coordinates."""
+        key = (mask or _DEFAULT_MASK, name)
+        if key not in self._embeddings:
+            raise KeyError(
+                f"No embedding {name!r} for mask {mask or _DEFAULT_MASK!r}; "
+                f"stored: {list(self._embeddings)}"
+            )
+        return self._embeddings[key]
+
     # -- scaling / views -------------------------------------------------------
 
     def _scaler(self, mask: str, columns: Sequence[str]) -> FittedScaler:
@@ -564,13 +624,15 @@ class FeatureTable:
         *,
         scaled: bool = False,
         columns: str | FeatureCollection | Sequence[str] | None = None,
+        embedding: str | None = None,
     ) -> pl.DataFrame:
         """Return the masked table with feature columns raw or scaled.
 
         The primary interactive surface: one row per masked cell, all
         metadata/label columns intact, feature columns raw (``scaled=False``) or
         normalized (``scaled=True``). With ``columns`` only that collection's
-        features are scaled. Internal ``_mask_*`` columns are dropped.
+        features are scaled; with ``embedding`` a stored embedding's coordinates
+        are joined on. Internal ``_mask_*`` columns are dropped.
         """
         name = mask or _DEFAULT_MASK
         frame = self._df.filter(self.mask_series(name))
@@ -584,7 +646,12 @@ class FeatureTable:
                 ]
             )
         drop = [c for c in frame.columns if c.startswith(_MASK_PREFIX)]
-        return frame.drop(drop)
+        frame = frame.drop(drop)
+        if embedding is not None:
+            frame = frame.join(
+                self.embedding(name, name=embedding), on=self._id_column, how="left"
+            )
+        return frame
 
     def __repr__(self) -> str:
         return (
