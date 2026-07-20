@@ -653,6 +653,22 @@ class FeatureTable:
             )
         return frame
 
+    # -- persistence -----------------------------------------------------------
+
+    def save(self, folio: Any, name: str, *, overwrite: bool = True) -> "FeatureTable":
+        """Persist this analysis under ``name`` in a DataFolio (see persist)."""
+        from cellpax.persist import save_feature_table
+
+        save_feature_table(self, folio, name, overwrite=overwrite)
+        return self
+
+    @classmethod
+    def load(cls, folio: Any, name: str) -> "FeatureTable":
+        """Load a FeatureTable saved under ``name`` in a DataFolio."""
+        from cellpax.persist import load_feature_table
+
+        return load_feature_table(folio, name)
+
     def __repr__(self) -> str:
         return (
             f"FeatureTable(n_cells={self.n_cells}, n_features={self.n_features}, "
