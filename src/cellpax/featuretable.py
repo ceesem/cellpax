@@ -493,6 +493,44 @@ class FeatureTable:
             )
         return self._clusterings[name]
 
+    def label(
+        self,
+        similarity: Any,
+        *,
+        mask: str | None = None,
+        distance_threshold: float,
+        min_cluster_size: int = 1,
+        name: str = "label",
+    ) -> Any:
+        """Cut a clustering into a :class:`~cellpax.labels.LabelSet` for a mask.
+
+        ``similarity`` is a ``SimilarityMatrix`` or the name of a stored one; its
+        rows must align with the mask's cells (as produced by ``cluster``).
+        """
+        from cellpax.labels import LabelSet
+
+        if isinstance(similarity, str):
+            similarity = self.clustering(similarity)
+        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        return LabelSet.from_clustering(
+            similarity,
+            cell_ids,
+            distance_threshold=distance_threshold,
+            min_cluster_size=min_cluster_size,
+            name=name,
+        )
+
+    def attach(self, labels: Any, *, name: str | None = None) -> "FeatureTable":
+        """Attach a ``LabelSet`` as a column, joined on the id column.
+
+        Cells outside the label set get a null label.
+        """
+        column = name or labels.name
+        frame = labels.to_frame(id_column=self._id_column).rename({labels.name: column})
+        keep = [self._id_column, column]
+        self._df = self._df.join(frame.select(keep), on=self._id_column, how="left")
+        return self
+
     # -- scaling / views -------------------------------------------------------
 
     def _scaler(self, mask: str, columns: Sequence[str]) -> FittedScaler:
