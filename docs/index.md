@@ -1,67 +1,61 @@
 # CellPax
 
-CellPax turns a table of per-cell features into a **reviewed, versioned, and
-shareable cell-type annotation** — with every step kept as durable, reproducible
-provenance.
+CellPax is a flexible, **polars-native** toolkit for clustering cells by their
+features and turning the result into clear, named, shareable cell-type labels.
 
-If you cluster cells, look at the result, decide "candidate 4 is really two
-types" or "these cells are artifacts, exclude them," and then need to hand a
-clean, defensible annotation to a collaborator or a downstream tool — that
-back-and-forth is exactly what CellPax records. Nothing is lost to a notebook
-cell you overwrote.
+You hold one object — a `FeatureTable` — and work interactively: mask subsets,
+preprocess heavy-tailed features, run consensus clustering, cut it into
+well-defined labels, compare different approaches, and save the whole analysis to
+a [DataFolio](https://github.com/) with one call.
 
-## What you get
+## What it gives you
 
-- **One immutable study.** Everything — the cell universe, features, clustering,
-  human decisions, taxonomy, and final labels — lives in a single content-addressed
-  store you can reopen in a fresh process and re-validate.
-- **Preview, then keep.** Expensive computations are *previewed* freely and only
-  promoted to a named **revision** when you want a durable checkpoint. Revisions
-  form a history you can walk and compare.
-- **A review ledger, not overwritten labels.** Merges, splits, exclusions, manual
-  corrections, and ambiguity are appended as **decisions** with a rationale and
-  evidence — never silent edits.
-- **Versioned taxonomy, independent assignments.** Correcting a label creates a
-  new **assignment set**, not a new taxonomy version, so your vocabulary stays
-  stable while the annotation evolves.
-- **Self-contained releases.** Publish an **annotation release** that bundles the
-  taxonomy, labels, decision history, quality summary, a resolved recipe, and a
-  generated enum binding — consumable without importing any clustering machinery.
+- **One flexible container.** A `FeatureTable` wraps your cells (a polars frame)
+  with named, hierarchical **masks**, composable **feature collections**, and an
+  on-the-fly `dataframe(mask, scaled=…)` view — raw or normalized — ready for
+  seaborn/matplotlib.
+- **Heavy-tail preprocessing.** `preprocess()` screens each feature's skew and
+  applies an inverse-hyperbolic-sine transform to the wide ones (handles zeros
+  and negatives), fit per mask.
+- **Consensus clustering.** `ft.cluster(...)` runs repeated kNN/Leiden
+  (fauxnograph) into a `SimilarityMatrix` you can cut at any threshold.
+- **Clear labels.** A `LabelSet` gives clusters identity (`name`, `color`) with
+  clean `rename`/`merge`/`reorder`/`combine`, and binds to `IntEnum` so you can
+  write `L.L5IT` with autocomplete instead of remembering numbers.
+- **Compare approaches.** `compare(a, b)` gives contingency tables, ARI/NMI/FMI/
+  Jaccard, and alluvial frames across labelings.
+- **First-class persistence.** `ft.save(folio, name)` / `FeatureTable.load(...)`
+  store many analyses per folio, alongside your own content.
 
 ## A 30-second look
 
 ```python
-from cellpax import Study
+from cellpax import FeatureTable, compare
 
-study = Study.open("my-study", read_only=True)
-release = study.get_annotation_release("cells-v1")
-bundle = study.load_annotation_release(release)
+ft = FeatureTable(cells_df, features=[...], feature_metadata=meta)
+ft.define_features("axon", family="axon")
+ft.add_mask("l23", pl.col("layer") == "L2/3")
+ft.preprocess()                                   # ihs on heavy-tailed features
 
-bundle.assignments          # every cell's taxon, status, source, confidence
-bundle.taxonomy             # the exact vocabulary version this release used
-Taxon = bundle.taxonomy_enum()
-Taxon.EXCITATORY.color      # rich metadata, generated from the taxonomy
+ft.cluster("l23", columns="axon", name="run")
+labels = ft.label("run", mask="l23", distance_threshold=0.6, name="subclass")
+labels.rename({0: "L2a", 1: "L2b"})
+ft.attach(labels)
+
+ft.dataframe("l23", embedding="pca")              # tidy frame: metadata + labels + coords
+ft.save(folio, "l23it")
 ```
 
 ## Install
 
-CellPax uses [uv](https://docs.astral.sh/uv/) for its environment:
+CellPax uses [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
 ```
 
-During development the [DataFolio](https://github.com/) 2.0 storage substrate is
-resolved from the sibling `../datafolio` checkout.
-
 ## Where to go next
 
-- **[Tutorial](tutorial.md)** — build a complete study from raw features to a
-  published release, end to end. Start here if you're new.
-- **[User Guide](guide.md)** — task-oriented "how do I…" reference organized by
-  concept: studies, feature spaces, clustering, review, taxonomy, releases, and
-  the trust model.
-- **[Function Reference](reference/api.md)** — the full API, generated from the
-  source.
-- **[Core contracts (ADR 0001)](decisions/0001-core-contracts-v1.md)** — the
-  architectural decisions behind the immutable substrate.
+- **[Tutorial](tutorial.md)** — build a complete analysis end to end.
+- **[User Guide](guide.md)** — task-oriented reference for each piece.
+- **[Function Reference](reference/api.md)** — the full API.

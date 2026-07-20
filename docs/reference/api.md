@@ -2,98 +2,44 @@
 
 ::: cellpax
 
-## Study
+## FeatureTable
 
-::: cellpax.study.Study
+::: cellpax.featuretable.FeatureTable
 
-## Revision builder
+## Feature collections & scaling
 
-::: cellpax.builder.RevisionBuilder
+::: cellpax.featuretable.FeatureCollection
 
-## Input builders
+::: cellpax.featuretable.FittedScaler
 
-::: cellpax.features.FeatureDefinition
+## Labels
 
-::: cellpax.features.feature_catalog
+::: cellpax.labels.LabelSet
 
-::: cellpax.taxonomy.TaxonDefinition
+::: cellpax.labels.Label
 
-::: cellpax.taxonomy.taxonomy_table
+## Clustering
 
-## Resolved configuration
+::: cellpax.clustering.SimilarityMatrix
 
-::: cellpax.config.KeepConfig
+::: cellpax.clustering.fauxnograph_coclustering
 
-::: cellpax.config.ClusteringConfig
+::: cellpax.clustering.make_clipped_scaler
 
-::: cellpax.config.CandidateCutConfig
+::: cellpax.clustering.clipped_scaler_factory
 
-::: cellpax.config.FeatureSpaceConfig
+## Comparison
 
-::: cellpax.config.RepresentationConfig
+::: cellpax.compare.compare
 
-::: cellpax.config.PropagationConfig
+::: cellpax.compare.compare_many
 
-## Review and taxonomy
+::: cellpax.compare.Comparison
 
-::: cellpax.review.DecisionActionConfig
+## Persistence
 
-::: cellpax.taxonomy.TaxonDefinition
+::: cellpax.persist.save_feature_table
 
-::: cellpax.taxonomy.taxonomy_table
+::: cellpax.persist.load_feature_table
 
-::: cellpax.taxonomy.RichTaxon
-
-## Typed views
-
-::: cellpax.views.cells
-
-::: cellpax.views.embedding
-
-::: cellpax.views.feature_profiles
-
-::: cellpax.views.stability
-
-::: cellpax.views.comparison
-
-::: cellpax.views.taxonomy
-
-::: cellpax.views.history
-
-::: cellpax.views.release_summary
-
-::: cellpax.views.validate_view
-
-::: cellpax.views.serialize_view
-
-## Annotation releases
-
-::: cellpax.release.ReleaseBundle
-
-::: cellpax.release.release_quality_summary
-
-::: cellpax.release.generate_enum_binding
-
-::: cellpax.recipes.resolved_release_recipe
-
-::: cellpax.recipes.render_release_replay_script
-
-## Trajan adapter
-
-::: cellpax.adapters.trajan.annotation_frame
-
-::: cellpax.adapters.trajan.add_to_connectivity_table
-
-::: cellpax.adapters.trajan.add_to_synapse_table
-
-::: cellpax.adapters.trajan.decorate_cells
-
-## Static plotting
-
-::: cellpax.plotting.embedding_scatter
-
-## Generator seam
-
-::: cellpax.generators.base.CandidateGenerator
-
-::: cellpax.generators.fauxnograph.FauxnographGenerator
+::: cellpax.persist.list_analyses
