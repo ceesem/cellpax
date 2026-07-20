@@ -43,7 +43,9 @@ ft.save(folio, "l23it")                            # many analyses per folio
 - **`FeatureTable`** — polars container with hierarchical masks, composable
   feature collections, and `dataframe(mask, scaled=…)` raw/normalized views.
 - **`preprocess`** — heavy-tail (`ihs`) skew screening, fit per mask.
-- **clustering** — fauxnograph kNN/Leiden consensus + `SimilarityMatrix`.
+- **clustering** — fauxnograph kNN/Leiden consensus + `SimilarityMatrix`, plus
+  CHOIR-style statistically-validated resolution (`cluster_choir`) that needs no
+  distance threshold.
 - **`LabelSet`** — clear, relabelable clusters with `IntEnum` bindings.
 - **`compare`** — ARI/NMI/FMI/Jaccard, contingency, alluvial across labelings.
 - **persistence** — first-class DataFolio `save`/`load`, namespaced, many per folio.

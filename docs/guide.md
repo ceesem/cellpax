@@ -7,7 +7,8 @@ first; here we go deeper. For exact signatures see the
 ## The FeatureTable
 
 A `FeatureTable` wraps a polars frame of cells. It needs a unique id column and
-the feature columns to cluster/scale on; anything else is metadata.
+the numeric feature columns to cluster/scale on; every other column is metadata
+carried alongside.
 
 ```python
 from cellpax import FeatureTable
@@ -17,12 +18,14 @@ ft.n_cells, ft.n_features, ft.feature_columns, ft.columns
 ```
 
 A pandas frame is accepted and converted. `feature_metadata` is an optional
-per-feature frame (`feature_id` + family/modality/units/…) exposed as `ft.var`.
+per-feature frame (`feature_id` + family/modality/units/…) exposed as `ft.var`
+and used by `define_features`. Pass `scaler_factory=` to change the scaler
+(default `StandardScaler`; `make_clipped_scaler` is also provided).
 
 ## Masks
 
 A mask is a named boolean subset of cells, stored on the table. `based_on`
-intersects with a parent mask so hierarchical subsets stay nested.
+intersects with a parent mask, so hierarchical subsets stay nested.
 
 ```python
 ft.add_mask("exc", pl.col("is_inhibitory") == False)
@@ -31,13 +34,14 @@ ft.masks                     # ['all', 'exc', 'l23']
 ft.mask_series("l23")        # the boolean Series
 ```
 
-Predicates can be a polars expression over the table or a full-length boolean
-array. The implicit `"all"` mask covers every cell.
+A predicate is a polars expression over the table or a full-length boolean array.
+The implicit `"all"` mask covers every cell.
 
 ## Feature collections
 
 Collections are named, composable subsets of features — the clean replacement for
-ad-hoc column lists. Define them explicitly or from feature metadata:
+loose column lists. Define them explicitly or from feature metadata, and combine
+with set algebra:
 
 ```python
 ft.define_features("axon", family="axon")            # by metadata
@@ -45,15 +49,15 @@ ft.define_features("core", columns=["axon_len", "dend_vol"])
 ft.collections["axon"] | ft.collections["dend"]      # union; also & and -
 ```
 
-Pass a collection (or its name, or a plain list) as `columns=` to `dataframe`,
-`features`, `cluster`, and `embed`.
+Pass a collection (its name, the object, or a plain list) as `columns=` to
+`dataframe`, `features`, `cluster`, `cluster_choir`, and `embed`.
 
 ## Preprocessing and scaling
 
-`preprocess()` resolves a per-feature transform once (a heavy-tail `ihs` screen by
-default), recorded in `ft.transforms`. Scaling is lazy and per-mask: the first
-time you request scaled values for a `(mask, columns)` pair, a scaler is fit and
-cached.
+`preprocess()` resolves one per-feature transform (a heavy-tail `ihs` screen by
+default) recorded in `ft.transforms`. Scaling is lazy and per-mask: the first time
+you request scaled values for a `(mask, columns)` pair, a scaler is fit on that
+mask and cached.
 
 ```python
 ft.preprocess(skew_screen=True, method="ihs", threshold=1.5)
@@ -63,8 +67,8 @@ ft.features("l23", scaled=True, columns="axon")   # numpy matrix
 ```
 
 Cluster on the normalized features, plot the raw ones — both come from the same
-table. The default scaler is `StandardScaler`; pass `scaler_factory=` (e.g.
-`make_clipped_scaler`) to change it.
+table. `ihs` handles zeros and negatives; `log`/`sqrt` are also available and skip
+features with negative values.
 
 ## Clustering
 
@@ -85,61 +89,60 @@ sim.cluster_labels(0.6, min_cluster_size=10)   # raw integer labels
 ```
 
 The `SimilarityMatrix` caches its hierarchical linkage; `cluster_labels` cuts it
-at a distance threshold, and `cluster_count_curve` sweeps thresholds.
+at a distance threshold and `cluster_count_curve` sweeps thresholds.
 
-### CHOIR: no single threshold
-
-A single agglomeration cut can't be right everywhere — some branches should merge
-while others at the same level shouldn't. `ft.cluster_choir` resolves the tree
-without a global threshold: following [CHOIR](https://www.choirclustering.com/)
-(Sant et al., *Nature Genetics* 2025), it keeps each split only where the two
-child clusters are random-forest–distinguishable beyond a permutation null (with a
-variance condition so the separation must be *stably* high), and merges the rest.
+A single high-resolution Leiden partition (for CHOIR, below) is available too:
 
 ```python
-ft.cluster("l23", name="run")
+ft.overcluster("l23", resolution=4.0)   # per-cell integer over-clustering
+```
+
+## CHOIR: statistically-validated clusters (no single threshold)
+
+A single agglomeration cut can't be right everywhere — some branches should merge
+while others at the same level shouldn't. `ft.cluster_choir` resolves a hierarchy
+without a global threshold: following [CHOIR](https://www.choirclustering.com/)
+(Sant et al., *Nature Genetics* 2025), it keeps each split only where the two
+child clusters are random-forest–distinguishable beyond a permutation null, with a
+variance condition so the separation must be *stably* high, and merges the rest.
+
+```python
 labels = ft.cluster_choir(
     "run", mask="l23", name="subclass",
     alpha=0.05, min_cluster_size=20,
     n_iterations=100, use_variance=True,   # use_variance=False is less conservative
-)                                          # -> a LabelSet with a data-driven cluster count
+)                                          # -> a LabelSet, data-driven cluster count
 ```
 
-It prunes an existing hierarchy over the scaled feature matrix, so branches with
-real substructure keep splitting while homogeneous ones collapse. (`use_variance`
-is CHOIR's key anti-over-clustering guard; set `n_iterations` higher for more
-stable decisions.)
+Three ways to use it:
 
-With `reselect=True`, the features are re-chosen at each node — the `n_features`
-most variable within that subtree's cells (optionally projected to `n_pcs` PCs) —
-following CHOIR's observation that the features distinguishing coarse types differ
-from those distinguishing fine ones. Selection is unsupervised (it uses the node's
-cells, not the two child labels being tested), so it doesn't bias the test.
-
-```python
-ft.cluster_choir("run", reselect=True, n_features=30, n_pcs=10)
-```
-
-CHOIR can prune **any** starting hierarchy, not just the consensus tree — its
-design actually favours an intentional over-clustering. Pass `over_clustering=` a
-per-cell over-clustering (e.g. high-resolution Leiden via `ft.overcluster`, or
-KMeans with large *k*); a hierarchy is built over the cluster centroids and
-pruned:
+- **Prune the consensus tree** — pass the `SimilarityMatrix` (or stored name).
+- **Prune any over-clustering** — pass `over_clustering=` a per-cell partition
+  (array or `LabelSet`), e.g. from `ft.overcluster` (high-res Leiden) or KMeans; a
+  hierarchy is built over the cluster centroids and pruned. CHOIR's design favours
+  an intentional over-split.
+- **Per-node feature reselection** — with `reselect=True`, the `n_features` most
+  variable features *within each subtree* are used for that node's test
+  (optionally projected to `n_pcs` PCs), since the features distinguishing coarse
+  types differ from those distinguishing fine ones. Selection is unsupervised (it
+  uses the node's cells, not the child labels under test), so it doesn't bias the
+  test.
 
 ```python
-over = ft.overcluster("l23", resolution=4.0)          # high-res Leiden over-split
-labels = ft.cluster_choir(over_clustering=over, mask="l23")
+over = ft.overcluster("l23", resolution=4.0)
+ft.cluster_choir(over_clustering=over, mask="l23", reselect=True, n_features=30)
 ```
 
 The random-forest test always runs on the feature matrix; the over-clustering and
-the hierarchy over it are what you're choosing (features via Leiden here; the
-consensus is an alternative denoised source but not required).
+the hierarchy over it are what you choose (features via Leiden is the standard,
+CHOIR-like source; the consensus is a denoised alternative). `use_variance` is the
+key anti-over-clustering guard; raise `n_iterations` for more stable decisions.
 
 ## Labels
 
-`ft.label` cuts a stored clustering into a `LabelSet` aligned to a mask's cells,
-with cluster ids renumbered 0-based. A `LabelSet` gives clusters identity and
-clean relabeling:
+`ft.label` cuts a stored clustering at a threshold into a `LabelSet`;
+`ft.cluster_choir` returns one directly. Cluster ids are 0-based. A `LabelSet`
+gives clusters identity and clean relabeling:
 
 ```python
 labels = ft.label("run", mask="l23", distance_threshold=0.6, name="subclass")
@@ -152,7 +155,7 @@ ft.attach(labels)                       # adds a 'subclass' column (null off-mas
 ```
 
 `combine` unions two label sets over disjoint cells (e.g. exc + inh clustered
-separately). See below for `IntEnum` bindings.
+separately).
 
 ### IntEnum bindings
 
@@ -210,6 +213,6 @@ restored, so scaled values reproduce).
 
 ## Plotting
 
-CellPax deliberately ships no plotting layer — `dataframe(...)`, `embedding(...)`,
+CellPax ships no plotting layer by design — `dataframe(...)`, `embedding(...)`,
 and `compare(...).alluvial_frame()` return tidy frames you hand straight to
 seaborn/matplotlib, which is easier to tailor per figure.
