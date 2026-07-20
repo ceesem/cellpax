@@ -69,12 +69,16 @@ FeatureTable   the container: data, masks, feature collections, preprocess,
                dataframe(scaled=), pca, embeddings, labels
 clustering     ported from dfc: fauxnograph consensus, SimilarityMatrix,
                scalers, neighborhood prediction
-labels         LabelSet: clear named clusters + rename/merge/split/reorder
+labels         LabelSet: clear named clusters + rename/merge/reorder/combine +
+               IntEnum bindings (to_enum / apply_enum)
 compare        NEW: contingency, agreement metrics, alluvial frames across LabelSets
 persist        first-class DataFolio save/load
-context        optional opinionated driver (add_subset → cluster → assign → plot)
-plotting       ported/trimmed + embedding_scatter
+context        optional opinionated driver (add_subset → cluster → assign)
 ```
+
+Plotting is intentionally **out of scope** — the ``dataframe`` and embedding
+frames are tidy and seaborn/matplotlib-ready, and bespoke plots are easier to
+write per-need in the notebook.
 
 Data model: **polars-first** with an integer `cell_id` key (numpy at compute
 boundaries; `.to_pandas()` only where seaborn needs it).
@@ -87,7 +91,7 @@ ft = FeatureTable(df, features=[...], id_column="cell_id")
 ft.add_column(series, "is_proofread", fill_value=False)
 ft.add_mask("exc", mask=df["is_inhib"] == False)          # named subset
 ft.add_mask("l23it", mask=..., based_on="exc")            # hierarchical
-ft.preprocess(skew_screen=True, regress_out="soma_depth") # global _pre_ layer
+ft.preprocess(skew_screen=True)                    # heavy-tail (ihs) transform
 
 ft.dataframe(mask="l23it", scaled=True)   # the flexible frame: metadata + features
 ft.features_pca("l23it", explained_variance=0.95)
@@ -112,12 +116,20 @@ A well-defined, mutable label object: `id → (name, color, description)` plus c
 membership. Clear identity, no versioning/ledger.
 
 ```python
-labels = ft.cluster(mask="l23it", ...)      # returns a LabelSet
+sim = ft.cluster(mask="l23it", name="run")
+labels = ft.label("run", mask="l23it", distance_threshold=0.6)
 labels.rename({0: "L2a", 1: "L2b"})
 labels.merge(["L2a", "L2b"], into="L2")
-labels.split("L3", submask=...)
 labels.reorder(["L2", "L3a", "L3b"])
 ft.attach(labels, name="subclass")          # becomes a column on the table
+```
+
+`LabelSet` also binds to `IntEnum` for number/name-free work with autocomplete:
+
+```python
+L = labels.to_enum("ITLabels")              # members = names, values = ids
+df.filter(pl.col("subclass_id") == L.L5IT) # IntEnum member == its int id
+labels.apply_enum(ITLabels)                 # or name clusters from your own enum
 ```
 
 ### Comparison (new capability)
@@ -165,19 +177,23 @@ ft = FeatureTable.load(folio, name="l23it_analysis")
 New / ported:
 
 ```
-src/cellpax/featuretable.py   FeatureTable + feature collections + preprocess
-src/cellpax/labels.py         LabelSet
-src/cellpax/clustering.py     ported consensus + SimilarityMatrix + prediction
+src/cellpax/featuretable.py   FeatureTable + feature collections + preprocess + embeddings
+src/cellpax/labels.py         LabelSet (+ IntEnum bindings)
+src/cellpax/consensus.py      ported consensus + SimilarityMatrix
 src/cellpax/compare.py        comparison across LabelSets
 src/cellpax/persist.py        DataFolio save/load
 src/cellpax/context.py        optional opinionated driver
-src/cellpax/plotting.py       ported/trimmed + embedding_scatter
 ```
+
+(`consensus.py` is renamed to `clustering.py` when the old modules retire in
+step 9. Plotting is not provided — the user maintains their own plot adapters
+against the tidy frames.)
 
 Retired (recoverable from the `master` baseline): `study.py`, `review.py`,
 `taxonomy.py` (versioning), `release.py`, `recipes.py`, `builder.py`,
 `celldata.py`, `views.py`, `scopes.py`, `spaces.py`, `universe.py`,
-`records.py`, `artifacts.py`, `generators/`, `contracts/`, `adapters/`.
+`records.py`, `artifacts.py`, `generators/`, old `clustering.py`, `plotting.py`,
+`contracts/`, `adapters/`.
 
 Reused from current CellPax where useful: config-factory ergonomics for
 clustering params, `identity` hashing helpers (for content keys where handy),
@@ -231,10 +247,11 @@ the good bones forward and collapse the complexity.
     not a 4-level nested dict with `None/True/False` keys and back-compat
     fallbacks. Round-trips to DataFolio as items, not `_emb_*` columns.
 12. **Labels are a first-class `LabelSet`** (`id → name/color/description` +
-    membership; `rename`/`merge`/`split`/`reorder`/`combine`), attached as a
-    column on demand — replacing scattered `add_label` (with a domain-specific
-    `reorder_by="soma_depth"` default), `add_label_names` (which spawns a parallel
-    `_named` column), and the overloaded `combine_labels`.
+    membership; `rename`/`merge`/`reorder`/`combine`, plus `to_enum`/`apply_enum`
+    for `IntEnum` binding), attached as a column on demand — replacing scattered
+    `add_label` (with a domain-specific `reorder_by="soma_depth"` default),
+    `add_label_names` (which spawns a parallel `_named` column), and the
+    overloaded `combine_labels`.
 13. **Structured persistence, never flattened.** Frames as items, scalers/UMAP as
     models, consensus/`SimilarityMatrix` as items, structure in a manifest — so
     fitted state and expensive results survive a reload (dfc persisted neither).
@@ -244,17 +261,18 @@ the good bones forward and collapse the complexity.
 
 ## Build order
 
-1. `FeatureTable` core: construction, `add_column`, masks, `dataframe(scaled=)`,
+1. ✅ `FeatureTable` core: construction, `add_column`, masks, `dataframe(scaled=)`,
    feature columns.
-2. Feature collections (composable) + unified `preprocess` (skew-screen `ihs`
-   default, regress-out) with lazy per-mask scalers.
-3. Port `clustering` (fauxnograph + `SimilarityMatrix`) and wire `ft.cluster(...)`.
-4. `LabelSet` + `ft.attach`.
-5. Embeddings (`ft.embed`) + `plotting`.
+2. ✅ Feature collections (composable) + unified `preprocess` (skew-screen `ihs`
+   heavy-tail transform) with lazy per-mask scalers. (regress-out dropped.)
+3. ✅ Port consensus (`fauxnograph` + `SimilarityMatrix`) and wire `ft.cluster(...)`.
+4. ✅ `LabelSet` + `ft.label` / `ft.attach` + `IntEnum` bindings.
+5. ✅ Embeddings (`ft.embed`, PCA-native / UMAP optional).
 6. First-class DataFolio `save`/`load`.
 7. `compare`.
 8. Optional `context` driver.
-9. Retire the immutable-substrate modules; docs (tutorial + guide) rewrite.
+9. Retire the immutable-substrate modules (rename `consensus.py` → `clustering.py`);
+   docs (tutorial + guide) rewrite.
 
 ## Resolved by the audit
 

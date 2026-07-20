@@ -10,13 +10,23 @@ return ``self`` for chaining); no decision ledger.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
+from enum import IntEnum
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import polars as pl
 
 _UNASSIGNED = -1
+
+
+def _enum_member(name: str) -> str:
+    """Coerce a label name into a valid IntEnum member identifier."""
+    member = re.sub(r"\W+", "_", name).strip("_")
+    if not member or member[0].isdigit():
+        member = f"_{member}"
+    return member
 
 
 @dataclass(frozen=True)
@@ -196,6 +206,37 @@ class LabelSet:
             meta=meta,
             name=name or self.name,
         )
+
+    # -- IntEnum bindings ------------------------------------------------------
+
+    def to_enum(self, class_name: str = "Labels") -> type[IntEnum]:
+        """Generate an ``IntEnum`` of this label set: ``member name -> cluster id``.
+
+        Lets you filter and compare without remembering numbers or exact strings,
+        with editor autocomplete — e.g. ``df.filter(pl.col("label_id") == L.L5IT)``
+        (IntEnum members compare equal to their integer id).
+        """
+        members: dict[str, int] = {}
+        for i in self.ids:
+            member = _enum_member(self._meta[i].name)
+            if member in members:
+                raise ValueError(f"Label names collide as enum member {member!r}")
+            members[member] = i
+        return IntEnum(class_name, members)
+
+    def apply_enum(self, enum: type[IntEnum]) -> "LabelSet":
+        """Name clusters from a user-defined ``IntEnum`` (``member.value`` → id).
+
+        Define e.g. ``class ITLabels(IntEnum): L5IT = 0; L23IT = 1`` and call
+        ``labels.apply_enum(ITLabels)`` to name cluster 0 ``"L5IT"``, 1 ``"L23IT"``.
+        Members without a matching cluster id are ignored.
+        """
+        for member in enum:
+            if int(member) in self._meta:
+                self._meta[int(member)] = replace(
+                    self._meta[int(member)], name=member.name
+                )
+        return self
 
     def __repr__(self) -> str:
         return (

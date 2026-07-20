@@ -55,6 +55,38 @@ def test_combine_disjoint_labelsets() -> None:
         a.combine(LabelSet([2, 5], [0, 0]))
 
 
+def test_labelset_to_enum_and_filter() -> None:
+    ls = LabelSet([1, 2, 3, 4], [0, 1, 0, 1], name="subclass")
+    ls.rename({0: "L5IT", 1: "L23IT"})
+    Labels = ls.to_enum("ITLabels")
+    assert Labels.L5IT == 0 and Labels.L23IT == 1
+    assert [m.name for m in Labels] == ["L5IT", "L23IT"]
+    # the id column compares directly against enum members (IntEnum == int)
+    frame = ls.to_frame()
+    assert frame.filter(pl.col("subclass_id") == Labels.L5IT).height == 2
+    # names needing sanitizing still yield valid members
+    ls.rename({"L5IT": "L5 IT-a"})
+    assert ls.to_enum().L5_IT_a == 0
+
+
+def test_labelset_apply_enum() -> None:
+    from enum import IntEnum
+
+    class ITLabels(IntEnum):
+        L5IT = 0
+        L23IT = 1
+
+    ls = LabelSet([1, 2, 3], [0, 1, 0])
+    ls.apply_enum(ITLabels)
+    assert ls.names == ["L5IT", "L23IT"]
+    # round-trips back to an equivalent enum
+    assert ls.to_enum("ITLabels").L23IT == 1
+    # colliding names raise on to_enum
+    ls.rename({"L23IT": "L5IT"})
+    with pytest.raises(ValueError, match="collide"):
+        ls.to_enum()
+
+
 def _two_blobs(n: int = 60) -> FeatureTable:
     rng = np.random.default_rng(0)
     coords = np.vstack(
