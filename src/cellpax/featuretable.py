@@ -1,11 +1,11 @@
 """The FeatureTable container — a flexible, polars-native, maskable cell table.
 
-Step 1 of the FeatureTable-centered redesign (see DESIGN_PROPOSAL.md): the core
-container — construction, ``add_column``, masks (with hierarchical ``based_on``),
-feature columns, and ``dataframe(mask, scaled=…)`` backed by lazy, single,
-per-mask scalers. Feature collections, the unified ``preprocess`` layer (ihs skew
-correction, regress-out), embeddings, labels, clustering, comparison, and
-DataFolio persistence arrive in later steps.
+Steps 1–2 of the FeatureTable-centered redesign (see DESIGN_PROPOSAL.md): the
+core container — construction, ``add_column``, masks (with hierarchical
+``based_on``), feature columns, and ``dataframe(mask, scaled=…)`` backed by lazy,
+single, per-mask scalers — plus composable feature collections and the unified
+``preprocess`` layer (ihs skew correction). Regress-out, embeddings, labels,
+clustering, comparison, and DataFolio persistence arrive in later steps.
 
 Design principles honored here (from the dfc audit):
 - ``dataframe(mask, scaled=…)`` is the primary surface (principle 1).
@@ -70,6 +70,72 @@ def _default_scaler_factory():
     return StandardScaler()
 
 
+def _dedup(columns: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(columns))
+
+
+def _skew(values: np.ndarray) -> float:
+    """Fisher-Pearson skewness (matches scipy.stats.skew, bias=True)."""
+    values = values.astype(float)
+    std = values.std()
+    if std == 0:
+        return 0.0
+    return float((((values - values.mean()) / std) ** 3).mean())
+
+
+@dataclass(frozen=True)
+class FeatureCollection:
+    """A named, ordered, composable set of feature columns.
+
+    Supports set algebra: ``a | b`` (union), ``a & b`` (intersection), ``a - b``
+    (difference), each returning a new ``FeatureCollection``.
+    """
+
+    name: str
+    columns: tuple[str, ...]
+
+    def __or__(self, other: "FeatureCollection") -> "FeatureCollection":
+        return FeatureCollection(
+            f"{self.name}|{other.name}", _dedup(self.columns + other.columns)
+        )
+
+    def __and__(self, other: "FeatureCollection") -> "FeatureCollection":
+        rhs = set(other.columns)
+        return FeatureCollection(
+            f"{self.name}&{other.name}",
+            tuple(c for c in self.columns if c in rhs),
+        )
+
+    def __sub__(self, other: "FeatureCollection") -> "FeatureCollection":
+        rhs = set(other.columns)
+        return FeatureCollection(
+            f"{self.name}-{other.name}",
+            tuple(c for c in self.columns if c not in rhs),
+        )
+
+    def __iter__(self):
+        return iter(self.columns)
+
+    def __len__(self) -> int:
+        return len(self.columns)
+
+
+class _CollectionAccessor:
+    """``ft.collections["axon"]`` access to defined feature collections."""
+
+    def __init__(self, table: "FeatureTable") -> None:
+        self._table = table
+
+    def __getitem__(self, name: str) -> FeatureCollection:
+        return self._table._collection(name)
+
+    def __iter__(self):
+        return iter(self._table._collection_names)
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._table._collection_names
+
+
 class FeatureTable:
     """A polars-native cell table with named masks and on-the-fly scaling.
 
@@ -93,6 +159,7 @@ class FeatureTable:
         features: Sequence[str],
         *,
         id_column: str = "cell_id",
+        feature_metadata: pl.DataFrame | None = None,
         scaler_factory: Any = None,
     ) -> None:
         if not isinstance(df, pl.DataFrame):
@@ -124,11 +191,24 @@ class FeatureTable:
                 f"Column names starting with {_MASK_PREFIX!r} are reserved: {reserved}"
             )
 
+        if feature_metadata is not None:
+            if "feature_id" not in feature_metadata.columns:
+                raise ValueError("feature_metadata requires a 'feature_id' column")
+            self._var = pl.DataFrame({"feature_id": features}).join(
+                feature_metadata.filter(pl.col("feature_id").is_in(features)),
+                on="feature_id",
+                how="left",
+            )
+        else:
+            self._var = pl.DataFrame({"feature_id": features})
+
         self._df = frame.with_columns(pl.lit(True).alias(_mask_column(_DEFAULT_MASK)))
         self._id_column = id_column
         self._features = features
         self._scaler_factory = scaler_factory or _default_scaler_factory
-        self._scaler_cache: dict[str, FittedScaler] = {}
+        self._scaler_cache: dict[tuple[str, tuple[str, ...]], FittedScaler] = {}
+        self._collections: dict[str, FeatureCollection] = {}
+        self._transforms: dict[str, str | None] = {}
 
     # -- accessors -------------------------------------------------------------
 
@@ -236,51 +316,177 @@ class FeatureTable:
         self._scaler_cache.pop(name, None)
         return self
 
+    # -- feature collections ---------------------------------------------------
+
+    @property
+    def var(self) -> pl.DataFrame:
+        """Per-feature metadata frame (``feature_id`` + any supplied columns)."""
+        return self._var
+
+    @property
+    def collections(self) -> _CollectionAccessor:
+        """Accessor for defined feature collections: ``ft.collections['axon']``."""
+        return _CollectionAccessor(self)
+
+    @property
+    def transforms(self) -> dict[str, str | None]:
+        """Per-feature preprocessing transforms resolved by ``preprocess``."""
+        return dict(self._transforms)
+
+    @property
+    def _collection_names(self) -> list[str]:
+        return list(self._collections)
+
+    def _collection(self, name: str) -> FeatureCollection:
+        if name not in self._collections:
+            raise KeyError(
+                f"Unknown collection {name!r}; defined: {self._collection_names}"
+            )
+        return self._collections[name]
+
+    def define_features(
+        self,
+        name: str,
+        *,
+        columns: Sequence[str] | None = None,
+        family: str | Sequence[str] | None = None,
+        modality: str | Sequence[str] | None = None,
+        predicate: pl.Expr | None = None,
+    ) -> "FeatureTable":
+        """Define a named, composable feature collection.
+
+        Provide exactly one selector: an explicit ``columns`` list, a ``family`` or
+        ``modality`` value(s) (requires that column in ``feature_metadata``), or a
+        polars ``predicate`` over the feature metadata.
+        """
+        selectors = [
+            columns is not None,
+            family is not None,
+            modality is not None,
+            predicate is not None,
+        ]
+        if sum(selectors) != 1:
+            raise ValueError(
+                "Provide exactly one of columns / family / modality / predicate"
+            )
+        if columns is not None:
+            chosen = list(columns)
+        elif predicate is not None:
+            chosen = self._var.filter(predicate)["feature_id"].to_list()
+        else:
+            key = "family" if family is not None else "modality"
+            want = family if family is not None else modality
+            if key not in self._var.columns:
+                raise ValueError(f"No {key!r} column in feature_metadata")
+            want = [want] if isinstance(want, str) else list(want)
+            chosen = self._var.filter(pl.col(key).is_in(want))["feature_id"].to_list()
+        unknown = [c for c in chosen if c not in self._features]
+        if unknown:
+            raise ValueError(f"Collection references non-feature columns: {unknown}")
+        if not chosen:
+            raise ValueError(f"Collection {name!r} selects no features")
+        self._collections[name] = FeatureCollection(name, _dedup(chosen))
+        return self
+
+    def _resolve_columns(
+        self, columns: str | FeatureCollection | Sequence[str] | None
+    ) -> list[str]:
+        if columns is None:
+            return list(self._features)
+        if isinstance(columns, FeatureCollection):
+            chosen = list(columns.columns)
+        elif isinstance(columns, str):
+            chosen = list(self._collection(columns).columns)
+        else:
+            chosen = list(columns)
+        unknown = [c for c in chosen if c not in self._features]
+        if unknown:
+            raise ValueError(f"Not declared as features: {unknown}")
+        return chosen
+
+    # -- preprocessing ---------------------------------------------------------
+
+    def preprocess(
+        self,
+        *,
+        skew_screen: bool = True,
+        method: str = "ihs",
+        threshold: float = 1.5,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+    ) -> "FeatureTable":
+        """Resolve per-feature transforms applied before scaling (unified layer).
+
+        With ``skew_screen`` (default), each selected feature whose right-skewness
+        exceeds ``threshold`` is transformed with ``method`` (``"ihs"`` by default —
+        it handles zeros and negatives; ``"log"``/``"sqrt"`` are skipped for
+        features with negative values). Transforms are recorded per feature and
+        applied whenever features are scaled; they invalidate cached scalers.
+        """
+        if method not in {"ihs", "log", "sqrt"}:
+            raise ValueError("method must be 'ihs', 'log', or 'sqrt'")
+        for column in self._resolve_columns(columns):
+            transform: str | None = None
+            if skew_screen:
+                sample = self._df[column].drop_nulls().to_numpy()
+                if sample.size and _skew(sample) > threshold:
+                    if method in {"log", "sqrt"} and float(sample.min()) < 0:
+                        transform = None
+                    else:
+                        transform = method
+            self._transforms[column] = transform
+        self._scaler_cache.clear()
+        return self
+
     # -- scaling / views -------------------------------------------------------
 
-    def _scaler(self, mask: str) -> FittedScaler:
-        if mask not in self._scaler_cache:
-            matrix = (
-                self._df.filter(self.mask_series(mask))
-                .select(self._features)
-                .to_numpy()
-            )
-            scaler = self._scaler_factory()
-            scaler.fit(matrix)
-            self._scaler_cache[mask] = FittedScaler(
-                scaler=scaler, transforms=[None] * len(self._features)
-            )
-        return self._scaler_cache[mask]
+    def _scaler(self, mask: str, columns: Sequence[str]) -> FittedScaler:
+        key = (mask, tuple(columns))
+        if key not in self._scaler_cache:
+            matrix = self._df.filter(self.mask_series(mask)).select(columns).to_numpy()
+            transforms = [self._transforms.get(c) for c in columns]
+            fitted = FittedScaler(scaler=self._scaler_factory(), transforms=transforms)
+            fitted.scaler.fit(fitted.apply_transforms(matrix))
+            self._scaler_cache[key] = fitted
+        return self._scaler_cache[key]
 
-    def features(self, mask: str | None = None, *, scaled: bool = False) -> np.ndarray:
+    def features(
+        self,
+        mask: str | None = None,
+        *,
+        scaled: bool = False,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+    ) -> np.ndarray:
         """The feature matrix for a mask, raw or scaled, as a NumPy array."""
         name = mask or _DEFAULT_MASK
-        matrix = (
-            self._df.filter(self.mask_series(name)).select(self._features).to_numpy()
-        )
+        cols = self._resolve_columns(columns)
+        matrix = self._df.filter(self.mask_series(name)).select(cols).to_numpy()
         if scaled:
-            matrix = self._scaler(name).transform(matrix)
+            matrix = self._scaler(name, cols).transform(matrix)
         return matrix
 
     def dataframe(
-        self, mask: str | None = None, *, scaled: bool = False
+        self,
+        mask: str | None = None,
+        *,
+        scaled: bool = False,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
     ) -> pl.DataFrame:
         """Return the masked table with feature columns raw or scaled.
 
         The primary interactive surface: one row per masked cell, all
         metadata/label columns intact, feature columns raw (``scaled=False``) or
-        normalized (``scaled=True``). Internal ``_mask_*`` columns are dropped.
+        normalized (``scaled=True``). With ``columns`` only that collection's
+        features are scaled. Internal ``_mask_*`` columns are dropped.
         """
         name = mask or _DEFAULT_MASK
         frame = self._df.filter(self.mask_series(name))
         if scaled:
-            matrix = self._scaler(name).transform(
-                frame.select(self._features).to_numpy()
-            )
+            cols = self._resolve_columns(columns)
+            matrix = self._scaler(name, cols).transform(frame.select(cols).to_numpy())
             frame = frame.with_columns(
                 [
                     pl.Series(column, matrix[:, index])
-                    for index, column in enumerate(self._features)
+                    for index, column in enumerate(cols)
                 ]
             )
         drop = [c for c in frame.columns if c.startswith(_MASK_PREFIX)]
