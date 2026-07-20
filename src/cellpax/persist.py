@@ -35,7 +35,7 @@ def _folio(folio: DataFolio | str | Path) -> DataFolio:
 
 
 def _scaler_tag(factory: Any) -> str:
-    from cellpax.consensus import make_clipped_scaler
+    from cellpax.clustering import make_clipped_scaler
     from cellpax.featuretable import _default_scaler_factory
 
     if factory is _default_scaler_factory:
@@ -46,7 +46,7 @@ def _scaler_tag(factory: Any) -> str:
 
 
 def _factory_from_tag(tag: str) -> Any:
-    from cellpax.consensus import make_clipped_scaler
+    from cellpax.clustering import make_clipped_scaler
     from cellpax.featuretable import _default_scaler_factory
 
     return {"standard": _default_scaler_factory, "clipped": make_clipped_scaler}.get(
@@ -102,7 +102,7 @@ def save_feature_table(
 
 def load_feature_table(folio: DataFolio | str | Path, name: str) -> Any:
     """Load a FeatureTable previously saved under ``name``."""
-    from cellpax.consensus import SimilarityMatrix
+    from cellpax.clustering import SimilarityMatrix
     from cellpax.featuretable import FeatureCollection, FeatureTable
 
     folio = _folio(folio)

@@ -83,10 +83,21 @@ class LabelSet:
         min_cluster_size: int = 1,
         name: str = "label",
     ) -> "LabelSet":
-        """Cut a ``SimilarityMatrix`` at a threshold into a LabelSet."""
-        labels = similarity.cluster_labels(  # type: ignore[attr-defined]
+        """Cut a ``SimilarityMatrix`` at a threshold into a LabelSet.
+
+        Cluster ids are renumbered to contiguous ``0..k-1`` (in ascending order of
+        the cut's raw labels); unassigned cells stay ``-1``.
+        """
+        raw = similarity.cluster_labels(  # type: ignore[attr-defined]
             distance_threshold, min_cluster_size=min_cluster_size
         )
+        remap = {
+            old: new
+            for new, old in enumerate(
+                sorted(int(v) for v in np.unique(raw) if v != _UNASSIGNED)
+            )
+        }
+        labels = np.array([remap.get(int(v), _UNASSIGNED) for v in raw], dtype=np.int64)
         return cls(cell_ids, labels, name=name)
 
     # -- accessors -------------------------------------------------------------

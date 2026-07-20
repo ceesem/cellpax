@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from cellpax.consensus import make_clipped_scaler
+from cellpax.clustering import make_clipped_scaler
 from cellpax.featuretable import FeatureTable
 from cellpax.persist import list_analyses
 

@@ -463,7 +463,7 @@ class FeatureTable:
         the per-mask scaler apply). Returns the consensus ``SimilarityMatrix``; if
         ``name`` is given it is also stored for later labeling and comparison.
         """
-        from cellpax.consensus import SimilarityMatrix, fauxnograph_coclustering
+        from cellpax.clustering import SimilarityMatrix, fauxnograph_coclustering
 
         data = self.features(mask, scaled=True, columns=columns)
         matrix = fauxnograph_coclustering(
