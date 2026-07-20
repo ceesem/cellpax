@@ -1,294 +1,158 @@
-# Tutorial: from features to a published annotation
+# Tutorial: from features to labeled clusters
 
-This walkthrough builds a complete CellPax study from scratch: you'll register a
-cell universe, cluster it, review the clusters into named cell types, and publish
-a self-contained release a collaborator can consume. Every snippet below is part
-of one runnable script — paste them in order.
-
-By the end you will have used the whole pipeline:
-
-**universe → features → scope → feature space → representation → clustering →
-candidates → review → taxonomy → assignment set → views → release**.
+This walkthrough builds a complete CellPax analysis: load cells, preprocess and
+cluster them, turn the result into clear labels, compare cuts, and save
+everything to a folio. Every snippet is part of one runnable script.
 
 ## 0. Set up
 
-We'll use a small synthetic dataset of 40 cells that fall into two obvious
-groups, so the clustering has something clean to find.
+We use a small synthetic dataset of 60 cells in two well-separated groups so the
+clustering has something clean to find.
 
 ```python
 import tempfile
 from pathlib import Path
+from enum import IntEnum
 
 import numpy as np
 import polars as pl
 
-from cellpax import (
-    CandidateCutConfig,
-    ClusteringConfig,
-    FeatureDefinition,
-    FeatureSpaceConfig,
-    RepresentationConfig,
-    Study,
-    TaxonDefinition,
-    taxonomy_table,
-)
+from cellpax import FeatureTable, compare
 
 rng = np.random.default_rng(0)
-blob_a = rng.normal(loc=[0.0, 0.0, 0.0], scale=0.4, size=(20, 3))
-blob_b = rng.normal(loc=[6.0, 6.0, 6.0], scale=0.4, size=(20, 3))
-coords = np.vstack([blob_a, blob_b])
-cell_ids = list(range(1, 41))
-
-path = Path(tempfile.mkdtemp()) / "connectome-study"
-```
-
-## 1. Create the study and register the universe
-
-A study is one immutable, content-addressed store. The **universe** is its single
-authoritative list of cells; everything else must reference a subset of it. You
-can hand it a plain list of ids.
-
-```python
-study = Study.create(path, created_by="tutorial")
-study.register_universe(cell_ids)
-```
-
-Cell ids are coerced to a non-null, unique `Int64` column. The universe is set
-once and cannot be replaced — this is what lets every later artifact trust its
-cell ids.
-
-## 2. Register features and their catalog
-
-Feature values live in a **feature block**, paired with a **catalog** that
-documents what each column means. Describe the columns with `FeatureDefinition`
-objects and CellPax builds the strict catalog for you — the catalog travels with
-the features, so a release is self-describing.
-
-```python
-values = pl.DataFrame(
+coords = np.vstack([rng.normal(0, 0.3, (30, 3)), rng.normal(8, 0.3, (30, 3))])
+df = pl.DataFrame(
     {
-        "cell_id": pl.Series(cell_ids, dtype=pl.Int64),
-        "morph_0": coords[:, 0],
-        "morph_1": coords[:, 1],
-        "morph_2": coords[:, 2],
+        "cell_id": pl.Series(range(1, 61), dtype=pl.Int64),
+        "axon_len": coords[:, 0],
+        "axon_tort": coords[:, 1],
+        "dend_vol": coords[:, 2],
+        "region": ["L"] * 30 + ["R"] * 30,
     }
 )
-block = study.register_feature_block(
-    values,
-    [
-        FeatureDefinition("morph_0", modality="morphology", family="shape"),
-        FeatureDefinition("morph_1", modality="morphology", family="shape"),
-        FeatureDefinition("morph_2", modality="morphology", family="shape"),
-    ],
+```
+
+## 1. Build a FeatureTable
+
+The `FeatureTable` holds your cells: a unique `cell_id`, the feature columns to
+cluster on, and any metadata. Optional `feature_metadata` describes each feature
+(family, modality, units) so you can select by it later.
+
+```python
+meta = pl.DataFrame(
+    {
+        "feature_id": ["axon_len", "axon_tort", "dend_vol"],
+        "family": ["axon", "axon", "dend"],
+    }
+)
+ft = FeatureTable(
+    df, features=["axon_len", "axon_tort", "dend_vol"], feature_metadata=meta
 )
 ```
 
-Registration is content-addressed: register the identical block twice and you get
-the same id back, not a duplicate.
+## 2. Masks and feature collections
 
-## 3. Build a revision with the fluent builder
-
-Everything downstream — scope, feature space, representation, clustering — is
-*previewed* (materialized and given a stable id) and then **kept** as a named
-**revision** when you want a durable checkpoint. `study.build()` gives you a
-builder that holds each artifact so you don't re-pass them at every step, and
-chains kept revisions into a history automatically.
-
-Start with the cells to work on and the features to use, then keep your first
-checkpoint:
+A **mask** is a named subset of cells; a **feature collection** is a named,
+composable subset of features. Both let you focus an analysis.
 
 ```python
-build = study.build()
-build.scope(cell_ids).select(block)   # all cells, all features in the block
-inputs = build.keep("inputs")
+ft.add_mask("left", pl.col("region") == "L")      # a named subset of cells
+ft.define_features("axon", family="axon")          # a named feature collection
+ft.collections["axon"] | ft.collections["axon"]    # collections compose: | & -
 ```
 
-`scope(cell_ids)` selects cells; `select(block)` selects every feature in the
-block (pass a list of feature ids to narrow it). Neither needs a description —
-provide one with `derivation_text=...` when you want to record intent.
+## 3. Preprocess
 
-## 4. Feature space and representation
-
-A **feature space** applies a transform to the selected values; a
-**representation** produces coordinates for clustering or visualization. Use the
-typed config factories — no magic strings, and your editor autocompletes the
-parameters:
+`preprocess()` screens each feature's skew and applies an inverse-hyperbolic-sine
+(`ihs`) transform to the heavy-tailed ones, refit per mask. Scaling then happens
+on demand — `dataframe(scaled=True)` and clustering use the transformed, scaled
+values, while `dataframe(scaled=False)` keeps the raw units for plotting.
 
 ```python
-build.feature_space(FeatureSpaceConfig.standard_scaler())
-build.representation(RepresentationConfig.pca(n_components=2))
-represented = build.keep("scaled + pca")
+ft.preprocess()             # ihs on wide features; threshold and method are tunable
+ft.transforms              # {feature: 'ihs' | None} — the resolved decisions
 ```
 
-Each transform learns from a `fit_scope`, which defaults to the current scope —
-pass `fit_scope=...` explicitly only when you want to fit on a trusted core and
-apply to a wider set.
+## 4. Cluster
 
-## 5. Cluster once, cut cheaply
-
-Clustering is split into two steps on purpose. The expensive consensus work is a
-**clustering run**, stored once. Turning it into a flat partition is a cheap
-**candidate set** — you can take many different cuts of one run without paying for
-it again.
+`ft.cluster(...)` runs repeated kNN/Leiden consensus (fauxnograph) on the scaled
+features and returns a `SimilarityMatrix`. Name it to store it for later.
 
 ```python
-build.clustering(ClusteringConfig.fauxnograph(n_neighbors=(10,)))
-build.candidates(CandidateCutConfig.distance(threshold=0.5))
-revision = build.keep("candidates")
-
-definitions = study.candidate_definitions(revision.candidate_set_id)
-print(definitions["candidate_id"].to_list(), definitions["n_cells"].to_list())
-# -> [0, 1] [20, 20]
+ft.cluster(n_neighbors=15, n_times=5, seed=0, name="run")
+sim = ft.clustering("run")
+sim.cluster_count_curve()   # (distance thresholds, number of clusters) to pick a cut
 ```
 
 !!! note "fauxnograph runs in parallel"
-    The built-in `fauxnograph` backend uses all cores by default. Pass
-    `ClusteringConfig.fauxnograph(n_neighbors=(10,), n_jobs=1)` for a
-    deterministic single-threaded run, or to silence joblib worker warnings in
-    some environments.
+    Pass `n_jobs=1` for a deterministic single-threaded run or to silence joblib
+    worker warnings in some environments.
 
-!!! tip "Prefer explicit calls?"
-    The builder is optional sugar. Every step maps to a `study.preview_*` call
-    plus a final `study.keep(...)`; the [User Guide](guide.md) shows that form.
+## 5. Turn a cut into clear labels
 
-The two blobs came back as candidates `0` and `1`, twenty cells each. Candidates
-are just *numbered groups* — they carry no meaning until you review them.
-
-## 6. Define a taxonomy
-
-The **taxonomy** is your controlled vocabulary of cell types. Build it from
-concise `TaxonDefinition` objects; input order becomes display order, and omitted
-display/lifecycle fields get sensible defaults. It is versioned and immutable:
-once `1.0.0` is registered, its rows never change.
+Cut the consensus at a distance threshold into a `LabelSet` — clusters with
+identity you can rename, merge, reorder, and color. Ids are 0-based.
 
 ```python
-study.register_taxonomy(
-    taxonomy_table(
-        "cells",
-        "1.0.0",
-        [
-            TaxonDefinition(1, "excitatory", label="Exc", color="#d62728"),
-            TaxonDefinition(2, "inhibitory", label="Inh", color="#1f77b4"),
-        ],
-    )
-)
+labels = ft.label("run", distance_threshold=0.5, name="subclass")
+labels.counts()                                     # cells per cluster
+labels.rename({0: "TypeA", 1: "TypeB"}).set_colors({"TypeA": "#d62728"})
+ft.attach(labels)                                   # adds a 'subclass' column
 ```
 
-For a hierarchy, add `parent_id=...`; use the longer keyword fields only when a
-taxon needs to override its label-derived names.
+### Number- and name-free with IntEnum
 
-## 7. Review: assign candidates to types
-
-Review is an **append-only ledger**. Each `append_decision` records an action, its
-targets, a taxon, and — required — a rationale. Decisions form a linear branch;
-here we assign each candidate to a type on the `main` branch.
+Generate an `IntEnum` so you can filter with autocomplete instead of remembering
+ids or exact strings (members compare equal to their integer id):
 
 ```python
-ids = definitions["candidate_id"].to_list()
+L = labels.to_enum("SubclassLabels")
+ft.dataframe().filter(pl.col("subclass_id") == L.TypeA)
 
-study.append_decision(
-    revision=revision, review_branch="main", action="assign",
-    target_kind="candidates", target_ids=[ids[0]], taxon_id=1,
-    rationale="Compact, well-separated cluster; excitatory morphology.",
-)
-head = study.append_decision(
-    revision=revision, review_branch="main", action="assign",
-    target_kind="candidates", target_ids=[ids[1]], taxon_id=2,
-    rationale="Second cluster is inhibitory.",
-)
+# ...or name clusters from your own enum:
+class ITLabels(IntEnum):
+    TypeA = 0
+    TypeB = 1
+labels.apply_enum(ITLabels)
 ```
 
-Beyond `assign`, the ledger supports `merge`, `split`, `exclude`,
-`mark_ambiguous`, `assign_parent_only`, and manual per-cell corrections — see the
-[User Guide](guide.md#reviewing-decisions).
+## 6. Compare different approaches
 
-## 8. Reduce decisions into an assignment set
-
-An **assignment set** is the immutable result of reducing a decision head into
-one row per cell. Correcting labels later produces a *new* assignment set — the
-taxonomy version stays fixed.
+Cut the same run two ways (or cluster with different parameters) and compare:
 
 ```python
-assignment_set = study.create_assignment_set_from_decisions(
-    taxonomy_name="cells", taxonomy_version="1.0.0",
-    review_branch="main", decision_head=head,
-)
-study.assignments(assignment_set)  # one row per cell: taxon, status, source, ...
+tight = ft.label("run", distance_threshold=0.3, name="tight")
+cmp = compare(labels, tight)
+cmp.agreement()        # {'ari': ..., 'nmi': ..., 'fmi': ..., 'jaccard': ..., 'n': ...}
+cmp.contingency()      # long-form cross-tab
+cmp.alluvial_frame()   # source/target/value, ready for a sankey plot
 ```
 
-## 9. Look at the result with views
-
-**Views** are read-only, fixed-schema projections. `study.view(name, ...)` joins
-scope, candidates, assignments, and taxonomy for you:
+## 7. Embed and get a plot-ready frame
 
 ```python
-study.view("cells", revision, assignment_set=assignment_set)      # per-cell table
-study.view("embedding", revision, assignment_set=assignment_set)  # x/y + colors
-study.view("taxonomy", assignment_set=assignment_set)             # counts per taxon
-study.view("release_summary", revision, assignment_set=assignment_set)
+ft.embed(method="pca", n_components=2)               # or method="umap" (optional dep)
+plot_df = ft.dataframe(embedding="pca")              # metadata + labels + pca0/pca1
+# plot_df is tidy — hand it straight to seaborn: facet by region, color by subclass
 ```
 
-An embedding view drops straight into a plot or a serialized report component:
+## 8. Save the whole analysis
+
+Persist everything (table, masks, collections, transforms, embeddings, and the
+consensus matrix) under a name in a DataFolio. Many analyses — and your own
+content — can share one folio.
 
 ```python
-from cellpax.plotting import embedding_scatter
-from cellpax.views import serialize_view
+folio = Path(tempfile.mkdtemp()) / "study"
+ft.save(folio, "l23it")
 
-frame = study.view("embedding", revision, assignment_set=assignment_set)
-embedding_scatter(frame)              # a matplotlib figure, colored by taxon
-component = serialize_view("embedding", frame)   # deterministic JSON bytes
-```
-
-## 10. Publish a release
-
-A **release** freezes a source revision + assignment set into a self-documenting
-bundle: taxonomy, assignments, decision lineage, quality summary, a resolved
-recipe, a replay script, and a generated enum binding.
-
-```python
-release = study.create_annotation_release(
-    "cells-v1", source_revision=revision, assignment_set=assignment_set
-)
-
-bundle = study.load_annotation_release(release)
-Taxon = bundle.taxonomy_enum()
-print(Taxon.EXCITATORY, Taxon.EXCITATORY.color)   # -> Taxon.EXCITATORY #d62728
-
-study.validate_annotation_release(release)         # re-derives and checksums everything
-```
-
-## 11. Consume it downstream
-
-A consumer needs only the release bundle — no clustering or review code. The
-Trajan adapter (or the generic `decorate_cells`) joins released labels onto any
-cell table:
-
-```python
-from cellpax.adapters.trajan import decorate_cells
-
-consumer = pl.DataFrame(
-    {"cell_id": pl.Series(cell_ids, dtype=pl.Int64), "extra": range(40)}
-)
-decorated = decorate_cells(consumer, bundle)
-# adds taxon_id, assignment_status, taxon_short_name, taxon_color, ...
-```
-
-## 12. Reopen and validate
-
-Everything you built survives a fresh process. Reopening and validating proves
-the study is internally consistent and content-addressed as claimed.
-
-```python
-study.validate()
-
-reopened = Study.open(path, read_only=True)
-reopened.validate()
-reopened.load_annotation_release("cells-v1")
+reloaded = FeatureTable.load(folio, "l23it")         # masks, labels, clustering restored
+from cellpax import list_analyses
+list_analyses(folio)                                 # -> ["l23it"]
 ```
 
 ## Where to go next
 
-You've touched every stage of the pipeline. The **[User Guide](guide.md)** goes
-deeper on each: the preview/keep model and the builder, fit-vs-application scopes,
-the full set of review actions, propagating labels to non-core cells, coverage and
-provenance on assignments, and the trust model behind `validate()`.
+The **[User Guide](guide.md)** covers each piece in depth: hierarchical masks,
+collection algebra, the preprocessing/scaling model, clustering parameters, the
+full `LabelSet` verb set, comparison metrics, and persistence layout.

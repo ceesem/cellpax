@@ -9,8 +9,6 @@ nav:
 - User Guide: guide.md
 - Function Reference:
     - reference/api.md
-- Architecture:
-    - Core contracts v1: decisions/0001-core-contracts-v1.md
 - Changelog: changelog.md
 
 
