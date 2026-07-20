@@ -1,8 +1,13 @@
-# API Reference
+# Function Reference
+
+Top-level exports:
 
 ::: cellpax
 
 ## FeatureTable
+
+The container and its methods (construction, masks, collections, preprocessing,
+clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.featuretable.FeatureTable
 
@@ -24,11 +29,15 @@
 
 ::: cellpax.clustering.fauxnograph_coclustering
 
-::: cellpax.choir.choir_labels
-
 ::: cellpax.clustering.make_clipped_scaler
 
 ::: cellpax.clustering.clipped_scaler_factory
+
+## CHOIR
+
+::: cellpax.choir.choir_labels
+
+::: cellpax.choir.overcluster_linkage
 
 ## Comparison
 

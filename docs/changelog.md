@@ -22,6 +22,11 @@ immutable content-addressed `Study` design (preserved on the `master` baseline).
 - Added `ft.embed` (PCA-native, UMAP optional) and `dataframe(embedding=…)`.
 - Added cross-approach comparison (`compare` / `compare_many`): contingency,
   ARI / NMI / FMI / Jaccard, and alluvial frames.
+- Added CHOIR-style statistically-validated cluster resolution (`ft.cluster_choir`,
+  `cellpax.choir`): keep each split only where the children pass a random-forest
+  permutation test (variance-adjusted); optional per-node feature reselection; and
+  `ft.overcluster` (high-res Leiden) so any over-clustering can be pruned, not just
+  the consensus tree.
 - Added first-class DataFolio persistence: `ft.save` / `FeatureTable.load` store
   many analyses per folio under a `<name>/…` namespace, structured (not
   flattened) and coexisting with arbitrary user content; `list_analyses`.
