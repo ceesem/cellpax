@@ -55,7 +55,7 @@ plugins:
             - https://docs.python.org/3/objects.inv
             - https://numpy.org/doc/stable/objects.inv
             - https://pandas.pydata.org/pandas-docs/stable/objects.inv
-          paths: [.]
+          paths: [src]
           options:
             show_source: false
             docstring_style: numpy
