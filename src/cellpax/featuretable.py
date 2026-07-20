@@ -486,10 +486,40 @@ class FeatureTable:
             self._clusterings[name] = result
         return result
 
+    def overcluster(
+        self,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        resolution: float = 2.0,
+        n_neighbors: int = 30,
+        mutual_only: bool = False,
+        min_cluster_size: int = 1,
+        seed: int | None = None,
+    ) -> np.ndarray:
+        """A single high-resolution Leiden partition of a mask's scaled features.
+
+        Returns a per-cell integer over-clustering (many small clusters) aligned
+        to ``features(mask)`` rows — a good CHOIR starting point to prune via
+        ``cluster_choir(over_clustering=...)``.
+        """
+        from cellpax.clustering import cluster_leiden, kneighbor_graph
+
+        data = self.features(mask, scaled=True, columns=columns)
+        graph = kneighbor_graph(data, n_neighbors=n_neighbors, mutual_only=mutual_only)
+        return cluster_leiden(
+            graph,
+            resolution_parameter=resolution,
+            seed=seed,
+            min_cluster_size=min_cluster_size,
+        )
+
     def cluster_choir(
         self,
-        clustering: Any,
+        clustering: Any = None,
         *,
+        over_clustering: Any = None,
+        linkage_method: str = "ward",
         mask: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         name: str = "label",
@@ -506,25 +536,44 @@ class FeatureTable:
         seed: int | None = None,
         n_jobs: int = -1,
     ) -> Any:
-        """Resolve a clustering into a ``LabelSet`` via CHOIR-style split testing.
+        """Resolve a hierarchy into a ``LabelSet`` via CHOIR-style split testing.
 
-        Instead of cutting the dendrogram at one distance threshold, keep each
-        split only where the two child clusters pass CHOIR's random-forest
-        permutation test (see :mod:`cellpax.choir`). ``clustering`` is a
-        ``SimilarityMatrix`` or the name of a stored one; its rows must align with
-        the mask's cells. With ``reselect``, features are re-chosen per node (the
-        ``n_features`` most variable within that subtree, optionally ``n_pcs`` PCs).
-        Returns a mask-aligned :class:`~cellpax.labels.LabelSet`.
+        Instead of cutting a dendrogram at one distance threshold, keep each split
+        only where the two child clusters pass CHOIR's random-forest permutation
+        test (see :mod:`cellpax.choir`). Provide exactly one starting hierarchy:
+
+        - ``clustering``: a consensus ``SimilarityMatrix`` (or stored name) — its
+          full per-cell tree is pruned.
+        - ``over_clustering``: a per-cell over-clustering (integer array aligned to
+          ``features(mask)`` rows, or a ``LabelSet``), e.g. from ``overcluster``
+          (high-res Leiden) or KMeans. A hierarchy is built over its cluster
+          centroids (``linkage_method``) and pruned.
+
+        The RF test always runs on the feature matrix. With ``reselect``, features
+        are re-chosen per node. Returns a mask-aligned ``LabelSet``.
         """
-        from cellpax.choir import choir_labels
+        from cellpax.choir import choir_labels, overcluster_linkage
         from cellpax.labels import LabelSet
 
-        if isinstance(clustering, str):
-            clustering = self.clustering(clustering)
+        if (clustering is None) == (over_clustering is None):
+            raise ValueError("provide exactly one of clustering or over_clustering")
         features = self.features(mask, scaled=True, columns=columns)
+        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+
+        if over_clustering is not None:
+            over = self._align_over_clustering(over_clustering, cell_ids)
+            hierarchy, leaf_members = overcluster_linkage(
+                features, over, method=linkage_method
+            )
+        else:
+            if isinstance(clustering, str):
+                clustering = self.clustering(clustering)
+            hierarchy, leaf_members = clustering.linkage, None
+
         labels = choir_labels(
-            clustering.linkage,
+            hierarchy,
             features,
+            leaf_members=leaf_members,
             alpha=alpha,
             min_cluster_size=min_cluster_size,
             min_accuracy=min_accuracy,
@@ -538,8 +587,21 @@ class FeatureTable:
             seed=seed,
             n_jobs=n_jobs,
         )
-        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
         return LabelSet(cell_ids, labels, name=name)
+
+    def _align_over_clustering(
+        self, over_clustering: Any, cell_ids: np.ndarray
+    ) -> np.ndarray:
+        """Coerce an over-clustering (array or LabelSet) to feature-row order."""
+        if hasattr(over_clustering, "to_frame"):  # a LabelSet
+            frame = over_clustering.to_frame(id_column=self._id_column)
+            id_col, value_col = frame.columns[0], frame.columns[2]
+            mapping = dict(zip(frame[id_col].to_list(), frame[value_col].to_list()))
+            return np.array([mapping.get(int(c), -1) for c in cell_ids], dtype=np.int64)
+        values = np.asarray(over_clustering)
+        if values.shape[0] != len(cell_ids):
+            raise ValueError("over_clustering length must match the mask's cells")
+        return values
 
     def clustering(self, name: str) -> Any:
         """Return a stored ``SimilarityMatrix`` by name."""

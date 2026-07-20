@@ -110,6 +110,52 @@ def test_choir_reselect_with_pca_runs() -> None:
     assert len(labels.ids) == 2
 
 
+def test_choir_prunes_high_res_leiden_overclustering() -> None:
+    ft = _blobs([[0, 0, 0, 0], [10, 10, 10, 10], [0, 10, 0, 10]], per=40)
+    over = ft.overcluster(
+        resolution=4.0, n_neighbors=10, seed=0
+    )  # deliberately over-split
+    n_over = len(np.unique(over[over >= 0]))
+    assert n_over > 3  # high-res Leiden over-splits the 3 groups
+    labels = ft.cluster_choir(
+        over_clustering=over,
+        min_cluster_size=8,
+        n_iterations=40,
+        n_estimators=25,
+        seed=0,
+        n_jobs=1,
+    )
+    # CHOIR prunes the over-clustering back down while keeping the true structure
+    assert 3 <= len(labels.ids) < n_over
+
+
+def test_choir_prunes_kmeans_overclustering() -> None:
+    from sklearn.cluster import KMeans
+
+    ft = _blobs([[0, 0, 0, 0], [10, 10, 10, 10]], per=40)
+    km = KMeans(n_clusters=8, random_state=0, n_init=10).fit(ft.features(scaled=True))
+    labels = ft.cluster_choir(
+        over_clustering=km.labels_,
+        min_cluster_size=8,
+        n_iterations=40,
+        n_estimators=25,
+        seed=0,
+        n_jobs=1,
+    )
+    assert len(labels.ids) == 2
+
+
+def test_cluster_choir_requires_exactly_one_source() -> None:
+    import pytest
+
+    ft = _blobs([[0, 0, 0, 0], [10, 10, 10, 10]], per=20)
+    ft.cluster(name="run", **_PARAMS)
+    with pytest.raises(ValueError, match="exactly one"):
+        ft.cluster_choir("run", over_clustering=np.zeros(40))
+    with pytest.raises(ValueError, match="exactly one"):
+        ft.cluster_choir()
+
+
 def test_choir_respects_min_cluster_size() -> None:
     ft = _blobs([[0, 0, 0, 0], [10, 10, 10, 10]], per=40)
     ft.cluster(name="run", **_PARAMS)

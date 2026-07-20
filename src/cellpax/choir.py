@@ -113,10 +113,36 @@ def _reselect(
     return keep, pca
 
 
+def overcluster_linkage(
+    features: np.ndarray,
+    labels: np.ndarray,
+    *,
+    method: str = "ward",
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Build an agglomerative hierarchy over an over-clustering's cluster centroids.
+
+    ``labels`` is a per-row over-clustering (many small clusters; ``-1`` = drop).
+    Returns a scipy linkage over the cluster centroids and, per linkage leaf, the
+    row indices of its cells — ready to pass to :func:`choir_labels` as
+    ``leaf_members`` so CHOIR prunes *your* over-clustering rather than a consensus
+    tree.
+    """
+    from scipy.cluster.hierarchy import linkage as scipy_linkage
+
+    labels = np.asarray(labels)
+    clusters = [int(c) for c in np.unique(labels) if int(c) != -1]
+    if len(clusters) < 2:
+        raise ValueError("over-clustering must have at least two clusters")
+    centroids = np.array([features[labels == c].mean(axis=0) for c in clusters])
+    leaf_members = [np.flatnonzero(labels == c) for c in clusters]
+    return scipy_linkage(centroids, method=method), leaf_members
+
+
 def choir_labels(
     linkage: np.ndarray,
     features: np.ndarray,
     *,
+    leaf_members: list[np.ndarray] | None = None,
     alpha: float = 0.05,
     min_cluster_size: int = 20,
     min_accuracy: float = 0.5,
@@ -133,10 +159,13 @@ def choir_labels(
     """Resolve a hierarchy into clusters by keeping only significant splits.
 
     Walks the dendrogram top-down: at each node whose children are both at least
-    ``min_cluster_size``, the split is kept (recurse) iff the children pass
+    ``min_cluster_size`` cells, the split is kept (recurse) iff the children pass
     CHOIR's distinguishability test; otherwise the node collapses to one cluster.
-    Returns a 0-based label per row of ``features`` (rows must align with the
-    linkage's observations).
+    Returns a 0-based label per row of ``features`` (``-1`` for rows in no leaf).
+
+    Leaves are single observations by default. Pass ``leaf_members`` (leaf →
+    cell-row indices, e.g. from :func:`overcluster_linkage`) to prune a hierarchy
+    built over an arbitrary over-clustering instead of a per-cell consensus tree.
 
     With ``reselect``, features are re-chosen per node (the ``n_features`` most
     variable within that subtree's cells, optionally projected to ``n_pcs`` PCs) —
@@ -148,6 +177,12 @@ def choir_labels(
     if reselect and n_features is None:
         n_features = min(features.shape[1], 30)
 
+    def cells(node) -> np.ndarray:
+        leaves = node.pre_order()
+        if leaf_members is None:
+            return np.array(leaves)
+        return np.concatenate([leaf_members[leaf] for leaf in leaves])
+
     def _local(a_idx: np.ndarray, b_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if not reselect:
             return features[a_idx], features[b_idx]
@@ -158,14 +193,12 @@ def choir_labels(
             xa, xb = pca.transform(xa), pca.transform(xb)
         return xa, xb
 
-    def resolve(node) -> list[list[int]]:
+    def resolve(node) -> list[np.ndarray]:
         if node.is_leaf():
-            return [[node.id]]
-        left, right = node.left, node.right
-        if left.count < min_cluster_size or right.count < min_cluster_size:
-            return [node.pre_order()]
-        a_idx = np.array(left.pre_order())
-        b_idx = np.array(right.pre_order())
+            return [cells(node)]
+        a_idx, b_idx = cells(node.left), cells(node.right)
+        if len(a_idx) < min_cluster_size or len(b_idx) < min_cluster_size:
+            return [cells(node)]
         xa, xb = _local(a_idx, b_idx)
         if _distinguishable(
             xa,
@@ -179,10 +212,10 @@ def choir_labels(
             rng=rng,
             n_jobs=n_jobs,
         ):
-            return resolve(left) + resolve(right)
-        return [node.pre_order()]
+            return resolve(node.left) + resolve(node.right)
+        return [cells(node)]
 
     labels = np.full(features.shape[0], -1, dtype=np.int64)
     for cluster_id, members in enumerate(resolve(root)):
-        labels[np.array(members)] = cluster_id
+        labels[members] = cluster_id
     return labels

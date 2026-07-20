@@ -120,6 +120,21 @@ cells, not the two child labels being tested), so it doesn't bias the test.
 ft.cluster_choir("run", reselect=True, n_features=30, n_pcs=10)
 ```
 
+CHOIR can prune **any** starting hierarchy, not just the consensus tree — its
+design actually favours an intentional over-clustering. Pass `over_clustering=` a
+per-cell over-clustering (e.g. high-resolution Leiden via `ft.overcluster`, or
+KMeans with large *k*); a hierarchy is built over the cluster centroids and
+pruned:
+
+```python
+over = ft.overcluster("l23", resolution=4.0)          # high-res Leiden over-split
+labels = ft.cluster_choir(over_clustering=over, mask="l23")
+```
+
+The random-forest test always runs on the feature matrix; the over-clustering and
+the hierarchy over it are what you're choosing (features via Leiden here; the
+consensus is an alternative denoised source but not required).
+
 ## Labels
 
 `ft.label` cuts a stored clustering into a `LabelSet` aligned to a mask's cells,
