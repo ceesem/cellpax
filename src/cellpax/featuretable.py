@@ -653,6 +653,14 @@ class FeatureTable:
             )
         return frame
 
+    # -- comparison ------------------------------------------------------------
+
+    def compare(self, a: Any, b: Any) -> Any:
+        """Compare two ``LabelSet``s over shared cells (see :mod:`cellpax.compare`)."""
+        from cellpax.compare import compare
+
+        return compare(a, b)
+
     # -- persistence -----------------------------------------------------------
 
     def save(self, folio: Any, name: str, *, overwrite: bool = True) -> "FeatureTable":
