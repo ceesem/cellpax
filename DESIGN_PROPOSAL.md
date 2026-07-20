@@ -189,11 +189,65 @@ There are no external consumers to preserve; existing dfc notebooks will move to
 the new API (close to dfc's, so mostly mechanical). We keep the `cellpax` package
 name and reset the version.
 
+## Design principles (from the dfc audit)
+
+A full read of dfc's `FeatureTable` (plus `FittedScaler`, `GlobalPreprocessor`,
+the label methods) and `SimilarityMatrix` showed a strong container whose
+weaknesses were all *accreted complexity*, not wrong ideas. These principles carry
+the good bones forward and collapse the complexity.
+
+**Keep (proven in dfc):**
+
+1. **`dataframe(mask, scaled=…)` is the primary surface.** Filter to a mask,
+   inject raw-or-scaled features, optionally join embeddings, hide internal
+   columns. Preserve this shape (polars).
+2. **`FittedScaler` = per-feature transforms + a fitted scaler, re-fit per mask,**
+   so normalization is subset-specific.
+3. **Masks are boolean columns with hierarchical `based_on`.** Simple and
+   sufficient.
+4. **`add_column(data, name, mask=, fill_value=)`** — write to a masked subset,
+   fill the rest.
+5. **`ihs` (inverse hyperbolic sine) is the default skew correction**, not `log` —
+   it handles zeros and negatives. (Supersedes the `log1p`+skip-negatives approach
+   from the immutable-first branch.)
+6. **`SimilarityMatrix` is well-factored** (distance/leiden/spectral cuts,
+   `cluster_count_curve`, `sparsify`, `build_umap_graph`, `plot_heatmap`) — port
+   largely as-is.
+7. **Method chaining** (`return self`) for interactive fluency.
+
+**Fix (collapse the accreted complexity):**
+
+8. **Feature collections are first-class and composable** — `FeatureCollection`
+   with union/intersect/difference, defined by family/modality/predicate/explicit
+   — replacing the `Dict[str, List[str]]` + magic `_DEFAULT` key with no algebra.
+9. **One preprocessing concept, not two.** Drop the per-scaler `skewness_screen`
+   axis; `preprocess()` decides per-feature transforms once (global, per-mask
+   scaler re-fit) and `scaled=True` simply applies the fitted scaler on top. No
+   `_resolve_preprocessing` / `lookup_prep` fallback logic.
+10. **Scalers are lazy and single.** Fit on demand and cache one scaler per
+    `(mask, collection)`. No eager, combinatorial `[mask][feature_set][bool]`
+    fitting at every `add_mask`/`add_feature_set`.
+11. **Embeddings are a flat keyed store** `(mask, collection, method) → coords`,
+    not a 4-level nested dict with `None/True/False` keys and back-compat
+    fallbacks. Round-trips to DataFolio as items, not `_emb_*` columns.
+12. **Labels are a first-class `LabelSet`** (`id → name/color/description` +
+    membership; `rename`/`merge`/`split`/`reorder`/`combine`), attached as a
+    column on demand — replacing scattered `add_label` (with a domain-specific
+    `reorder_by="soma_depth"` default), `add_label_names` (which spawns a parallel
+    `_named` column), and the overloaded `combine_labels`.
+13. **Structured persistence, never flattened.** Frames as items, scalers/UMAP as
+    models, consensus/`SimilarityMatrix` as items, structure in a manifest — so
+    fitted state and expensive results survive a reload (dfc persisted neither).
+14. **polars-first, explicit accessors.** No `__getattr__`/`__getitem__`
+    passthrough to the underlying frame; no schema-version flags leaking into
+    user-facing metadata.
+
 ## Build order
 
 1. `FeatureTable` core: construction, `add_column`, masks, `dataframe(scaled=)`,
    feature columns.
-2. Feature collections + `preprocess` (skew-screen log/sqrt, regress-out).
+2. Feature collections (composable) + unified `preprocess` (skew-screen `ihs`
+   default, regress-out) with lazy per-mask scalers.
 3. Port `clustering` (fauxnograph + `SimilarityMatrix`) and wire `ft.cluster(...)`.
 4. `LabelSet` + `ft.attach`.
 5. Embeddings (`ft.embed`) + `plotting`.
@@ -202,12 +256,17 @@ name and reset the version.
 8. Optional `context` driver.
 9. Retire the immutable-substrate modules; docs (tutorial + guide) rewrite.
 
+## Resolved by the audit
+
+- **Scalers:** offer clipped / standard / robust; default to dfc's clipped scaler.
+  The real fix is principle 10 — remove the `skewness_screen` second axis so
+  scalers are lazy and single.
+- **Preprocessing scope:** principle 9 — one unified layer (global per-feature
+  transforms with per-mask scaler re-fit), not two overlapping paths.
+
 ## Open questions
 
-- **Scalers:** port dfc's `PercentileClipper` / clipped-scaler as the default, or
-  adopt CellPax's `standard_scaler`/`robust_scaler` set? (Lean: keep both; default
-  to clipped, dfc's proven choice.)
-- **`preprocess` scope:** keep dfc's global `_pre_` layer with per-mask re-fit, or
-  make preprocessing mask-local from the start?
 - **DataFolio granularity:** one folio per analysis, or one folio holding many
   named analyses? (Lean: many named analyses per folio.)
+- **`ihs` parameterization:** plain `arcsinh`, or a scaled `arcsinh(x/θ)` with a
+  per-feature θ? (Lean: plain to start.)
