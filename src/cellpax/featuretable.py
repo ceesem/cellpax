@@ -486,6 +486,54 @@ class FeatureTable:
             self._clusterings[name] = result
         return result
 
+    def cluster_choir(
+        self,
+        clustering: Any,
+        *,
+        mask: str | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        name: str = "label",
+        alpha: float = 0.05,
+        min_cluster_size: int = 20,
+        min_accuracy: float = 0.5,
+        n_iterations: int = 100,
+        n_estimators: int = 100,
+        sample_max: int = 1000,
+        use_variance: bool = True,
+        seed: int | None = None,
+        n_jobs: int = -1,
+    ) -> Any:
+        """Resolve a clustering into a ``LabelSet`` via CHOIR-style split testing.
+
+        Instead of cutting the dendrogram at one distance threshold, keep each
+        split only where the two child clusters pass CHOIR's random-forest
+        permutation test (see :mod:`cellpax.choir`). ``clustering`` is a
+        ``SimilarityMatrix`` or the name of a stored one; its rows must align with
+        the mask's cells. Returns a mask-aligned
+        :class:`~cellpax.labels.LabelSet`.
+        """
+        from cellpax.choir import choir_labels
+        from cellpax.labels import LabelSet
+
+        if isinstance(clustering, str):
+            clustering = self.clustering(clustering)
+        features = self.features(mask, scaled=True, columns=columns)
+        labels = choir_labels(
+            clustering.linkage,
+            features,
+            alpha=alpha,
+            min_cluster_size=min_cluster_size,
+            min_accuracy=min_accuracy,
+            n_iterations=n_iterations,
+            n_estimators=n_estimators,
+            sample_max=sample_max,
+            use_variance=use_variance,
+            seed=seed,
+            n_jobs=n_jobs,
+        )
+        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        return LabelSet(cell_ids, labels, name=name)
+
     def clustering(self, name: str) -> Any:
         """Return a stored ``SimilarityMatrix`` by name."""
         if name not in self._clusterings:

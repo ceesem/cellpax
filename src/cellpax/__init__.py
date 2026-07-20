@@ -6,6 +6,7 @@ relabelable ``LabelSet``s (with ``IntEnum`` bindings), embeddings, cross-approac
 comparison, and first-class DataFolio save/load build on it.
 """
 
+from cellpax.choir import choir_labels
 from cellpax.clustering import (
     SimilarityMatrix,
     clipped_scaler_factory,
@@ -28,6 +29,7 @@ __all__ = [
     "LabelSet",
     "SimilarityMatrix",
     "__version__",
+    "choir_labels",
     "clipped_scaler_factory",
     "compare",
     "compare_many",

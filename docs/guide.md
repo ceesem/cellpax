@@ -87,6 +87,29 @@ sim.cluster_labels(0.6, min_cluster_size=10)   # raw integer labels
 The `SimilarityMatrix` caches its hierarchical linkage; `cluster_labels` cuts it
 at a distance threshold, and `cluster_count_curve` sweeps thresholds.
 
+### CHOIR: no single threshold
+
+A single agglomeration cut can't be right everywhere — some branches should merge
+while others at the same level shouldn't. `ft.cluster_choir` resolves the tree
+without a global threshold: following [CHOIR](https://www.choirclustering.com/)
+(Sant et al., *Nature Genetics* 2025), it keeps each split only where the two
+child clusters are random-forest–distinguishable beyond a permutation null (with a
+variance condition so the separation must be *stably* high), and merges the rest.
+
+```python
+ft.cluster("l23", name="run")
+labels = ft.cluster_choir(
+    "run", mask="l23", name="subclass",
+    alpha=0.05, min_cluster_size=20,
+    n_iterations=100, use_variance=True,   # use_variance=False is less conservative
+)                                          # -> a LabelSet with a data-driven cluster count
+```
+
+It prunes an existing hierarchy over the scaled feature matrix, so branches with
+real substructure keep splitting while homogeneous ones collapse. (`use_variance`
+is CHOIR's key anti-over-clustering guard; set `n_iterations` higher for more
+stable decisions.)
+
 ## Labels
 
 `ft.label` cuts a stored clustering into a `LabelSet` aligned to a mask's cells,

@@ -24,6 +24,8 @@
 
 ::: cellpax.clustering.fauxnograph_coclustering
 
+::: cellpax.choir.choir_labels
+
 ::: cellpax.clustering.make_clipped_scaler
 
 ::: cellpax.clustering.clipped_scaler_factory
