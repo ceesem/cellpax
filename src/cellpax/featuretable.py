@@ -500,6 +500,9 @@ class FeatureTable:
         n_estimators: int = 100,
         sample_max: int = 1000,
         use_variance: bool = True,
+        reselect: bool = False,
+        n_features: int | None = None,
+        n_pcs: int | None = None,
         seed: int | None = None,
         n_jobs: int = -1,
     ) -> Any:
@@ -509,8 +512,9 @@ class FeatureTable:
         split only where the two child clusters pass CHOIR's random-forest
         permutation test (see :mod:`cellpax.choir`). ``clustering`` is a
         ``SimilarityMatrix`` or the name of a stored one; its rows must align with
-        the mask's cells. Returns a mask-aligned
-        :class:`~cellpax.labels.LabelSet`.
+        the mask's cells. With ``reselect``, features are re-chosen per node (the
+        ``n_features`` most variable within that subtree, optionally ``n_pcs`` PCs).
+        Returns a mask-aligned :class:`~cellpax.labels.LabelSet`.
         """
         from cellpax.choir import choir_labels
         from cellpax.labels import LabelSet
@@ -528,6 +532,9 @@ class FeatureTable:
             n_estimators=n_estimators,
             sample_max=sample_max,
             use_variance=use_variance,
+            reselect=reselect,
+            n_features=n_features,
+            n_pcs=n_pcs,
             seed=seed,
             n_jobs=n_jobs,
         )

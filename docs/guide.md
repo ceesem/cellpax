@@ -110,6 +110,16 @@ real substructure keep splitting while homogeneous ones collapse. (`use_variance
 is CHOIR's key anti-over-clustering guard; set `n_iterations` higher for more
 stable decisions.)
 
+With `reselect=True`, the features are re-chosen at each node — the `n_features`
+most variable within that subtree's cells (optionally projected to `n_pcs` PCs) —
+following CHOIR's observation that the features distinguishing coarse types differ
+from those distinguishing fine ones. Selection is unsupervised (it uses the node's
+cells, not the two child labels being tested), so it doesn't bias the test.
+
+```python
+ft.cluster_choir("run", reselect=True, n_features=30, n_pcs=10)
+```
+
 ## Labels
 
 `ft.label` cuts a stored clustering into a `LabelSet` aligned to a mask's cells,

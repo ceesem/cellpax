@@ -92,6 +92,27 @@ def _distinguishable(
     return True
 
 
+def _reselect(
+    node_matrix: np.ndarray, n_features: int | None, n_pcs: int | None
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Local feature reselection: keep the most-variable features in this subtree.
+
+    Selection is unsupervised (uses the node's combined cells, not the two child
+    labels being tested), so it does not leak into the significance test. Returns
+    the column indices kept and an optional fitted PCA to project onto.
+    """
+    keep = np.arange(node_matrix.shape[1])
+    if n_features is not None and n_features < node_matrix.shape[1]:
+        variance = node_matrix.var(axis=0)
+        keep = np.sort(np.argsort(variance)[::-1][:n_features])
+    pca = None
+    if n_pcs is not None and n_pcs < len(keep):
+        from sklearn.decomposition import PCA
+
+        pca = PCA(n_components=n_pcs).fit(node_matrix[:, keep])
+    return keep, pca
+
+
 def choir_labels(
     linkage: np.ndarray,
     features: np.ndarray,
@@ -103,6 +124,9 @@ def choir_labels(
     n_estimators: int = 100,
     sample_max: int = 1000,
     use_variance: bool = True,
+    reselect: bool = False,
+    n_features: int | None = None,
+    n_pcs: int | None = None,
     seed: int | None = None,
     n_jobs: int = -1,
 ) -> np.ndarray:
@@ -113,9 +137,26 @@ def choir_labels(
     CHOIR's distinguishability test; otherwise the node collapses to one cluster.
     Returns a 0-based label per row of ``features`` (rows must align with the
     linkage's observations).
+
+    With ``reselect``, features are re-chosen per node (the ``n_features`` most
+    variable within that subtree's cells, optionally projected to ``n_pcs`` PCs) —
+    CHOIR's idea that the features distinguishing coarse types differ from those
+    distinguishing fine ones. Defaults to ``min(n_features, 30)`` kept features.
     """
     root = to_tree(linkage)
     rng = np.random.default_rng(seed)
+    if reselect and n_features is None:
+        n_features = min(features.shape[1], 30)
+
+    def _local(a_idx: np.ndarray, b_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if not reselect:
+            return features[a_idx], features[b_idx]
+        node_idx = np.concatenate([a_idx, b_idx])
+        keep, pca = _reselect(features[node_idx], n_features, n_pcs)
+        xa, xb = features[a_idx][:, keep], features[b_idx][:, keep]
+        if pca is not None:
+            xa, xb = pca.transform(xa), pca.transform(xb)
+        return xa, xb
 
     def resolve(node) -> list[list[int]]:
         if node.is_leaf():
@@ -125,9 +166,10 @@ def choir_labels(
             return [node.pre_order()]
         a_idx = np.array(left.pre_order())
         b_idx = np.array(right.pre_order())
+        xa, xb = _local(a_idx, b_idx)
         if _distinguishable(
-            features[a_idx],
-            features[b_idx],
+            xa,
+            xb,
             alpha=alpha,
             n_iterations=n_iterations,
             n_estimators=n_estimators,

@@ -75,6 +75,41 @@ def test_choir_labels_accepts_similarity_matrix_directly() -> None:
     assert len(ft.cluster_choir(sim, **_CHOIR).ids) == 2
 
 
+def test_choir_reselect_recovers_groups_amid_noise() -> None:
+    # separation lives in 3 of 20 features; the rest are pure noise
+    rng = np.random.default_rng(0)
+    per, noise_dim = 40, 17
+    signal = np.vstack([rng.normal(0, 0.3, (per, 3)), rng.normal(10, 0.3, (per, 3))])
+    noise = rng.normal(0, 1, (2 * per, noise_dim))
+    coords = np.hstack([signal, noise])
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 2 * per + 1), dtype=pl.Int64),
+            **{f"m{i}": coords[:, i] for i in range(coords.shape[1])},
+        }
+    )
+    ft = FeatureTable(df, features=[f"m{i}" for i in range(coords.shape[1])])
+    ft.cluster(name="run", **_PARAMS)
+    labels = ft.cluster_choir(
+        "run",
+        reselect=True,
+        n_features=5,
+        min_cluster_size=8,
+        n_iterations=40,
+        n_estimators=25,
+        seed=0,
+        n_jobs=1,
+    )
+    assert len(labels.ids) == 2
+
+
+def test_choir_reselect_with_pca_runs() -> None:
+    ft = _blobs([[0, 0, 0, 0, 0, 0], [10, 10, 10, 10, 10, 10]], per=40, dim=6)
+    ft.cluster(name="run", **_PARAMS)
+    labels = ft.cluster_choir("run", reselect=True, n_features=5, n_pcs=3, **_CHOIR)
+    assert len(labels.ids) == 2
+
+
 def test_choir_respects_min_cluster_size() -> None:
     ft = _blobs([[0, 0, 0, 0], [10, 10, 10, 10]], per=40)
     ft.cluster(name="run", **_PARAMS)
