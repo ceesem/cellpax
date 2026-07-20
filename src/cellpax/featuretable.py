@@ -209,6 +209,7 @@ class FeatureTable:
         self._scaler_cache: dict[tuple[str, tuple[str, ...]], FittedScaler] = {}
         self._collections: dict[str, FeatureCollection] = {}
         self._transforms: dict[str, str | None] = {}
+        self._clusterings: dict[str, Any] = {}
 
     # -- accessors -------------------------------------------------------------
 
@@ -436,6 +437,61 @@ class FeatureTable:
             self._transforms[column] = transform
         self._scaler_cache.clear()
         return self
+
+    # -- clustering ------------------------------------------------------------
+
+    def cluster(
+        self,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        n_neighbors: int | Sequence[int] = 30,
+        resolution: float | Sequence[float] = 1.0,
+        n_times: int = 1,
+        min_cluster_size: int = 1,
+        mutual_only: bool = False,
+        normalize: bool = True,
+        method: str = "average",
+        seed: int | None = None,
+        n_jobs: int = -1,
+        name: str | None = None,
+    ) -> Any:
+        """Consensus-cluster a mask's scaled features into a ``SimilarityMatrix``.
+
+        Clustering runs on the *scaled* features (so ``preprocess`` transforms and
+        the per-mask scaler apply). Returns the consensus ``SimilarityMatrix``; if
+        ``name`` is given it is also stored for later labeling and comparison.
+        """
+        from cellpax.consensus import SimilarityMatrix, fauxnograph_coclustering
+
+        data = self.features(mask, scaled=True, columns=columns)
+        matrix = fauxnograph_coclustering(
+            data,
+            n_neighbors=list(n_neighbors)
+            if isinstance(n_neighbors, (list, tuple))
+            else n_neighbors,
+            resolution_parameter=list(resolution)
+            if isinstance(resolution, (list, tuple))
+            else resolution,
+            n_times=n_times,
+            min_cluster_size=min_cluster_size,
+            mutual_only=mutual_only,
+            normalize=normalize,
+            seed=seed,
+            n_jobs=n_jobs,
+        )
+        result = SimilarityMatrix(matrix, normalized=normalize, method=method)
+        if name is not None:
+            self._clusterings[name] = result
+        return result
+
+    def clustering(self, name: str) -> Any:
+        """Return a stored ``SimilarityMatrix`` by name."""
+        if name not in self._clusterings:
+            raise KeyError(
+                f"Unknown clustering {name!r}; stored: {list(self._clusterings)}"
+            )
+        return self._clusterings[name]
 
     # -- scaling / views -------------------------------------------------------
 
