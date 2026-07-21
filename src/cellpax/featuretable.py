@@ -397,6 +397,7 @@ class FeatureTable:
         on: str | None = None,
         feature_metadata: pl.DataFrame | None = None,
         allow_missing: bool = False,
+        collection: str | None = None,
     ) -> "FeatureTable":
         """Join additional feature columns from another source and register them.
 
@@ -404,7 +405,9 @@ class FeatureTable:
         named ``features``. They are left-joined onto the table and added to the
         feature set; ``feature_metadata`` (a ``feature_id`` + attribute frame)
         extends ``var`` for them. By default every cell must be covered
-        (``allow_missing=True`` permits nulls, which then can't be scaled).
+        (``allow_missing=True`` permits nulls, which then can't be scaled). Pass
+        ``collection`` to also define a feature collection of exactly these
+        features in the same call.
         """
         if not isinstance(source, pl.DataFrame):
             source = pl.from_pandas(source)
@@ -443,6 +446,8 @@ class FeatureTable:
             )
         self._var = pl.concat([self._var, new_var], how="diagonal")
         self._scaler_cache.clear()
+        if collection is not None:
+            self.define_features(collection, columns=features)
         return self
 
     # -- feature collections ---------------------------------------------------

@@ -105,6 +105,24 @@ def test_add_features_from_another_source() -> None:
     assert ft.features(columns="conn", scaled=True).shape == (6, 2)
 
 
+def test_add_features_defines_a_collection() -> None:
+    df = _ossify_output(6).with_columns(
+        pl.Series("cell_id", range(1, 7), dtype=pl.Int64)
+    )
+    ft = FeatureTable(df, features=["axon_len", "dend_vol"])
+    rng = np.random.default_rng(2)
+    extra = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 7), dtype=pl.Int64),
+            "syn_density": rng.normal(size=6),
+            "input_count": rng.normal(size=6),
+        }
+    )
+    ft.add_features(extra, ["syn_density", "input_count"], collection="connectivity")
+    assert ft.collections["connectivity"].columns == ("syn_density", "input_count")
+    assert ft.features(columns="connectivity", scaled=True).shape == (6, 2)
+
+
 def test_add_features_coverage_and_validation() -> None:
     df = _ossify_output(6).with_columns(
         pl.Series("cell_id", range(1, 7), dtype=pl.Int64)

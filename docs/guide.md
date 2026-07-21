@@ -50,8 +50,8 @@ ft.add_features(
     synapse_df, ["syn_density", "input_count"],
     on="cell_id",                       # defaults to the id column
     feature_metadata=conn_meta,         # optional family/modality for the new features
+    collection="conn",                  # also define a collection of these features
 )
-ft.define_features("conn", family="conn")
 ```
 
 Every cell must be covered by the source (pass `allow_missing=True` to permit
