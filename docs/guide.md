@@ -22,6 +22,41 @@ per-feature frame (`feature_id` + family/modality/units/…) exposed as `ft.var`
 and used by `define_features`. Pass `scaler_factory=` to change the scaler
 (default `StandardScaler`; `make_clipped_scaler` is also provided).
 
+### Bringing in a stable cell id
+
+Extractions (e.g. ossify) are often keyed by a segmentation `root_id` and lack a
+static `cell_id`. Supply an `id_map` (a `[root_id, cell_id]`-style frame) to join
+it in and key the table on `cell_id` — at construction, or after:
+
+```python
+ft = FeatureTable(ossify_df, features=[...], id_map=root_to_cell)   # at creation
+
+ft = FeatureTable(ossify_df, features=[...], id_column="root_id")   # ...or after
+ft.set_id_column("cell_id", id_map=root_to_cell)
+```
+
+The map's key column (shared with the table, e.g. `root_id`) is inferred or given
+via `on=`; every cell must map and ids must be unique. The original key is kept as
+a metadata column.
+
+### Adding features from another source
+
+Static features from a different run-once source, keyed on `cell_id`, join in with
+`add_features` and become first-class features (usable in collections, scaling,
+and clustering):
+
+```python
+ft.add_features(
+    synapse_df, ["syn_density", "input_count"],
+    on="cell_id",                       # defaults to the id column
+    feature_metadata=conn_meta,         # optional family/modality for the new features
+)
+ft.define_features("conn", family="conn")
+```
+
+Every cell must be covered by the source (pass `allow_missing=True` to permit
+nulls, which then can't be scaled). The source must have unique keys.
+
 ## Masks
 
 A mask is a named boolean subset of cells, stored on the table. `based_on`

@@ -120,6 +120,46 @@ class FeatureCollection:
         return len(self.columns)
 
 
+def _apply_id_map(
+    frame: pl.DataFrame,
+    id_map: Any,
+    id_column: str,
+    *,
+    on: str | None = None,
+) -> pl.DataFrame:
+    """Left-join ``id_map`` to bring an ``id_column`` into ``frame``.
+
+    ``id_map`` carries ``id_column`` plus a key column already in ``frame`` (e.g.
+    ``root_id``). The key is ``on`` if given, else inferred as the single shared
+    column. Every row of ``frame`` must map, and ids must be unique.
+    """
+    if not isinstance(id_map, pl.DataFrame):
+        id_map = pl.from_pandas(id_map)
+    if id_column not in id_map.columns:
+        raise ValueError(f"id_map must contain the id column {id_column!r}")
+    if on is None:
+        shared = [c for c in id_map.columns if c != id_column and c in frame.columns]
+        if len(shared) != 1:
+            raise ValueError(
+                f"cannot infer the id_map join key; shared columns={shared}. "
+                "Pass the key explicitly."
+            )
+        on = shared[0]
+    elif on not in frame.columns or on not in id_map.columns:
+        raise ValueError(f"id_map join key {on!r} must be in both the table and map")
+    if id_map[on].n_unique() != id_map.height:
+        raise ValueError(f"id_map has duplicate {on!r} keys")
+    joined = frame.join(id_map.select(on, id_column), on=on, how="left")
+    unmapped = joined.filter(pl.col(id_column).is_null())
+    if unmapped.height:
+        sample = unmapped[on].head(5).to_list()
+        raise ValueError(
+            f"{unmapped.height} rows have no {id_column!r} in id_map; "
+            f"sample {on}={sample}"
+        )
+    return joined
+
+
 class _CollectionAccessor:
     """``ft.collections["axon"]`` access to defined feature collections."""
 
@@ -148,6 +188,10 @@ class FeatureTable:
         The feature column names to cluster/scale on.
     id_column:
         The unique per-cell key. Default ``"cell_id"``.
+    id_map:
+        Optional ``[<key>, id_column]`` frame joined in when ``id_column`` is not
+        already present (e.g. mapping ``root_id`` → ``cell_id``). See
+        ``set_id_column`` to do this after construction.
     scaler_factory:
         Zero-argument callable returning a fresh unfitted scaler. Default
         ``StandardScaler``.
@@ -159,6 +203,7 @@ class FeatureTable:
         features: Sequence[str],
         *,
         id_column: str = "cell_id",
+        id_map: pl.DataFrame | None = None,
         feature_metadata: pl.DataFrame | None = None,
         scaler_factory: Any = None,
     ) -> None:
@@ -166,6 +211,8 @@ class FeatureTable:
             df = pl.from_pandas(df)
         frame = df.clone()
 
+        if id_column not in frame.columns and id_map is not None:
+            frame = _apply_id_map(frame, id_map, id_column)
         if id_column not in frame.columns:
             raise ValueError(f"id_column {id_column!r} is not a column")
         if frame[id_column].null_count() or frame[id_column].n_unique() != frame.height:
@@ -316,6 +363,86 @@ class FeatureTable:
             series = series & self.mask_series(based_on)
         self._df = self._df.with_columns(series.alias(_mask_column(name)))
         self._scaler_cache.pop(name, None)
+        return self
+
+    def set_id_column(
+        self,
+        name: str,
+        *,
+        id_map: Any = None,
+        on: str | None = None,
+    ) -> "FeatureTable":
+        """Set (or bring in) the unique cell-id column after construction.
+
+        If ``name`` is already a column it just becomes the id. Otherwise pass an
+        ``id_map`` (a ``[<key>, name]`` frame, e.g. ``['root_id', 'cell_id']``); it
+        is left-joined on the shared key (or ``on``) to add ``name``. Every cell
+        must map and ids must be unique.
+        """
+        if name not in self._df.columns:
+            if id_map is None:
+                raise ValueError(f"{name!r} is not a column; pass an id_map to add it")
+            self._df = _apply_id_map(self._df, id_map, name, on=on)
+        column = self._df[name]
+        if column.null_count() or column.n_unique() != self._df.height:
+            raise ValueError(f"{name!r} must be non-null and unique")
+        self._id_column = name
+        return self
+
+    def add_features(
+        self,
+        source: pl.DataFrame,
+        features: Sequence[str],
+        *,
+        on: str | None = None,
+        feature_metadata: pl.DataFrame | None = None,
+        allow_missing: bool = False,
+    ) -> "FeatureTable":
+        """Join additional feature columns from another source and register them.
+
+        ``source`` is keyed on ``on`` (default: the id column) and must carry the
+        named ``features``. They are left-joined onto the table and added to the
+        feature set; ``feature_metadata`` (a ``feature_id`` + attribute frame)
+        extends ``var`` for them. By default every cell must be covered
+        (``allow_missing=True`` permits nulls, which then can't be scaled).
+        """
+        if not isinstance(source, pl.DataFrame):
+            source = pl.from_pandas(source)
+        on = on or self._id_column
+        features = list(features)
+        if on not in source.columns or on not in self._df.columns:
+            raise ValueError(f"join key {on!r} must be in both the table and source")
+        if source[on].n_unique() != source.height:
+            raise ValueError(f"source has duplicate {on!r} keys")
+        missing = [f for f in features if f not in source.columns]
+        if missing:
+            raise ValueError(f"features not in source: {missing}")
+        clash = [f for f in features if f in self._df.columns]
+        if clash:
+            raise ValueError(f"features already present in the table: {clash}")
+        non_numeric = [f for f in features if not source.schema[f].is_numeric()]
+        if non_numeric:
+            raise TypeError(f"features must be numeric: {non_numeric}")
+
+        joined = self._df.join(source.select(on, *features), on=on, how="left")
+        if not allow_missing:
+            uncovered = [f for f in features if joined[f].null_count()]
+            if uncovered:
+                raise ValueError(
+                    f"source does not cover every cell for: {uncovered} "
+                    "(pass allow_missing=True to permit nulls)"
+                )
+        self._df = joined
+        self._features = self._features + features
+        new_var = pl.DataFrame({"feature_id": features})
+        if feature_metadata is not None:
+            new_var = new_var.join(
+                feature_metadata.filter(pl.col("feature_id").is_in(features)),
+                on="feature_id",
+                how="left",
+            )
+        self._var = pl.concat([self._var, new_var], how="diagonal")
+        self._scaler_cache.clear()
         return self
 
     # -- feature collections ---------------------------------------------------
