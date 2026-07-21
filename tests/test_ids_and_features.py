@@ -123,6 +123,25 @@ def test_add_features_defines_a_collection() -> None:
     assert ft.features(columns="connectivity", scaled=True).shape == (6, 2)
 
 
+def test_add_features_defaults_to_all_non_key_columns() -> None:
+    df = _ossify_output(6).with_columns(
+        pl.Series("cell_id", range(1, 7), dtype=pl.Int64)
+    )
+    ft = FeatureTable(df, features=["axon_len", "dend_vol"])
+    rng = np.random.default_rng(3)
+    extra = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 7), dtype=pl.Int64),
+            "syn_density": rng.normal(size=6),
+            "input_count": rng.normal(size=6),
+        }
+    )
+    # features omitted -> every source column except the join key
+    ft.add_features(extra, collection="conn")
+    assert ft.collections["conn"].columns == ("syn_density", "input_count")
+    assert "syn_density" in ft.feature_columns and "input_count" in ft.feature_columns
+
+
 def test_add_features_coverage_and_validation() -> None:
     df = _ossify_output(6).with_columns(
         pl.Series("cell_id", range(1, 7), dtype=pl.Int64)

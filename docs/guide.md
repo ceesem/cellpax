@@ -47,15 +47,17 @@ and clustering):
 
 ```python
 ft.add_features(
-    synapse_df, ["syn_density", "input_count"],
+    synapse_df,                         # features default to all columns except `on`
     on="cell_id",                       # defaults to the id column
     feature_metadata=conn_meta,         # optional family/modality for the new features
     collection="conn",                  # also define a collection of these features
 )
 ```
 
-Every cell must be covered by the source (pass `allow_missing=True` to permit
-nulls, which then can't be scaled). The source must have unique keys.
+Omit `features` to add every source column except the join key, or pass a list to
+select a subset. Every cell must be covered by the source (pass
+`allow_missing=True` to permit nulls, which then can't be scaled), and the source
+must have unique keys.
 
 ## Masks
 

@@ -392,7 +392,7 @@ class FeatureTable:
     def add_features(
         self,
         source: pl.DataFrame,
-        features: Sequence[str],
+        features: Sequence[str] | None = None,
         *,
         on: str | None = None,
         feature_metadata: pl.DataFrame | None = None,
@@ -401,8 +401,9 @@ class FeatureTable:
     ) -> "FeatureTable":
         """Join additional feature columns from another source and register them.
 
-        ``source`` is keyed on ``on`` (default: the id column) and must carry the
-        named ``features``. They are left-joined onto the table and added to the
+        ``source`` is keyed on ``on`` (default: the id column). ``features``
+        defaults to every column of ``source`` except ``on``; pass a list to
+        select a subset. They are left-joined onto the table and added to the
         feature set; ``feature_metadata`` (a ``feature_id`` + attribute frame)
         extends ``var`` for them. By default every cell must be covered
         (``allow_missing=True`` permits nulls, which then can't be scaled). Pass
@@ -412,9 +413,14 @@ class FeatureTable:
         if not isinstance(source, pl.DataFrame):
             source = pl.from_pandas(source)
         on = on or self._id_column
-        features = list(features)
         if on not in source.columns or on not in self._df.columns:
             raise ValueError(f"join key {on!r} must be in both the table and source")
+        if features is None:
+            features = [c for c in source.columns if c != on]
+        else:
+            features = list(features)
+        if not features:
+            raise ValueError("no feature columns to add")
         if source[on].n_unique() != source.height:
             raise ValueError(f"source has duplicate {on!r} keys")
         missing = [f for f in features if f not in source.columns]
