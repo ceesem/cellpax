@@ -37,6 +37,9 @@ def _built_table(n: int = 60) -> FeatureTable:
     ft.embed(method="pca", n_components=2)
     ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
+    labels.rename([f"C{i}" for i in labels.ids])
+    labels.set_colors({labels.names[0]: "#1f77b4"})
+    labels.set_descriptions({labels.names[0]: "the shallow one"})
     ft.attach(labels)
     return ft
 
@@ -60,6 +63,11 @@ def _assert_round_trip(a: FeatureTable, b: FeatureTable) -> None:
         np.sort(lb.to_frame()["subclass_id"].to_numpy()),
         np.sort(la.to_frame()["subclass_id"].to_numpy()),
     )
+    # attached label identities a column can't hold: colors, descriptions, mask
+    before, after = a.labelset("subclass"), b.labelset("subclass")
+    assert after.catalog().equals(before.catalog())
+    assert after.color_map() == before.color_map() != {}
+    assert after.mask == before.mask
 
 
 def test_save_load_round_trip(tmp_path: Path) -> None:
@@ -87,6 +95,27 @@ def test_many_analyses_and_user_content_coexist(tmp_path: Path) -> None:
     a = FeatureTable.load(folio, "analysis_a")
     b = FeatureTable.load(folio, "analysis_b")
     assert a.n_cells == 60 and b.n_cells == 40
+
+
+def test_save_writes_item_descriptions(tmp_path: Path) -> None:
+    from datafolio import DataFolio
+
+    ft = _built_table()
+    folio_path = tmp_path / "described"
+    ft.save(folio_path, "l23it")
+
+    folio = DataFolio(folio_path, allow_existing=True)
+    table_desc = folio.data["l23it/table"].description
+    assert "60 cells" in table_desc and "4 features" in table_desc
+
+    embedding_desc = folio.data["l23it/embedding/all__pca"].description
+    assert "pca" in embedding_desc and "2D" in embedding_desc
+
+    clustering_desc = folio.data["l23it/clustering/run"].description
+    assert "60x60" in clustering_desc and "average linkage" in clustering_desc
+
+    manifest_desc = folio.data["l23it/manifest"].description
+    assert "manifest" in manifest_desc.lower()
 
 
 def test_clipped_scaler_tag_round_trips(tmp_path: Path) -> None:

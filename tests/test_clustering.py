@@ -10,6 +10,8 @@ from cellpax.clustering import (
     SimilarityMatrix,
     fauxnograph_coclustering,
     make_clipped_scaler,
+    neighborhood_purity,
+    neighborhood_self_predictions,
 )
 from cellpax.featuretable import FeatureTable
 
@@ -102,3 +104,43 @@ def test_consensus_branches() -> None:
     scaler = factory()
     scaler.fit(data)
     assert scaler.transform(data).shape == data.shape
+
+
+def test_neighborhood_self_predictions_excludes_self() -> None:
+    data = _two_blobs(60).select("m0", "m1", "m2").to_numpy()
+    labels = np.array([0] * 30 + [1] * 30)
+    neighbor_labels = neighborhood_self_predictions(data, labels, n_neighbors=5)
+    assert neighbor_labels.shape == (60, 5)
+    # two well-separated blobs -> every neighbor agrees with its own point's label
+    assert np.all(neighbor_labels == labels[:, None])
+
+
+def test_neighborhood_purity_separated_blobs_is_perfect() -> None:
+    data = _two_blobs(60).select("m0", "m1", "m2").to_numpy()
+    labels = np.array([0] * 30 + [1] * 30)
+    purity = neighborhood_purity(data, labels, n_neighbors=5)
+    assert purity.shape == (60,)
+    assert np.allclose(purity, 1.0)
+
+
+def test_neighborhood_purity_scrambled_labels_drop_below_perfect() -> None:
+    data = _two_blobs(60).select("m0", "m1", "m2").to_numpy()
+    rng = np.random.default_rng(0)
+    labels = rng.integers(0, 2, size=60)
+    purity = neighborhood_purity(data, labels, n_neighbors=5)
+    assert purity.mean() < 1.0
+
+
+def test_ft_neighborhood_purity_with_labelset_and_column_name() -> None:
+    ft = FeatureTable(_two_blobs(60), features=["m0", "m1", "m2"])
+    from cellpax.labels import LabelSet
+
+    labels = LabelSet(np.arange(1, 61), np.array([0] * 30 + [1] * 30), name="blob")
+    result = ft.neighborhood_purity(labels, n_neighbors=5)
+    assert result.columns == ["cell_id", "purity"]
+    assert np.allclose(result["purity"].to_numpy(), 1.0)
+
+    # same result when the labels are already attached and referenced by name
+    ft.attach(labels)
+    by_column = ft.neighborhood_purity("blob", n_neighbors=5)
+    assert np.allclose(by_column["purity"].to_numpy(), 1.0)

@@ -115,7 +115,7 @@ def test_choir_prunes_high_res_leiden_overclustering() -> None:
     over = ft.overcluster(
         resolution=4.0, n_neighbors=10, seed=0
     )  # deliberately over-split
-    n_over = len(np.unique(over[over >= 0]))
+    n_over = len(over.ids)
     assert n_over > 3  # high-res Leiden over-splits the 3 groups
     labels = ft.cluster_choir(
         over_clustering=over,

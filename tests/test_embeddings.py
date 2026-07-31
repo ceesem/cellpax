@@ -53,6 +53,40 @@ def test_embedding_respects_mask() -> None:
     assert df.height == 30 and df["pca0"].null_count() == 0
 
 
+def test_features_pca_reduces_correlated_features() -> None:
+    rng = np.random.default_rng(0)
+    n = 100
+    base = rng.normal(size=(n, 3))
+    # 7 more columns as noisy linear combinations of the same 3 latent axes --
+    # correlated, so PCA compresses them even after per-column standardizing.
+    weights = rng.normal(size=(3, 7))
+    derived = base @ weights + rng.normal(scale=0.05, size=(n, 7))
+    coords = np.hstack([base, derived])
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, n + 1), dtype=pl.Int64),
+            **{f"m{i}": coords[:, i] for i in range(10)},
+        }
+    )
+    ft = FeatureTable(df, features=[f"m{i}" for i in range(10)])
+
+    reduced = ft.features_pca(explained_variance=0.95)
+    assert reduced.shape[0] == n
+    assert reduced.shape[1] < 10  # captured by far fewer than the 10 raw columns
+
+    # a near-1.0 target keeps (almost) everything
+    full = ft.features_pca(explained_variance=0.999999)
+    assert full.shape[1] > reduced.shape[1]
+
+
+def test_features_pca_respects_mask_and_columns() -> None:
+    ft = _table(60)
+    ft.add_mask("left", pl.col("region") == "L")
+    reduced = ft.features_pca("left", columns=["m0", "m1"], explained_variance=0.95)
+    assert reduced.shape[0] == 30
+    assert reduced.shape[1] <= 2
+
+
 def test_umap_is_optional() -> None:
     ft = _table(40)
     if importlib.util.find_spec("umap") is None:

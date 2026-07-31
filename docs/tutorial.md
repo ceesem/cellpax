@@ -129,6 +129,14 @@ labels = ft.cluster_choir(over_clustering=over, min_cluster_size=8)
 ## 6. Name labels — and bind to an IntEnum
 
 A `LabelSet` gives clusters identity you can rename, merge, reorder, and color.
+Cluster ids come out in an arbitrary order, so before naming them it's worth
+renumbering by something meaningful — `reorder_labels` derives an order from a
+column instead of you specifying one by hand:
+
+```python
+ft.reorder_labels(labels, "dend_vol")   # cluster 0 = lowest mean dendritic volume
+```
+
 Generate an `IntEnum` to filter by name with autocomplete instead of remembering
 ids (members compare equal to their integer id):
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import polars as pl
@@ -70,8 +70,67 @@ def _default_scaler_factory():
     return StandardScaler()
 
 
+def _validate_scaler_factory(factory: Any) -> Any:
+    """Check ``scaler_factory`` is a zero-arg callable yielding a fresh scaler.
+
+    Guards the easy mistake of passing a scaler *instance* (e.g.
+    ``make_clipped_scaler()``) instead of the factory itself
+    (``make_clipped_scaler``), which would otherwise fail obscurely at scale time.
+    """
+    if not callable(factory):
+        raise TypeError(
+            "scaler_factory must be a zero-argument callable returning a fresh "
+            f"scaler, not a {type(factory).__name__} instance. Pass the factory "
+            "itself (e.g. make_clipped_scaler) rather than calling it "
+            "(make_clipped_scaler()); use clipped_scaler_factory(...) to set "
+            "custom percentiles."
+        )
+    try:
+        scaler = factory()
+    except TypeError as error:
+        raise TypeError(
+            "scaler_factory must be callable with no arguments; "
+            f"calling it raised: {error}"
+        ) from error
+    if not (hasattr(scaler, "fit") and hasattr(scaler, "transform")):
+        raise TypeError(
+            "scaler_factory must return an object with fit/transform methods "
+            f"(a scikit-learn scaler or Pipeline), got {type(scaler).__name__}"
+        )
+    return factory
+
+
 def _dedup(columns: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(columns))
+
+
+def _columns_label(
+    columns: str | FeatureCollection | Sequence[str] | None,
+) -> str | None:
+    """A human name for ``columns``, if it carries one (a str or FeatureCollection)."""
+    if isinstance(columns, FeatureCollection):
+        return columns.name
+    if isinstance(columns, str):
+        return columns
+    return None
+
+
+def _labelled(stored: Any, cluster_id: int, name: str) -> Any:
+    """A ``Label`` for ``cluster_id``, keeping a stored color/description if any.
+
+    The table column is authoritative for the name; everything else comes from
+    what ``attach`` recorded, since a column can't hold it.
+    """
+    from cellpax.labels import Label
+
+    if stored is None:
+        return Label(id=cluster_id, name=name)
+    return Label(
+        id=cluster_id,
+        name=name,
+        color=stored.color,
+        description=stored.description,
+    )
 
 
 def _skew(values: np.ndarray) -> float:
@@ -252,12 +311,17 @@ class FeatureTable:
         self._df = frame.with_columns(pl.lit(True).alias(_mask_column(_DEFAULT_MASK)))
         self._id_column = id_column
         self._features = features
-        self._scaler_factory = scaler_factory or _default_scaler_factory
+        self._scaler_factory = _validate_scaler_factory(
+            scaler_factory or _default_scaler_factory
+        )
         self._scaler_cache: dict[tuple[str, tuple[str, ...]], FittedScaler] = {}
         self._collections: dict[str, FeatureCollection] = {}
         self._transforms: dict[str, str | None] = {}
         self._clusterings: dict[str, Any] = {}
         self._embeddings: dict[tuple[str, str], pl.DataFrame] = {}
+        # attached label column -> {"mask": str | None, "labels": {id: Label}},
+        # the cluster identity a name + id column pair can't carry on its own
+        self._label_meta: dict[str, dict[str, Any]] = {}
 
     # -- accessors -------------------------------------------------------------
 
@@ -292,6 +356,17 @@ class FeatureTable:
         """Non-internal columns (everything except the ``_mask_*`` columns)."""
         return [c for c in self._df.columns if not c.startswith(_MASK_PREFIX)]
 
+    @property
+    def labels(self) -> list[str]:
+        """Names of label columns previously joined in via ``attach``.
+
+        Detected by ``attach``'s own convention of writing a ``{name}`` +
+        ``{name}_id`` column pair, so this only sees labels that were attached,
+        not every ``LabelSet`` ever produced (those are otherwise ephemeral).
+        """
+        cols = set(self.columns)
+        return [c for c in self.columns if f"{c}_id" in cols]
+
     def mask_series(self, mask: str | None = None) -> pl.Series:
         """The boolean membership Series for a mask."""
         name = mask or _DEFAULT_MASK
@@ -299,6 +374,10 @@ class FeatureTable:
         if column not in self._df.columns:
             raise KeyError(f"Unknown mask {name!r}; available: {self.masks}")
         return self._df[column]
+
+    def _cell_ids(self, mask: str | None = None) -> np.ndarray:
+        """Id-column values for a mask's cells, in ``features(mask)`` row order."""
+        return self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
 
     # -- construction / mutation ----------------------------------------------
 
@@ -344,6 +423,12 @@ class FeatureTable:
         ``predicate`` is a polars expression evaluated over the full table, or a
         full-length boolean array/Series. ``based_on`` intersects the result with
         an existing (parent) mask, so hierarchical subsets stay nested.
+
+        A null result counts as ``False`` — a cell the predicate can't decide isn't
+        in the subset. That's what makes masking on a label column work directly
+        (``pl.col("subclass_nn") == "L23IT"``) even though unassigned cells compare
+        null, which is the move that carves the next round of clustering out of a
+        propagated label.
         """
         if not name or name.startswith(_MASK_PREFIX) or name == _DEFAULT_MASK:
             raise ValueError(f"Invalid mask name {name!r}")
@@ -358,12 +443,34 @@ class FeatureTable:
         if series.len() != self._df.height:
             raise ValueError("mask length must match the number of cells")
         if series.null_count():
-            raise ValueError("mask cannot contain nulls")
+            series = series.fill_null(False)
         if based_on is not None:
             series = series & self.mask_series(based_on)
         self._df = self._df.with_columns(series.alias(_mask_column(name)))
-        self._scaler_cache.pop(name, None)
+        self._invalidate_scaler_cache(name)
         return self
+
+    def drop_mask(self, name: str) -> "FeatureTable":
+        """Remove a named mask, the inverse of ``add_mask``.
+
+        Drops the mask's boolean column and any scalers cached for it. The
+        implicit ``"all"`` mask can't be dropped. Masks defined ``based_on``
+        this one were already flattened to their own boolean column at
+        creation time, so they're unaffected.
+        """
+        if name == _DEFAULT_MASK:
+            raise ValueError(f"Cannot drop the implicit {_DEFAULT_MASK!r} mask")
+        column = _mask_column(name)
+        if column not in self._df.columns:
+            raise KeyError(f"Unknown mask {name!r}; available: {self.masks}")
+        self._df = self._df.drop(column)
+        self._invalidate_scaler_cache(name)
+        return self
+
+    def _invalidate_scaler_cache(self, mask: str) -> None:
+        self._scaler_cache = {
+            key: fitted for key, fitted in self._scaler_cache.items() if key[0] != mask
+        }
 
     def set_id_column(
         self,
@@ -624,6 +731,163 @@ class FeatureTable:
             self._clusterings[name] = result
         return result
 
+    def neighborhood_purity(
+        self,
+        labels: Any,
+        *,
+        mask: str | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        n_neighbors: int = 20,
+    ) -> pl.DataFrame:
+        """Per-cell label purity among self-excluded nearest feature-space neighbors.
+
+        ``labels`` is a ``LabelSet`` or the name of an (attached) label column
+        (see ``labelset``). For each cell, looks at its ``n_neighbors`` nearest
+        *other* cells in scaled feature space and reports the fraction that
+        share its label — 1.0 means a cell's whole neighborhood agrees with
+        it, 0.0 means none of it does. A quick check of how well a clustering
+        respects local structure (ported from dfc's neighborhood purity).
+        """
+        from cellpax.clustering import neighborhood_purity as _neighborhood_purity
+
+        labels = self._resolve_labels(labels, mask=mask)
+        name = mask or (labels.mask if labels is not None else None) or _DEFAULT_MASK
+        cell_ids = self._cell_ids(name)
+        label_array = self._align_over_clustering(labels, cell_ids)
+        features = self.features(name, scaled=True, columns=columns)
+        purity = _neighborhood_purity(features, label_array, n_neighbors=n_neighbors)
+        return pl.DataFrame({self._id_column: cell_ids, "purity": purity})
+
+    def propagate_labels(
+        self,
+        labels: Any,
+        *,
+        to: str | None = None,
+        method: Literal["vote", "spread"] = "vote",
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        n_neighbors: int = 30,
+        pca: bool | float = 0.95,
+        weights: Literal["uniform", "distance"] | None = None,
+        preserve_labeled: bool = True,
+        min_confidence: float | None = None,
+        mutual: bool = True,
+        alpha: float = 0.8,
+        agreement_folds: int = 0,
+        name: str | None = None,
+        seed: int | None = None,
+    ) -> Any:
+        """Carry a curated subset's labels out to a larger population.
+
+        The dfc workflow: cluster a high-quality core, then label everything that
+        looks like it. ``labels`` is a ``LabelSet`` (or an attached column name)
+        over a subset of mask ``to``. Returns a
+        :class:`~cellpax.propagate.Propagation` — the new ``LabelSet`` (same
+        cluster ids, names and colors as ``labels``, named ``{labels.name}_nn`` by
+        default), per-cell confidence, and ``self_agreement()``. Nothing is
+        attached; ``ft.attach`` it when you're happy.
+
+        ``method="vote"`` (default) gives each cell the majority label of its
+        ``n_neighbors`` nearest labeled cells — cheap, and every cell gets a label.
+        ``method="spread"`` diffuses labels along a mutual-nearest-neighbor graph
+        instead: evidence scales with how much labeled signal is actually nearby,
+        and a cell with no mutual path to any labeled cell stays unassigned, which
+        is the right answer for a cell unlike anything in the reference. ``mutual``
+        and ``alpha`` apply to ``"spread"``; ``weights`` defaults to ``"uniform"``
+        for the vote and ``"distance"`` for diffusion.
+
+        One feature space is fit over all of ``to`` — scaling and PCA are
+        mask-relative, so the reference must live inside ``to`` (this raises
+        otherwise) rather than being scaled on its own. ``pca`` is the explained
+        variance kept (``0.95`` by default, ``False`` for raw scaled features).
+        ``columns`` narrows to a feature collection, which is how you restrict
+        propagation to features that are valid for every cell rather than only for
+        the core — compare ``self_agreement()`` across column sets to see what a
+        restricted set can still carry. That number is exact leave-one-out for the
+        vote and 5-fold for diffusion; pass ``agreement_folds`` to put both on the
+        same footing before comparing methods (see
+        :class:`~cellpax.propagate.Recovery`).
+
+        With ``preserve_labeled`` (the default) the reference cells keep their own
+        labels and only unlabeled cells are filled in. Pass ``False`` to relabel
+        every cell from its neighborhood, which smooths a noisy clustering — dfc's
+        ``preserve_original_labels=False``.
+
+        ``min_confidence`` unassigns cells whose ``confidence`` — the winning
+        label's share of the support that reached them, in ``[0, 1]`` — falls below
+        the cut, the reference exempt under ``preserve_labeled``. There is no
+        scale-free good value, so don't guess one: the winner among ``c`` locally
+        competing clusters can't score below ``1/c``, and with ``weights="uniform"``
+        the shares are quantized to ``1/n_neighbors``, so many cuts are exact
+        no-ops. Calibrate instead — propagate once with ``preserve_labeled=False``
+        (which puts the reference's confidence on the same footing as the rest) and
+        read the kept-set error rate against the reference's known labels at each
+        candidate cut; the guide's "Choosing ``min_confidence``" walks through it.
+        Note it gates *ambiguity*, not *distance*: under ``"vote"`` a cell far from
+        the entire reference still comes back unanimous at ``1.0``, and abstaining
+        on those is what ``"spread"`` and ``mutual`` are for.
+        """
+        from cellpax.propagate import Propagation, propagate_knn, propagate_spread
+
+        if method not in ("vote", "spread"):
+            raise ValueError(f"method must be 'vote' or 'spread', got {method!r}")
+        labels = self._resolve_labels(labels)
+        target = to or _DEFAULT_MASK
+        target_ids = self._cell_ids(target)
+        reference_ids = labels.cell_ids[labels.assigned]
+        outside = np.setdiff1d(reference_ids, target_ids)
+        if outside.size:
+            raise ValueError(
+                f"{outside.size} of {reference_ids.size} reference cells are outside "
+                f"mask {target!r}; propagation needs the reference inside the target "
+                f"mask, so one feature space covers both"
+            )
+        if pca is False:
+            features = self.features(target, scaled=True, columns=columns)
+            space = "scaled"
+        else:
+            variance = 0.95 if pca is True else float(pca)
+            features = self.features_pca(
+                target, columns=columns, explained_variance=variance, seed=seed
+            )
+            space = f"pca({variance:g})"
+        reference_codes = labels.codes_for(target_ids)
+        if method == "vote":
+            codes, confidence, recovery = propagate_knn(
+                features,
+                reference_codes,
+                n_neighbors=n_neighbors,
+                weights=weights or "uniform",
+                preserve_labeled=preserve_labeled,
+                min_confidence=min_confidence,
+                agreement_folds=agreement_folds,
+                seed=seed,
+            )
+        else:
+            codes, confidence, recovery = propagate_spread(
+                features,
+                reference_codes,
+                n_neighbors=n_neighbors,
+                mutual=mutual,
+                weights=weights or "distance",
+                preserve_labeled=preserve_labeled,
+                alpha=alpha,
+                min_confidence=min_confidence,
+                agreement_folds=agreement_folds or 5,
+                seed=seed,
+            )
+        propagated = labels.with_codes(
+            target_ids, codes, name=name or f"{labels.name}_nn", mask=target
+        )
+        return Propagation(
+            propagated,
+            labels,
+            confidence,
+            recovery,
+            method=method,
+            n_neighbors=n_neighbors,
+            space=space,
+        )
+
     def overcluster(
         self,
         mask: str | None = None,
@@ -634,22 +898,29 @@ class FeatureTable:
         mutual_only: bool = False,
         min_cluster_size: int = 1,
         seed: int | None = None,
-    ) -> np.ndarray:
-        """A single high-resolution Leiden partition of a mask's scaled features.
+        name: str = "leiden",
+    ) -> Any:
+        """A single Leiden partition of a mask's scaled features, as a ``LabelSet``.
 
-        Returns a per-cell integer over-clustering (many small clusters) aligned
-        to ``features(mask)`` rows — a good CHOIR starting point to prune via
-        ``cluster_choir(over_clustering=...)``.
+        The default ``resolution=2.0`` is tuned for over-clustering (many small
+        clusters) — a good CHOIR starting point to prune via
+        ``cluster_choir(over_clustering=...)``, which also accepts the returned
+        ``LabelSet`` directly. Pass a lower ``resolution`` for a standalone,
+        one-shot clustering.
         """
         from cellpax.clustering import cluster_leiden, kneighbor_graph
+        from cellpax.labels import LabelSet
 
         data = self.features(mask, scaled=True, columns=columns)
         graph = kneighbor_graph(data, n_neighbors=n_neighbors, mutual_only=mutual_only)
-        return cluster_leiden(
+        labels = cluster_leiden(
             graph,
             resolution_parameter=resolution,
             seed=seed,
             min_cluster_size=min_cluster_size,
+        )
+        return LabelSet(
+            self._cell_ids(mask), labels, name=name, mask=mask or _DEFAULT_MASK
         )
 
     def cluster_choir(
@@ -696,7 +967,7 @@ class FeatureTable:
         if (clustering is None) == (over_clustering is None):
             raise ValueError("provide exactly one of clustering or over_clustering")
         features = self.features(mask, scaled=True, columns=columns)
-        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        cell_ids = self._cell_ids(mask)
 
         if over_clustering is not None:
             over = self._align_over_clustering(over_clustering, cell_ids)
@@ -725,7 +996,7 @@ class FeatureTable:
             seed=seed,
             n_jobs=n_jobs,
         )
-        return LabelSet(cell_ids, labels, name=name)
+        return LabelSet(cell_ids, labels, name=name, mask=mask or _DEFAULT_MASK)
 
     def _align_over_clustering(
         self, over_clustering: Any, cell_ids: np.ndarray
@@ -767,25 +1038,127 @@ class FeatureTable:
 
         if isinstance(similarity, str):
             similarity = self.clustering(similarity)
-        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        cell_ids = self._cell_ids(mask)
         return LabelSet.from_clustering(
             similarity,
             cell_ids,
             distance_threshold=distance_threshold,
             min_cluster_size=min_cluster_size,
             name=name,
+            mask=mask or _DEFAULT_MASK,
         )
 
-    def attach(self, labels: Any, *, name: str | None = None) -> "FeatureTable":
-        """Attach a ``LabelSet`` as a column, joined on the id column.
+    def reorder_labels(
+        self,
+        labels: Any,
+        column: str,
+        *,
+        mask: str | None = None,
+        agg: Literal["mean", "median"] = "mean",
+        ascending: bool = True,
+    ) -> Any:
+        """Reorder a ``LabelSet`` by an aggregate of one of this table's columns.
 
-        Cells outside the label set get a null label.
+        ``labels`` is a ``LabelSet`` or the name of an (attached) label column
+        (see ``labelset``). ``column`` may be any column (feature or metadata,
+        e.g. ``"soma_depth_um"``) — values are matched to ``labels`` by cell id
+        via :meth:`~cellpax.labels.LabelSet.reorder_by`, so row order doesn't
+        matter.
+        """
+        labels = self._resolve_labels(labels, mask=mask)
+        frame = self._df.filter(self.mask_series(mask))
+        mapping = dict(zip(frame[self._id_column].to_list(), frame[column].to_list()))
+        return labels.reorder_by(mapping, agg=agg, ascending=ascending)
+
+    def attach(self, labels: Any, *, name: str | None = None) -> "FeatureTable":
+        """Attach a ``LabelSet`` as name + id columns, joined on the id column.
+
+        Cells outside the label set get a null name and id — e.g. ``"subclass"``
+        and ``"subclass_id"``, the latter for ``pl.col(...) == an_int_enum_member``
+        comparisons (see ``LabelSet.to_enum``).
+
+        Colors, descriptions and the label set's mask ride along out-of-band (a
+        table column can only hold the name), so ``labelset`` gives back an
+        equivalent ``LabelSet`` and ``save`` keeps them. Attaching over an
+        existing label column raises — ``detach`` first, or pass ``name``.
         """
         column = name or labels.name
-        frame = labels.to_frame(id_column=self._id_column).rename({labels.name: column})
-        keep = [self._id_column, column]
+        clash = [c for c in (column, f"{column}_id") if c in self._df.columns]
+        if clash:
+            raise ValueError(
+                f"{clash} already in the table; detach({column!r}) first or pass name="
+            )
+        frame = labels.to_frame(id_column=self._id_column).rename(
+            {labels.name: column, f"{labels.name}_id": f"{column}_id"}
+        )
+        keep = [self._id_column, column, f"{column}_id"]
         self._df = self._df.join(frame.select(keep), on=self._id_column, how="left")
+        self._label_meta[column] = {"mask": labels.mask, "labels": labels.meta}
         return self
+
+    def detach(self, name: str) -> "FeatureTable":
+        """Drop an attached label's ``name`` + ``name_id`` columns, the inverse of ``attach``."""
+        id_column = f"{name}_id"
+        missing = [c for c in (name, id_column) if c not in self._df.columns]
+        if missing:
+            raise KeyError(f"Unknown label {name!r}; attached: {self.labels}")
+        self._df = self._df.drop(name, id_column)
+        self._label_meta.pop(name, None)
+        return self
+
+    def labelset(self, column: str, *, mask: str | None = None) -> Any:
+        """Reconstruct a ``LabelSet`` from a column, the reverse of ``attach``.
+
+        Lets any method that wants a ``LabelSet`` (``compare``, ``dataframe``,
+        ``reorder_labels``, ``neighborhood_purity``) be handed a plain column
+        name instead — no need to keep the original ``LabelSet`` object around
+        once it's been attached, or to build one at all for a column that
+        arrived some other way (e.g. an externally supplied cell type column).
+
+        If a companion ``{column}_id`` integer column exists (as ``attach``
+        produces), it's used directly and ``column``'s values become the
+        cluster names. Otherwise ``column``'s own values are factorized via
+        :meth:`~cellpax.labels.LabelSet.from_labels`. Null/missing values
+        become unassigned (``-1``).
+
+        For a column that came from ``attach``, the colors, descriptions and mask
+        recorded then are restored too — so ``ft.attach(labels)`` followed by
+        ``ft.labelset(...)`` round-trips, here or after a ``save``/``load``. The
+        column itself still decides the names, since that's what the table shows.
+        An explicit ``mask`` overrides the recorded one.
+        """
+        from cellpax.labels import Label, LabelSet
+
+        stored = self._label_meta.get(column, {})
+        if mask is None:
+            recorded = stored.get("mask")
+            if recorded in self.masks:
+                mask = recorded
+        identities: dict[int, Label] = stored.get("labels", {})
+        frame = self._df.filter(self.mask_series(mask))
+        cell_ids = frame[self._id_column].to_numpy()
+        id_column = f"{column}_id"
+        if id_column in frame.columns:
+            raw_ids = frame[id_column].to_list()
+            raw_names = frame[column].to_list()
+            labels = np.array(
+                [-1 if i is None else int(i) for i in raw_ids], dtype=np.int64
+            )
+            meta = {
+                int(i): _labelled(identities.get(int(i)), int(i), str(n))
+                for i, n in zip(raw_ids, raw_names)
+                if i is not None and int(i) >= 0
+            }
+            return LabelSet(
+                cell_ids, labels, meta=meta, name=column, mask=mask or _DEFAULT_MASK
+            )
+        return LabelSet.from_labels(
+            cell_ids, frame[column].to_list(), name=column, mask=mask or _DEFAULT_MASK
+        )
+
+    def _resolve_labels(self, labels: Any, *, mask: str | None = None) -> Any:
+        """Coerce a ``LabelSet`` or column-name string into a ``LabelSet``."""
+        return self.labelset(labels, mask=mask) if isinstance(labels, str) else labels
 
     # -- embeddings ------------------------------------------------------------
 
@@ -805,8 +1178,15 @@ class FeatureTable:
         ``method="pca"`` (default) uses scikit-learn; ``method="umap"`` requires
         ``umap-learn`` (imported lazily). Coordinates are stored under
         ``(mask, name)`` and returned as ``cell_id`` + ``{name}0..{name}{k-1}``.
+
+        Without an explicit ``name``, the default folds in ``columns``' own name
+        (a collection's string name or a ``FeatureCollection.name``) so embedding
+        different column sets with the same ``method`` doesn't silently overwrite
+        one another; a raw column list has no such name, so pass ``name``
+        explicitly when embedding one.
         """
-        label = name or method
+        columns_label = _columns_label(columns)
+        label = name or (f"{method}_{columns_label}" if columns_label else method)
         data = self.features(mask, scaled=True, columns=columns)
         if method == "pca":
             from sklearn.decomposition import PCA
@@ -826,7 +1206,7 @@ class FeatureTable:
             ).fit_transform(data)
         else:
             raise ValueError(f"Unknown embedding method {method!r}")
-        cell_ids = self._df.filter(self.mask_series(mask))[self._id_column].to_numpy()
+        cell_ids = self._cell_ids(mask)
         frame = pl.DataFrame(
             {
                 self._id_column: cell_ids,
@@ -835,6 +1215,32 @@ class FeatureTable:
         )
         self._embeddings[(mask or _DEFAULT_MASK, label)] = frame
         return frame
+
+    def features_pca(
+        self,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        explained_variance: float = 0.95,
+        seed: int | None = None,
+    ) -> np.ndarray:
+        """PCA-reduced scaled features, keeping just enough components.
+
+        Fits PCA on the mask's scaled features (``columns`` narrows which
+        ones) and keeps the smallest number of components whose cumulative
+        explained variance ratio reaches ``explained_variance`` (default
+        ``0.95``). Unlike ``embed``, this isn't named/stored/retrievable — it's
+        a plain ``(n_cells, k)`` array meant to be fed straight into
+        ``fauxnograph_coclustering``/``SimilarityMatrix`` for kNN/Leiden
+        clustering on a denoised, lower-dimensional space instead of the raw
+        scaled features.
+        """
+        from sklearn.decomposition import PCA
+
+        data = self.features(mask, scaled=True, columns=columns)
+        return PCA(n_components=explained_variance, random_state=seed).fit_transform(
+            data
+        )
 
     def embedding(self, mask: str | None = None, *, name: str = "pca") -> pl.DataFrame:
         """Return a stored embedding's coordinates."""
@@ -880,6 +1286,7 @@ class FeatureTable:
         scaled: bool = False,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         embedding: str | None = None,
+        labels: Any = None,
     ) -> pl.DataFrame:
         """Return the masked table with feature columns raw or scaled.
 
@@ -888,8 +1295,16 @@ class FeatureTable:
         normalized (``scaled=True``). With ``columns`` only that collection's
         features are scaled; with ``embedding`` a stored embedding's coordinates
         are joined on. Internal ``_mask_*`` columns are dropped.
+
+        ``labels`` joins an unattached ``LabelSet``'s name/id columns onto the
+        view (no ``attach`` needed) — handy for one-off plotting. It may also
+        be the name of an already-attached label column (see ``labelset``). If
+        ``mask`` is omitted, it defaults to ``labels.mask``, the mask the
+        LabelSet was computed on, so passing just ``labels`` is enough on its
+        own.
         """
-        name = mask or _DEFAULT_MASK
+        labels = self._resolve_labels(labels, mask=mask)
+        name = mask or (labels.mask if labels is not None else None) or _DEFAULT_MASK
         frame = self._df.filter(self.mask_series(name))
         if scaled:
             cols = self._resolve_columns(columns)
@@ -906,15 +1321,25 @@ class FeatureTable:
             frame = frame.join(
                 self.embedding(name, name=embedding), on=self._id_column, how="left"
             )
+        if labels is not None:
+            frame = frame.join(
+                labels.to_frame(id_column=self._id_column),
+                on=self._id_column,
+                how="left",
+            )
         return frame
 
     # -- comparison ------------------------------------------------------------
 
     def compare(self, a: Any, b: Any) -> Any:
-        """Compare two ``LabelSet``s over shared cells (see :mod:`cellpax.compare`)."""
+        """Compare two label sets over shared cells (see :mod:`cellpax.compare`).
+
+        ``a``/``b`` may each be a ``LabelSet`` or the name of an (attached)
+        label column (see ``labelset``).
+        """
         from cellpax.compare import compare
 
-        return compare(a, b)
+        return compare(self._resolve_labels(a), self._resolve_labels(b))
 
     # -- persistence -----------------------------------------------------------
 

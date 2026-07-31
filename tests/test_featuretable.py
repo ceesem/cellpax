@@ -78,6 +78,38 @@ def test_masks_hierarchical_based_on() -> None:
         ft.add_mask("bad", pl.col("m0"))
 
 
+def test_drop_mask_removes_column_and_invalidates_scaler() -> None:
+    ft = _table(10)
+    ft.add_mask("sub", pl.col("cell_id") <= 5)
+    ft.features("sub", scaled=True)  # populate the scaler cache for "sub"
+    assert ("sub", ("m0", "m1")) in ft._scaler_cache
+
+    ft.drop_mask("sub")
+    assert "sub" not in ft.masks
+    assert not ft._scaler_cache  # cached scaler for the dropped mask is gone
+    with pytest.raises(KeyError, match="Unknown mask"):
+        ft.mask_series("sub")
+    with pytest.raises(KeyError, match="Unknown mask"):
+        ft.drop_mask("sub")
+    with pytest.raises(ValueError, match="implicit"):
+        ft.drop_mask("all")
+
+
+def test_add_mask_redefinition_does_not_reuse_stale_scaler() -> None:
+    # regression: redefining a mask must refit its scaler on the NEW subset,
+    # not silently reuse one cached under the old definition
+    from sklearn.preprocessing import StandardScaler
+
+    ft = _table(10)
+    ft.add_mask("sub", pl.col("cell_id") <= 5)
+    ft.features("sub", scaled=True)  # populate the cache under the old definition
+
+    ft.add_mask("sub", pl.col("cell_id") > 5)
+    raw = ft.dataframe("sub").select("m0", "m1").to_numpy()
+    expected = StandardScaler().fit_transform(raw)
+    assert np.allclose(ft.features("sub", scaled=True), expected)
+
+
 def test_dataframe_raw_vs_scaled_and_masking() -> None:
     ft = _table(40)
     ft.add_mask("right", pl.col("region") == "R")

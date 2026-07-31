@@ -317,3 +317,47 @@ class SimilarityMatrix:
                 n_clusters.append(len(np.unique(labels[labels >= 0])))
             counts = np.array(n_clusters)
         return distance_range, counts
+
+
+# --------------------------------------------------------------------------- #
+# neighborhood prediction / purity
+# --------------------------------------------------------------------------- #
+
+
+def neighborhood_self_predictions(
+    features: np.ndarray,
+    labels: np.ndarray,
+    n_neighbors: int = 20,
+) -> np.ndarray:
+    """For each row, the labels of its ``n_neighbors`` nearest *other* rows.
+
+    Ported from dfc's ``neighborhood_self_predictions``. Fits a kNN index on
+    ``features``, queries each point against itself, and drops the self-match
+    (always the nearest at distance 0) so every row's own label never leaks
+    into its own neighborhood — a leave-one-out view of local label agreement.
+
+    Returns an ``(n_rows, n_neighbors)`` array of neighbor label values.
+    """
+    nn = NearestNeighbors(n_neighbors=n_neighbors + 1)
+    nn.fit(features)
+    _, indices = nn.kneighbors(features)
+    return np.asarray(labels)[indices[:, 1:]]
+
+
+def neighborhood_purity(
+    features: np.ndarray,
+    labels: np.ndarray,
+    n_neighbors: int = 20,
+) -> np.ndarray:
+    """Fraction of each point's self-excluded nearest neighbors sharing its label.
+
+    Ported from dfc's ``compute_neighborhood_purity``: a per-cell diagnostic
+    for how well a clustering's labels respect local structure in feature
+    space — 1.0 means every one of a cell's ``n_neighbors`` nearest other
+    cells carries the same label, 0.0 means none do.
+    """
+    labels = np.asarray(labels)
+    neighbor_labels = neighborhood_self_predictions(
+        features, labels, n_neighbors=n_neighbors
+    )
+    return (neighbor_labels == labels[:, None]).mean(axis=1)
