@@ -23,7 +23,8 @@ Everything hangs off `FeatureTable`:
 - **`preprocess()`** — inverse-hyperbolic-sine screening of heavy-tailed features,
   fit per mask.
 - **Clustering** — `cluster` (fauxnograph kNN/Leiden consensus) and
-  `cluster_choir` (statistically-validated, no threshold).
+  `overcluster` (single high-resolution Leiden), with a hierarchy toolkit
+  (`merge_support`, nested labels, per-cell stability) for choosing cuts.
 - **`LabelSet`** — clusters with identity (`name`, `color`), clean relabeling, and
   `IntEnum` bindings so you write `L.L5IT` with autocomplete.
 - **`compare`** — contingency, ARI/NMI/FMI/Jaccard, and alluvial frames across
@@ -41,8 +42,8 @@ ft.define_features("axon", family="axon")
 ft.add_mask("l23", pl.col("layer") == "L2/3")
 ft.preprocess()                                   # ihs on heavy-tailed features
 
-ft.cluster("l23", columns="axon", name="run")
-labels = ft.cluster_choir("run", mask="l23", name="subclass")  # no threshold to tune
+clus = ft.cluster("l23", columns="axon", name="run")
+labels = clus.label(distance_threshold=0.6, name="subclass")
 labels.rename({0: "L2a", 1: "L2b"})
 ft.attach(labels)
 

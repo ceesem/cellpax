@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pytest
 
 from cellpax.clustering import make_clipped_scaler
 from cellpax.featuretable import FeatureTable
@@ -111,8 +112,12 @@ def test_save_writes_item_descriptions(tmp_path: Path) -> None:
     embedding_desc = folio.data["l23it/embedding/all__pca"].description
     assert "pca" in embedding_desc and "2D" in embedding_desc
 
-    clustering_desc = folio.data["l23it/clustering/run"].description
-    assert "60x60" in clustering_desc and "average linkage" in clustering_desc
+    # a clustering with runs stores the runs, not the matrix they imply
+    partitions_desc = folio.data["l23it/partitions/run"].description
+    assert "60 cells" in partitions_desc and "Leiden runs" in partitions_desc
+
+    settings_desc = folio.data["l23it/settings/run"].description
+    assert "resolution" in settings_desc
 
     manifest_desc = folio.data["l23it/manifest"].description
     assert "manifest" in manifest_desc.lower()
@@ -131,3 +136,216 @@ def test_clipped_scaler_tag_round_trips(tmp_path: Path) -> None:
     ft.save(tmp_path / "f", "clip")
     reloaded = FeatureTable.load(tmp_path / "f", "clip")
     assert np.allclose(reloaded.features(scaled=True), ft.features(scaled=True))
+
+
+# -- storing the runs rather than the matrix they imply -------------------------
+
+
+def _run_table(n: int = 60, dim: int = 8) -> FeatureTable:
+    rng = np.random.default_rng(0)
+    coords = rng.normal(0, 1.0, (n, dim))
+    coords[n // 2 :, :3] += 8.0
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, n + 1), dtype=pl.Int64),
+            **{f"m{i}": coords[:, i] for i in range(dim)},
+        }
+    )
+    return FeatureTable(df, features=[f"m{i}" for i in range(dim)])
+
+
+def test_partitions_are_stored_and_the_consensus_derived_on_load(tmp_path) -> None:
+    from cellpax import load_feature_table, save_feature_table
+
+    ft = _run_table()
+    original = ft.cluster(
+        graph_type=["knn", "umap_fuzzy"],
+        n_neighbors=15,
+        resolution=[0.3, 1.0],
+        n_times=2,
+        seed=0,
+        n_jobs=1,
+        name="run",
+    )
+    path = tmp_path / "f.zarr"
+    save_feature_table(ft, path, name="t")
+
+    restored = load_feature_table(path, name="t").clustering("run")
+    np.testing.assert_array_equal(
+        restored.partitions.labels, original.partitions.labels
+    )
+    np.testing.assert_array_equal(
+        restored.partitions.graph_type, original.partitions.graph_type
+    )
+    np.testing.assert_allclose(
+        restored.similarity_matrix.toarray(),
+        original.similarity_matrix.toarray(),
+        atol=1e-6,
+    )
+
+
+def test_the_stored_runs_are_far_smaller_than_the_triplet_form(tmp_path) -> None:
+    """The reason for the change: a triplet table can exceed the eager-load limit.
+
+    Triplets grow with the number of nonzero cell *pairs*, so they scale as n^2 while the
+    runs scale as n x n_runs. The gap is what made a saved analysis unloadable.
+    """
+    from scipy.sparse import coo_matrix
+
+    ft = _run_table()
+    clus = ft.cluster(
+        n_neighbors=15, resolution=[0.3, 1.0], n_times=4, seed=0, n_jobs=1
+    )
+    triplet_bytes = coo_matrix(clus.similarity_matrix).nnz * (8 + 8 + 4)
+    partition_bytes = clus.partitions.n_cells * clus.partitions.n_runs * 4
+    assert partition_bytes < triplet_bytes / 3
+
+
+def test_a_version_one_triplet_clustering_still_loads(tmp_path) -> None:
+    """Older folios must keep working, and come back without partitions as before."""
+    from datafolio import DataFolio
+    from scipy.sparse import coo_matrix
+
+    from cellpax import load_feature_table, save_feature_table
+
+    ft = _run_table()
+    clus = ft.cluster(n_neighbors=15, n_times=2, seed=0, n_jobs=1, name="run")
+    path = tmp_path / "f.zarr"
+    save_feature_table(ft, path, name="t")
+
+    # rewrite the folio in the v1 shape: triplets, no storage marker, no spaces
+    folio = DataFolio(path, allow_existing=True)
+    cx = coo_matrix(clus.similarity_matrix)
+    folio.add(
+        "t/clustering/run",
+        pl.DataFrame(
+            {
+                "row": cx.row.astype(np.int64),
+                "col": cx.col.astype(np.int64),
+                "value": cx.data.astype(np.float64),
+            }
+        ),
+        description="v1 triplets",
+        overwrite=True,
+    )
+    manifest = folio.get("t/manifest")
+    manifest["version"] = "1"
+    manifest.pop("spaces", None)
+    manifest["clusterings"]["run"].pop("storage", None)
+    folio.add("t/manifest", manifest, overwrite=True)
+
+    restored = load_feature_table(path, name="t").clustering("run")
+    assert restored.partitions is None
+    np.testing.assert_allclose(
+        restored.similarity_matrix.toarray(),
+        clus.similarity_matrix.toarray(),
+        atol=1e-6,
+    )
+
+
+def test_a_clustering_without_runs_falls_back_to_the_matrix(tmp_path) -> None:
+    """A reloaded v1 clustering, re-saved, has no runs to store."""
+    from cellpax import load_feature_table, save_feature_table
+    from cellpax.clustering import Clustering
+
+    ft = _run_table()
+    matrix = ft.cluster(n_neighbors=15, n_times=2, seed=0, n_jobs=1).similarity_matrix
+    ft._clusterings["bare"] = Clustering(
+        matrix, cell_ids=ft._cell_ids("all"), mask="all", normalized=True
+    )
+    path = tmp_path / "f.zarr"
+    save_feature_table(ft, path, name="t")
+
+    restored = load_feature_table(path, name="t").clustering("bare")
+    assert restored.partitions is None
+    np.testing.assert_allclose(
+        restored.similarity_matrix.toarray(), matrix.toarray(), atol=1e-6
+    )
+
+
+# -- frozen spaces --------------------------------------------------------------
+
+
+def test_a_fitted_space_is_reloaded_rather_than_refit(tmp_path) -> None:
+    """The point of freezing: reapplying to a future dataset must not refit anything."""
+    from cellpax import load_feature_table, save_feature_table
+
+    ft = _run_table()
+    ft.cluster(n_neighbors=15, n_times=2, seed=0, n_jobs=1, alpha=0.5, name="run")
+    original = ft.space()
+
+    path = tmp_path / "f.zarr"
+    save_feature_table(ft, path, name="t")
+    restored = load_feature_table(path, name="t").space()
+
+    np.testing.assert_array_equal(restored.components_, original.components_)
+    np.testing.assert_array_equal(restored.eigenvalues_, original.eigenvalues_)
+    assert restored.n_components == original.n_components
+    raw = ft.features()[:5]
+    np.testing.assert_allclose(restored.transform(raw), original.transform(raw))
+
+
+# -- the scaler tag cannot silently change preprocessing ------------------------
+
+
+def test_a_configured_clipped_factory_round_trips_its_bounds(tmp_path) -> None:
+    from cellpax import load_feature_table, save_feature_table
+    from cellpax.clustering import clipped_scaler_factory
+
+    for key, factory in (
+        ("sigma4", clipped_scaler_factory(mode="sigma", n_sigma=4.0)),
+        ("pct1", clipped_scaler_factory(1.0, 99.0)),
+    ):
+        rng = np.random.default_rng(0)
+        df = pl.DataFrame(
+            {
+                "cell_id": pl.Series(range(1, 41), dtype=pl.Int64),
+                **{f"m{i}": rng.normal(size=40) for i in range(4)},
+            }
+        )
+        ft = FeatureTable(
+            df, features=[f"m{i}" for i in range(4)], scaler_factory=factory
+        )
+        before = ft.features(scaled=True)
+        path = tmp_path / f"{key}.zarr"
+        save_feature_table(ft, path, name=key)
+        back = load_feature_table(path, name=key)
+        np.testing.assert_allclose(before, back.features(scaled=True))
+
+
+def test_an_unrecognised_scaler_factory_refuses_to_save(tmp_path) -> None:
+    """It used to be recorded as "custom" and reload as plain standardisation."""
+    from sklearn.preprocessing import MinMaxScaler
+
+    from cellpax import save_feature_table
+
+    rng = np.random.default_rng(0)
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 21), dtype=pl.Int64),
+            **{f"m{i}": rng.normal(size=20) for i in range(3)},
+        }
+    )
+    ft = FeatureTable(
+        df, features=[f"m{i}" for i in range(3)], scaler_factory=MinMaxScaler
+    )
+    with pytest.raises(TypeError, match="silently changing every scaled value"):
+        save_feature_table(ft, tmp_path / "f.zarr", name="t")
+
+
+def test_an_unknown_scaler_tag_refuses_to_load(tmp_path) -> None:
+    from datafolio import DataFolio
+
+    from cellpax import load_feature_table, save_feature_table
+
+    ft = _run_table()
+    path = tmp_path / "f.zarr"
+    save_feature_table(ft, path, name="t")
+
+    folio = DataFolio(path, allow_existing=True)
+    manifest = folio.get("t/manifest")
+    manifest["scaler"] = "quantile"
+    folio.add("t/manifest", manifest, overwrite=True)
+
+    with pytest.raises(ValueError, match="unknown scaler tag"):
+        load_feature_table(path, name="t")

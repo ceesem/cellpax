@@ -87,7 +87,7 @@ ft.collections["axon"] | ft.collections["dend"]      # union; also & and -
 ```
 
 Pass a collection (its name, the object, or a plain list) as `columns=` to
-`dataframe`, `features`, `cluster`, `cluster_choir`, and `embed`.
+`dataframe`, `features`, `cluster`, `overcluster`, and `embed`.
 
 ## Preprocessing and scaling
 
@@ -110,79 +110,429 @@ features with negative values.
 ## Clustering
 
 Consensus clustering (repeated kNN/Leiden, "fauxnograph") runs on scaled features
-and returns a `SimilarityMatrix`:
+reduced by PCA (see [below](#which-space-the-knn-graph-is-built-in)). The full path
+from features to a table column is four steps:
 
 ```python
-ft.cluster(
+clus = ft.cluster(                      # -> Clustering
     "l23", columns="axon",
     n_neighbors=(30,),      # int or a swept list
     resolution=(1.0,),      # int/float or a swept list
     n_times=20, min_cluster_size=10,
     seed=0, n_jobs=-1, name="run",
 )
-sim = ft.clustering("run")
-sim.cluster_count_curve()               # choose a distance threshold
-sim.cluster_labels(0.6, min_cluster_size=10)   # raw integer labels
+clus.cluster_count_curve()              # choose a distance threshold
+labels = clus.label(distance_threshold=0.6, min_cluster_size=10)   # -> LabelSet
+ft.attach(labels)                       # -> table columns
 ```
 
-The `SimilarityMatrix` caches its hierarchical linkage; `cluster_labels` cuts it
-at a distance threshold and `cluster_count_curve` sweeps thresholds.
+A `Clustering` is a `SimilarityMatrix` that also remembers **which cells it covers** —
+its `mask`, that mask's `cell_ids` in matrix-row order, the `columns` compared, and
+the `space` they were compared in:
 
-A single high-resolution Leiden partition (for CHOIR, below) is available too:
+```python
+clus.mask       # 'l23'
+clus.space      # 'pca(0.95)'
+clus.columns    # ('axon_length', 'axon_branches', …)
+clus.cell_ids   # the mask's ids, row-aligned with the matrix
+```
+
+That provenance is what makes `clus.label(...)` safe. Rows are matched to mask
+members **by position, not by id**, so cutting a clustering against the wrong mask
+mislabels every cell. Because the clustering carries its own mask, there is nothing
+to line up by hand — and `ft.label` takes the mask from it, raising if you pass
+one that disagrees rather than silently misaligning.
+
+Everything a `SimilarityMatrix` does still works, since `Clustering` subclasses it:
+`linkage` is cached, `cluster_labels(0.6)` gives raw integer labels, and
+`cluster_count_curve()` sweeps thresholds. `ft.label(sim, mask=…, …)` also remains,
+for a `SimilarityMatrix` computed outside the table.
+
+`ft.clustering("run")` retrieves a stored one, provenance intact — including after a
+`save`/`load` round trip. (Analyses saved before clusterings carried provenance load
+with `mask="all"`, which is what `ft.label(name, distance_threshold=…)` assumed back
+then.)
+
+### Which space the kNN graph is built in
+
+The graph is built on the mask's scaled features **reduced by PCA to `pca=0.95`** —
+the smallest number of components reaching that explained variance. This is the space
+phenograph-style clustering is conventionally run in: correlated features stop each
+counting separately toward the neighbor distances, and the graph is built on a
+denoised, cheaper matrix. It matches `propagate_labels`' default, so clusters and the
+propagation of those clusters live in one space.
+
+```python
+ft.cluster("l23", n_times=20, name="run")            # pca=0.95, the default
+ft.cluster("l23", n_times=20, pca=False, name="run") # raw scaled, full dimensionality
+ft.cluster("l23", n_times=20, pca=0.99, name="run")  # keep more variance
+```
+
+Two things to watch:
+
+- **A reduced space can split more finely than the full one.** Components carrying
+  little variance also carried little separation, so a group held together by their
+  combined strength can come apart without them. Read `cluster_count_curve()` after
+  changing `pca` rather than reusing a threshold chosen under the other setting.
+- **The reduction is degenerate when features are near-perfectly correlated.** If
+  every feature separates your groups the same way, 0.95 collapses to one component
+  and Leiden will over-split along it. Check with
+  `ft.features_pca(mask, explained_variance=0.95).shape[1]` — if that's 1 or 2 on a
+  many-feature table, prefer `pca=False`.
+
+A single high-resolution Leiden partition is available too — the quick look before
+committing to a full consensus run, and the deliberate over-split that downstream
+merging or manifold work starts from:
 
 ```python
 ft.overcluster("l23", resolution=4.0)   # -> a LabelSet, many small clusters
 ```
 
-## CHOIR: statistically-validated clusters (no single threshold)
+`overcluster` runs on the **raw scaled features** rather than `pca(0.95)`. Pass
+`space=ft.space(mask, columns=…)` to put it in the same representation `cluster`
+uses, so the two are comparing cells in one space rather than two.
 
-A single agglomeration cut can't be right everywhere — some branches should merge
-while others at the same level shouldn't. `ft.cluster_choir` resolves a hierarchy
-without a global threshold: following [CHOIR](https://www.choirclustering.com/)
-(Sant et al., *Nature Genetics* 2025), it keeps each split only where the two
-child clusters are random-forest–distinguishable beyond a permutation null, with a
-variance condition so the separation must be *stably* high, and merges the rest.
+### Seeds and reproducibility
 
-```python
-labels = ft.cluster_choir(
-    "run", mask="l23", name="subclass",
-    alpha=0.05, min_cluster_size=20,
-    n_iterations=100, use_variance=True,   # use_variance=False is less conservative
-)                                          # -> a LabelSet, data-driven cluster count
-```
-
-Three ways to use it:
-
-- **Prune the consensus tree** — pass the `SimilarityMatrix` (or stored name).
-- **Prune any over-clustering** — pass `over_clustering=` a per-cell partition
-  (array or `LabelSet`), e.g. from `ft.overcluster` (high-res Leiden) or KMeans; a
-  hierarchy is built over the cluster centroids and pruned. CHOIR's design favours
-  an intentional over-split.
-- **Per-node feature reselection** — with `reselect=True`, the `n_features` most
-  variable features *within each subtree* are used for that node's test
-  (optionally projected to `n_pcs` PCs), since the features distinguishing coarse
-  types differ from those distinguishing fine ones. Selection is unsupervised (it
-  uses the node's cells, not the child labels under test), so it doesn't bias the
-  test.
+Every stochastic verb is deterministic by default. The table carries a seed
+(`FeatureTable(df, features=[...], seed=0)`), and `cluster`, `embed` and
+`overcluster` with `seed=None` — the default — derive a per-call seed from it and
+the call's *identity*: the verb, the mask, and the run name. The same call on the
+same table reproduces exactly; two differently-named runs get different streams; an
+explicit `seed=` overrides the derivation.
 
 ```python
-over = ft.overcluster("l23", resolution=4.0)
-ft.cluster_choir(over_clustering=over, mask="l23", reselect=True, n_features=30)
+ft = FeatureTable(df, features=cols, seed=0)
+ft.cluster("l23", n_times=20, name="run")     # reproducible without a seed argument
+ft.cluster("l23", n_times=20, name="run2")    # a different, equally stable stream
 ```
 
-The random-forest test always runs on the feature matrix; the over-clustering and
-the hierarchy over it are what you choose (features via Leiden is the standard,
-CHOIR-like source; the consensus is a denoised alternative). `use_variance` is the
-key anti-over-clustering guard; raise `n_iterations` for more stable decisions.
+The derivation deliberately ignores the *data* — feature values, column lists —
+because a seed that moved with the features would confound the comparisons the
+validation tools are built for: comparing two feature sets under one run name should
+change the features and nothing else. Rename the run when you want a fresh stream;
+hold the name when you want a controlled comparison.
+
+What a run actually received is recorded, not remembered. `clus.params` carries the
+full producing call, resolved seed included, and persists with a saved analysis —
+`ft.cluster(mask, **params)` replays the ensemble bit for bit. Embedding
+parameterizations persist in the manifest the same way, which matters because the
+fitted models themselves do not.
+
+One cost worth knowing: a UMAP given a `random_state` runs single-threaded, and
+`embed(method="umap")` now always passes one. If you want unseeded, parallel UMAP
+layout, call the backend directly and register the coordinates with
+`add_embedding`.
+
+### Whitening the PCs: `alpha`
+
+Truncating PCA is a rotation plus a truncation, not a reweighting. A block of features
+that measures one thing several ways — soma volume, soma area, soma radius; or eleven
+percentiles of one depth profile — collapses into a single high-eigenvalue component that
+then dominates Euclidean distance exactly as much as the raw block did. With dozens of
+engineered features rather than thousands of genes, that does not average out.
+
+`alpha` scales component *j* by `λ_j ** (-alpha/2)`: `0.0` (the default) leaves PCA's own
+scaling alone, `1.0` equalises the retained components entirely.
+
+```python
+space = ft.space("l23")                     # the frozen scaling + PCA
+space.condition_number                      # how ill-conditioned the inputs are
+space.spectrum(ft.features("l23", scaled=True))   # scree + discarded-PC kurtosis
+
+for alpha in (0.0, 0.25, 0.5, 0.75, 1.0):   # one PCA fit serves all five
+    ft.cluster("l23", alpha=alpha, n_times=20, seed=0, name=f"a{alpha}")
+```
+
+`ft.space(...)` caches on the *fit* only — `alpha` is applied as a view over it, so a
+sweep is structurally incapable of refitting the space underneath itself. That is what
+makes "only the swept axis differs" true rather than intended.
+
+Which features are redundant is worth looking at before choosing an `alpha`:
+
+```python
+from cellpax import feature_correlation
+sm = feature_correlation(ft.features("l23", columns="analysis"),
+                         ft.collections["analysis"].columns)
+sm.sizes            # block sizes; a block of 11 is 11 columns counting once
+sm.cell_ids         # feature names in dendrogram order
+```
+
+Three things to watch:
+
+- **Whitening amplifies the *smallest retained* component most**, so a truncation chosen
+  by cumulative variance becomes a discontinuity: the last kept component gets full
+  weight and the first dropped one gets none. Pass
+  `eigenvalue_floor=ft.space(mask).noise_floor` — the median discarded eigenvalue, an
+  estimate of the scale the truncation already judged to be noise — to bound that. At
+  `alpha=1` with no floor, a near-degenerate direction can be inflated into the metric;
+  the transform raises rather than doing so silently.
+- **The clustering space diverges from the space `embed` builds a UMAP in.** At `alpha=0`
+  the two are metrically close, since PCA at 0.95 preserves most pairwise distance. At
+  `alpha > 0` they genuinely differ, so **labels will look worse on an existing UMAP even
+  when the clustering improved.** Score the change on `cellpax.validate`, not on the
+  figure — that divergence is the reason the figure stops being evidence.
+- **A discarded component with high excess kurtosis is not noise.** `spectrum()` reports
+  it per component, with `n_tail_cells`. A near-Gaussian dropped component costs nothing;
+  a sharply peaked one is a small group separating along a low-variance direction, and a
+  cumulative-variance cut discards it *because* few cells are involved — backwards if
+  those cells are a rare type.
+
+### Weighting feature blocks instead of components
+
+`alpha` reweights *components*, which is a blunt way to fix a problem that lives in the
+*features*: a block of eleven columns measuring one thing counts eleven times toward every
+Euclidean distance. Flattening the spectrum fixes that, but it also upweights low-variance
+components — whose directions a finite sample barely determines — and pays for it in
+reproducibility.
+
+Block weighting attacks the same redundancy without that cost, because it acts before the
+rotation exists and so never touches the component directions:
+
+```python
+from cellpax import block_weights
+
+names  = list(ft.collections["analysis"].columns)
+scaled = ft.features(mask, scaled=True, columns="analysis")
+
+w     = block_weights(scaled, names)               # one weight per feature
+space = ft.space(mask, columns="analysis", feature_weights=w)
+space.label                                        # 'pca(0.95, weighted)'
+```
+
+The default `method="mfa"` divides each correlated block by the standard deviation along
+its own first principal direction — Escofier & Pagès' multiple factor analysis. That's an
+*adaptive* `1/√k`: it collapses to it for a perfectly correlated block and barely touches a
+loosely correlated one, so a block of eight at r≈0.3 isn't punished as hard as a block of
+eight at r≈0.99. `method="sqrt_k"` is the plain size-based version.
+
+Two things to watch:
+
+- **Pass the weights to `ft.space(feature_weights=…)`, don't multiply by hand.** Weights
+  applied outside the space are invisible to it, so `embed(space=…)` and `project` would
+  silently skip them and land you in a different space than you fit — with matching shapes
+  and no error. Inside the space they're frozen with the fit and persisted with it.
+- **A weighted space caches and persists separately** from the unweighted fit of the same
+  mask, so you can hold both and compare. `clus.space` records which is which.
+
+`alpha` and `feature_weights` are independent — weighting is pre-PCA, whitening is
+post-PCA — so they compose, and `label` reports both (`pca(0.95, weighted, alpha=0.5)`).
+Whether either helps is an empirical question; see
+[Validating a representation](#validating-a-representation).
+
+### Clipping small cohorts
+
+The default clip is a percentile rule (`0.1`/`99.9`, applied after `RobustScaler`), which
+defines its bound by **rank**. That has two costs, and both bite hardest exactly where
+the cohorts are smallest.
+
+```python
+from cellpax import clip_comparison, clipped_scaler_factory
+
+clip_comparison(ft.features("l23"), ft.feature_columns)   # what each rule would take
+
+ft = FeatureTable(df, features=cols,
+                  scaler_factory=clipped_scaler_factory(mode="sigma", n_sigma=4.0))
+```
+
+- **The bound stops being robust on a few hundred cells.** The 99.9th percentile has a
+  breakdown point near `0.001 × n` — below one cell when `n < 1000`. At n=500
+  `np.percentile` interpolates the bound between the top two order statistics, so *the
+  outlier partly sets the bound meant to clip it*: one cell at 40 robust units yields a
+  bound near 15, and the same cell at 400 yields a bound near 165. The more extreme the
+  cell, the weaker its own clipping. By n≈5000 the tail holds enough points that the
+  bound settles.
+- **It pulls rare populations toward the bulk by construction.** `f × n` cells are
+  clipped however clean the data is, so a population that is both rare *and* extreme is
+  partly clipped automatically. No choice of `f` removes that.
+
+`mode="sigma"` clips at `±n_sigma` instead: a fixed value from a median and an IQR, which
+a handful of extreme cells cannot move, identical at n=500 and n=21000, and clipping
+*only* what is actually extreme — possibly nothing. It also has **no fitted parameters**,
+so a frozen transform carries no clip bounds for a future dataset to shift.
+
+Two things to watch:
+
+- **`n_sigma` is in IQR units, not standard deviations.** `RobustScaler` divides by the
+  IQR, and IQR ≈ 1.349σ for a Gaussian, so `n_sigma=5` is about ±6.7 Gaussian σ and will
+  clip almost nothing on well-behaved features. A useful sweep is nearer 3–5 than 5–10;
+  `clip_comparison`'s `max_abs_sigma` column says how extreme anything actually is.
+- **While the percentile rule is in use, report the clip percentile against the smallest
+  cluster you resolve.** At 0.1% on 21,000 cells the bound sits at ~21 cells against a
+  `min_cluster_size=100` cut — clear. On a 3,000-cell cohort cut at `min_cluster_size=10`
+  the bound is 3 cells, within a factor of three of the smallest cluster, and the
+  pipeline cannot resolve populations of that size by construction.
+
+### Choosing the graph, or marginalising over it
+
+The consensus already marginalises over resolution and seed but treated graph
+construction as a fixed upstream choice. `graph_type` makes it a third axis:
+
+```python
+clus = ft.cluster(
+    "l23",
+    graph_type=["knn", "snn_jaccard", "umap_fuzzy"],
+    n_neighbors=[15, 30, 60],
+    resolution=np.geomspace(0.02, 1.5, 12),
+    n_times=5, seed=0, name="run",
+)
+```
+
+The three weightings have known and *different* failure modes, which is why the choice is
+worth marginalising over rather than defending:
+
+- **`umap_fuzzy`** subtracts each cell's distance to its nearest neighbour before
+  exponentiating, so every cell keeps at least one full-weight edge and nothing is ever
+  fully disconnected. Tends to hold rare and peripheral populations together. Implemented
+  in-library rather than imported, so it is a separate object from any UMAP *embedding*'s
+  graph by construction.
+- **`snn_jaccard`** offers no such guarantee: two cells in a sparse region can be mutual
+  neighbours and share almost no neighbourhood, so `prune` can strand them. Denoises
+  dense regions hardest and fragments sparse ones. Stranded cells are counted as
+  `graph["n_isolated"]` and warned about.
+- **`knn`** (unweighted, the default) and **`knn_distance`** as baselines.
+
+Two things to watch:
+
+- **Resolution is not comparable across graph types.** Fuzzy weights, Jaccard values in
+  `[0, 1]`, and unit weights put Leiden's RBConfiguration null on three different scales,
+  so one geomspaced grid lands at very different granularities per type — and pooling raw
+  lets whichever type happened to produce mid-range grain dominate. Select on **realised
+  grain** instead, which costs nothing because the runs already exist:
+
+  ```python
+  clus.partitions.by_setting()             # median_clusters is the comparable column
+  mid = clus.restrict(n_clusters_min=8, n_clusters_max=40)
+  ```
+
+- **Check that no one weighting is being averaged in against the rest.** A type that
+  systematically disagrees with the pool is evidence about that type, not noise to be
+  diluted:
+
+  ```python
+  from cellpax import axis_stability
+  axis_stability(clus.partitions, clus.cluster_labels(0.5))   # per-type ARI vs the pool
+  clus.restrict(graph_type="snn_jaccard")                     # look at one alone
+  ```
+
+`ft.graph_provenance()` lists what space and graph every clustering and embedding on the
+table received, and warns when a clustering and an embedding on the same mask share both
+— the case where comparing their neighbourhoods becomes circular while still producing
+agreeable-looking numbers.
+
+### Reading the hierarchy instead of flattening it
+
+The resolution sweep is geomspaced because structure exists at more than one scale.
+Collapsing the consensus to one flat vector with a single `fcluster` cut throws that away
+again — and in practice produces a hand-tuned `distance_threshold` per cohort.
+
+```python
+h = clus.hierarchy()             # -> ConsensusHierarchy
+h.merge_table()                  # every merge, annotated with its stability
+h.nested_labels                  # one row per cell, level_0 (coarsest) .. level_k
+h.nested_levels                  # what each level is: height, frequency, n_clusters
+h.cell_stability                 # per-cell max co-clustering frequency
+```
+
+Worth being explicit about where the merge annotation comes from: distance here *is*
+`max_value - similarity`, and similarity is the fraction of runs that put a pair
+together, so under average linkage `coclustering_frequency` is just
+`max_value - height`. It is not a separate measurement and does not need recomputing from
+the runs. Likewise, per-cell stability is the existing `consensus_strength()`.
+
+What *is* new is telling a type from a subtype, which the pooled frequency cannot express:
+
+```python
+clus.merge_support(n_bands=4)     # per merge, support per resolution band
+```
+
+A merge holding across coarse and fine runs alike is a type; one appearing only in the
+runs fine enough to create it is a subtype. `resolution_min_supporting` is the lowest
+band where support passes 0.5.
+
+Each level converts to a `LabelSet` and attaches like any other:
+
+```python
+from cellpax import LabelSet
+for level in ("level_0", "level_1", "level_2"):
+    ft.attach(LabelSet.from_labels(
+        h.nested_labels["cell_id"].to_numpy(),
+        h.nested_labels[level].to_numpy(),
+        unassigned=-1, name=level, mask=clus.mask,
+    ))
+```
+
+Two things to watch:
+
+- **Nesting is checked, not assumed.** Average, complete and single linkage are monotone,
+  so cuts at decreasing thresholds *are* nested and a violation means the linkage method
+  is wrong — that raises. Above `min_cluster_size=1` it cannot hold strictly (a cell in a
+  cluster too small to keep is `-1` at that level and assigned at others), so the check
+  runs over cells assigned in both levels and any residual is warned about with a count.
+- **`merge_support` is capped and says so.** Only the top `max_merges` merges are
+  annotated, and each group is sampled to `max_block` cells; both are logged. Exact group
+  sizes still come from `merge_table()`.
+
+### Triaging a cell that looks misplaced
+
+A dot inside a differently-coloured cloud has two very different explanations, and the
+embedding cannot tell them apart. Its feature-space neighbourhood can:
+
+```python
+triage = ft.triage_labels(labels, mask="l23", n_neighbors=30)
+triage.group_by("verdict").len()
+```
+
+| `verdict` | reading |
+|---|---|
+| `own` | most neighbours share its label — the embedding misplaced it, nothing to fix |
+| `other` | most neighbours carry one other label — the label is wrong, or it is a real outlier |
+| `mixed` | no label reaches a majority — the consensus was ambiguous; check `cell_stability` |
+
+Which turns "some dots scattered here and there" into three countable groups.
+
+### Scoring cells against the population
+
+`score_cells` is the adapter between the table and the outlier-detector
+ecosystem: fit any estimator with a per-sample score on a mask's scaled
+features, and the scores land as an ordinary metadata column — maskable,
+plottable, persisted with the table, usable as an audit label.
+
+```python
+ft.score_cells("l23", columns="analysis", name="iso")     # IsolationForest, seeded
+ft.score_cells("l23", scorer=LocalOutlierFactor(n_neighbors=20), name="lof")
+ft.add_mask("clean", pl.col("iso") > threshold, based_on="l23")
+```
+
+Higher scores read as more normal under every supported protocol
+(`score_samples`, `decision_function`, LOF's `negative_outlier_factor_`), so
+the tail is `pl.col(name) < threshold`. Scoring never filters — an extreme
+cell is either a reconstruction problem or the most interesting thing in the
+data, and the whole point is to look before deciding which. One comparison
+worth making routinely: score under the full feature set and under a
+truncation-safe collection; a cell extreme under one and ordinary under the
+other is being flagged by its invalid features — truncation talking, not
+biology.
+
+### A note on statistically "validated" splits
+
+Earlier versions shipped a CHOIR-style resolver (`cluster_choir`) that kept each
+split of the tree only where its two children were random-forest–distinguishable
+beyond a permutation null. It has been removed, deliberately. That test certifies
+*separability*, and in morphological feature data separability is everywhere: a
+continuum sliced at any point is stably distinguishable at its ends, so the test
+kept essentially every split and lent statistical authority to arbitrary cuts.
+The hierarchy tools above — `merge_support`, `nested_labels`, per-cell stability
+— are the honest way to reason about which splits mean something, and they say
+*where* support lives rather than stamping a p-value on a cut.
 
 ## Labels
 
-`ft.label` cuts a stored clustering at a threshold into a `LabelSet`;
-`ft.cluster_choir` returns one directly. Cluster ids are 0-based. A `LabelSet`
-gives clusters identity and clean relabeling:
+`ft.label` cuts a stored clustering at a threshold into a `LabelSet`, with
+cluster ids 0-based. A `LabelSet` gives clusters identity and clean relabeling:
 
 ```python
-labels = ft.label("run", mask="l23", distance_threshold=0.6, name="subclass")
+labels = clus.label(distance_threshold=0.6, name="subclass")   # clus from ft.cluster
 labels.rename({0: "L2a", 1: "L2b"})     # or rename(["L2a", "L2b"]) in id order
 labels.merge(["L2a", "L2b"], into="L2")
 labels.reorder(["L2", "L3"])
@@ -192,9 +542,46 @@ ft.attach(labels)                       # adds a 'subclass' column (null off-mas
 ft.labels                                # ['subclass'] — names attached so far
 ```
 
-`combine` unions two label sets over disjoint cells (e.g. exc + inh clustered
-separately). A `LabelSet` itself is otherwise ephemeral — `ft.labels` only lists
-ones that have been `attach`ed to the table.
+`combine` unions label sets into one. Its default, `mode="disjoint"`, is for
+labellings of separate populations (e.g. exc + inh clustered separately): the cell
+sets must not overlap, and ids are offset so two clusters that happen to share a
+name stay two clusters. `mode="priority"` is for layering labellings of the *same*
+population — each cell takes the label of the first set that assigned it, and
+clusters are matched by name, so `"L5IT"` from two sets becomes one cluster keeping
+the first's color. That's what [flattening](#flattening-labels-across-masks) is
+built on. A `LabelSet` itself is otherwise ephemeral — `ft.labels` only lists ones
+that have been `attach`ed to the table.
+
+### Flattening labels across masks
+
+Labels built over a diverse collection of masks are a stack of columns, each null
+where it has nothing to say. `ft.flatten_labels` collapses them into one, taking
+each cell's label from the first entry in the list that assigned it — so list them
+most-specific-first and the coarser labels fill the holes the finer ones left:
+
+```python
+leaf = ft.flatten_labels(["subtype_nn", "family_nn"], mask="exc", name="leaf")
+leaf.color_map()          # colors merged out of both, first entry in the list wins
+ft.attach(leaf)
+```
+
+Entries are attached column names or `LabelSet` objects, mixed freely. `mask` scopes
+the result — the label set covers exactly that mask's cells, cells outside it are
+dropped even where an entry labels them, and cells inside it that nothing labels are
+unassigned, or land in the cluster named by `fill`. Pass `source_name=` to get a
+second `LabelSet` back alongside, recording which entry won each cell:
+
+```python
+flat, source = ft.flatten_labels(
+    ["subtype_nn", "family_nn"], mask="exc", name="leaf",
+    fill="unlabelled", source_name="from",
+)
+source.counts()           # how many cells each label actually contributed
+```
+
+An entry that *covers* a cell but leaves it unassigned falls through to the next
+one, which is what makes this the way out of [the recursive
+descent](#the-recursive-descent).
 
 `attach` writes a name column and an id column, but a column can't hold a color, a
 description, or which mask the labels came from — so it records those alongside the
@@ -253,8 +640,8 @@ labels.to_names()                 # ['L2', 'L2', 'L3', None, ...]
 ```
 
 Note `labels.cluster(...)` (a noun: one cluster's identity) is unrelated to
-`ft.cluster(...)` and `ft.label(...)` (verbs: run a clustering, cut it into a
-`LabelSet`).
+`ft.cluster(...)` (a verb: run a clustering) or `Clustering.label(...)` (cut one into
+a `LabelSet`).
 
 ### Ordering clusters by a value, not by hand
 
@@ -312,8 +699,47 @@ Scaled features are mask-relative by design — a scaler is fit on the mask it's
 asked for, so `features("l23", scaled=True)` expresses variance *within* l23, not
 against the whole population. A model fit on one mask's scaled features therefore
 only means anything applied to that same mask's scaled features. Fit and predict
-within one mask (as above), and use `features(..., scaled=False)` if you genuinely
-need a population-level space to carry a model across masks.
+within one mask (as above), or `project` new cells into that mask's space (below) to
+carry the model onto cells it was never fit on.
+
+### Projecting new cells into an existing space
+
+`project` pushes rows through a mask's *existing* fits without re-fitting anything,
+which is what you want when new data arrives and has to land in the space a model or
+an embedding already lives in:
+
+```python
+ft.embed("l23", method="umap", n_components=2, seed=0)
+
+new = pl.read_parquet("later_batch.parquet")   # same feature columns, by name
+X = ft.project(new, "l23")                      # transforms + l23's scaler
+coords = ft.project(new, "l23", embedding="umap")   # ...and into that UMAP
+model.predict(X)                                 # a model fit on l23's scaled features
+```
+
+`data` is a polars frame matched on column *name* (extra columns ignored, order
+irrelevant) or a raw array in the resolved column order. Nothing is stored, so it's
+safe to call repeatedly.
+
+The two fits behind it are retrievable on their own:
+
+```python
+fitted = ft.scaler("l23", columns="stable")   # FittedScaler; .transform(matrix)
+fitted.scaler.mean_, fitted.transforms        # the sklearn estimator, and ihs/log/sqrt per feature
+ft.embedding_model("l23", name="umap").model  # the fitted UMAP/PCA itself
+```
+
+Two things to know. Fitted **models are session-only**: coordinates persist through
+`save`/`load` but the estimator behind them does not, since a UMAP fit is neither
+small nor reproducible across versions — after a `load` you have the coordinates and
+must re-`embed` to project anything new. And a model is **dropped, not kept stale**,
+when the mask is redefined or `preprocess`/`add_features` changes the scaled space
+underneath it; `embedding_model` then raises rather than silently projecting new
+cells into coordinates the stored ones no longer share.
+
+`features_pca` (the denoising step `propagate_labels` uses) deliberately doesn't
+retain its PCA — it's an internal, unnamed space. Use `embed(method="pca")` when you
+want a PCA basis you can project into later.
 
 `num_class` wants contiguous classes, so call `compact()` after a `merge` and
 before fitting. For held-out splits, `subset(cell_ids)` and `drop_unassigned()`
@@ -328,7 +754,7 @@ a subset of mask `to`, and gives each cell of `to` the majority label of its
 `n_neighbors` nearest labeled cells:
 
 ```python
-core = ft.label("run", mask="exc_core", distance_threshold=0.6, name="subclass")
+core = clus.label(distance_threshold=0.6, name="subclass")   # clus on mask "exc_core"
 core.rename(["L2a", "L2b", "L3"])
 
 result = ft.propagate_labels(core, to="exc", columns="stable", n_neighbors=30)
@@ -381,29 +807,66 @@ since uniform votes favor the larger one near a boundary.
 (a clamped cell would trivially agree with itself), counting an unreachable cell as
 not recovered.
 
-### Propagating on features that are valid everywhere
+### Validity domains: declaring where features inform
 
 A feature can be measurable for a cell and still be meaningless for it — a
 truncated reconstruction yields a dendrite length, it's just not informative about
 type. Those features are fine *within* a well-reconstructed core and misleading
-outside it, so no importance ranking computed on the core can detect the problem;
-it has to be declared:
+outside it, and no importance ranking computed on the core can detect the problem,
+because on the core the features behave. It has to be declared, and the
+declaration is first-class:
 
 ```python
-ft.define_features("stable", columns=[...])   # valid for every cell, not just the core
-ft.propagate_labels(core, to="exc", columns="stable")
+ft.add_mask("axon_complete", pl.col("axon_frac_inside") > 0.8)
+ft.set_validity(columns="axon", where="axon_complete")   # or valid_where= on define_features
+
+ft.validity_domains          # {'axon_len': 'axon_complete', ...}
+ft.fully_valid(columns="axon")     # per-cell: every axon feature valid here?
+ft.validity_patterns()             # the distinct patterns and their sizes
 ```
 
-This is a different kind of collection from the ones above — defined by *validity
-domain* rather than by family or modality — but it's the same mechanism.
+A domain is a named mask, so it persists with the analysis, composes with
+`based_on`, and can't be dropped out from under the features that reference it.
+Truncation is positional, so `validity_patterns()` usually collapses to a
+handful of patterns — worth reading once before deciding how to propagate.
 
-The trade-off is real: fewer features means coarser distinctions can be
-transferred, and two clusters separated *only* by truncation-sensitive features
-cannot be told apart on the periphery by any method, because the information isn't
-there. Comparing `self_agreement()` between the full and stable column sets on the
-core is the cheap way to find out before propagating — if it drops sharply, the
-honest move is to merge those clusters for the peripheral population rather than to
-propagate a distinction the features can't support.
+Two diagnostics help *build* the domains rather than guess them.
+`covariate_sensitivity(features, completeness, names)` ranks features by how
+strongly they track a completeness metric — a feature measuring truncation
+rather than biology tops the list (near-zero is necessary, not sufficient: rank
+correlation misses nonmonotone artifacts). `stratum_shift(features, dataset,
+names)` does the cross-dataset version: features that measure the acquisition
+rather than the cells, with `median_shift_iqr` separating "recenterable shift"
+from "shape-level difference". Same abstraction, different granularity — a
+per-dataset domain is just a validity mask that happens to be a dataset stratum.
+
+Declared domains have teeth. `propagate_labels` warns (or raises, with
+`on_invalid="raise"`) when the chosen columns don't cover the target — the
+failure the audit found every safeguard silent on — and `ladder=` uses the
+domains per cell:
+
+```python
+result = ft.propagate_labels(core, to="exc", ladder=["full", "stable"])
+result.rungs                 # which collection labeled each cell
+result.rung_recovery         # per-rung self-recovery: what each set still carries
+result.frame()               # ..._rung column alongside label and confidence
+```
+
+Each cell gets the *richest* collection whose features are all valid for it, so
+a global `columns=` choice no longer coarsens every cell to the worst cell's
+validity: well-reconstructed cells keep the distinctions the full set supports,
+truncated ones fall back to what their features can honestly say, and a cell no
+rung covers stays unassigned — the honest answer for a cell whose informative
+features don't exist. Each rung is its own propagation with its own scaler and
+PCA over only its participants, so invalid values never contaminate a fit. Two
+consequences to keep in mind: confidence is comparable within a rung, not across
+rungs (each rung is its own space with its own local label competition), and
+the information-theoretic limit still stands — two clusters separated *only* by
+truncation-sensitive features cannot be told apart on the periphery by any
+method. `rung_recovery` is the per-rung version of the old advice to compare
+`self_agreement()` across column sets: if the fallback rung's recovery drops
+sharply, the honest move is to merge those clusters for the peripheral
+population rather than propagate a distinction its features can't support.
 
 **The reference must live inside `to`.** One feature space is fit over all of `to`
 (scaling and PCA are both mask-relative), and the reference cells are picked out of
@@ -509,23 +972,25 @@ gets built: cluster a curated core, propagate to the population, carve the next
 mask out of the propagated labels, and recurse.
 
 ```python
-ft.cluster(mask="core", n_times=20, name="coarse")
-family = ft.label("coarse", mask="core", distance_threshold=0.9, name="family")
+coarse = ft.cluster(mask="core", n_times=20, name="coarse")
+family = coarse.label(distance_threshold=0.9, name="family")
 ft.attach(ft.propagate_labels(family, to="exc", method="spread").labels)
 
 # the propagated column defines where to look next
 ft.add_mask("l23it", pl.col("family_nn") == "L23IT")
 ft.add_mask("l23it_core", pl.col("is_core"), based_on="l23it")   # stays nested
 
-ft.cluster(mask="l23it_core", n_times=20, name="fine")
-subtype = ft.label("fine", mask="l23it_core", distance_threshold=0.5, name="subtype")
+fine = ft.cluster(mask="l23it_core", n_times=20, name="fine")
+subtype = fine.label(distance_threshold=0.5, name="subtype")
 ft.attach(ft.propagate_labels(subtype, to="l23it", method="spread").labels)
 ```
 
 Each round leaves its columns in the table, so the hierarchy is legible at the end:
 a cell has a `subtype_nn` only where `family_nn` put it in that branch, and null
 elsewhere. Use `based_on` to keep a child mask inside its parent rather than
-re-deriving the intersection by hand.
+re-deriving the intersection by hand. When you want the leaves back as a single
+column, [`ft.flatten_labels`](#flattening-labels-across-masks) collapses the stack
+finest-first.
 
 A predicate that evaluates to null counts as `False`, so masking on a label column
 works directly even where propagation abstained — an unassigned cell simply isn't in
@@ -533,6 +998,119 @@ the subset. Worth knowing because scaling is per-mask: each round of the descent
 rescales within its own branch, which is usually what you want (variance *within* the
 family you're subdividing) and is why the reference for each propagation must live
 inside that round's target mask.
+
+## Validating a representation
+
+Whitening strength, graph weighting, neighbourhood size and clipping rule are all
+parameters with no principled default. A UMAP is the worst available way to choose between
+them: it is a lossy 2-D projection, it is usually built in a different space from the one
+being compared, and it rewards whichever setting produces visually tidy blobs rather than
+reproducible groups. Two criteria, plus one tripwire.
+
+### Subsample reproducibility — the primary criterion
+
+Cluster repeated subsamples under a **frozen** representation and measure how much the
+labels agree with the full-data labels. No ground truth needed, and it measures the
+property actually wanted: that the structure is a property of the population rather than
+of the particular cells in hand.
+
+```python
+from cellpax import subsample_stability
+
+space = ft.space("l23")
+scores = {}
+for alpha in (0.0, 0.25, 0.5, 0.75, 1.0):
+    coords = space.with_alpha(alpha).transform_scaled(ft.features("l23", scaled=True))
+    scores[alpha] = subsample_stability(
+        coords, distance_threshold=0.6, n_draws=10, fraction=0.8,
+        n_neighbors=30, resolution=[0.3, 1.0], n_times=2, seed=0,   # held fixed
+    )
+{a: s.mean_ari for a, s in scores.items()}
+```
+
+Three things to watch:
+
+- **The space must not be refit inside a draw.** `subsample_stability` takes
+  *coordinates*, so there is nothing for it to refit — but that means you must build them
+  outside the loop, from views over one fit as above. Refitting would measure preprocessing
+  stability confounded with clustering stability, and those answer different questions.
+- **The inner ensemble must be identical across representations.** Keep it small (a couple
+  of resolutions and seeds); absolute ARI is then not interpretable, but the *paired*
+  comparison is — the same argument that makes a stratified-sample comparison valid.
+- **Cost is real.** `n_draws` times the inner ensemble, per representation. Budget it as
+  comparable to the main sweep.
+
+A representation whose groups survive dropping a fifth of the cells is describing the
+population; one whose groups rearrange was describing these cells. On a genuine continuum
+expect a low score — that is the property that makes this a criterion rather than a
+formality.
+
+### Recovery of an external label — the cross-check
+
+Leave-one-out kNN recovery of labels the clustering never saw. Any population-wide
+external call works.
+
+```python
+from cellpax import loo_knn_recovery, paired_recovery
+
+truth = ft.labelset("ct_combo").codes_for(ft._cell_ids("l23"))
+reps = {
+    f"alpha={a}": loo_knn_recovery(
+        space.with_alpha(a).transform_scaled(ft.features("l23", scaled=True)),
+        truth, n_neighbors=15, name=f"alpha={a}",
+    )
+    for a in (0.0, 0.5, 1.0)
+}
+paired_recovery(reps)     # deltas, discordance counts, exact McNemar p
+```
+
+`graph_knn_recovery` does the same along a neighbour graph, which is how a `graph_type`
+gets scored rather than a coordinate space. Edge weights there are *similarities* and a
+shortest path needs costs, so `cost="neg_log"` (the default) or `cost="complement"` — a
+choice that changes the ranking, hence a parameter.
+
+Two things to watch:
+
+- **Differences, not absolute numbers.** Absolute recovery is often not even well defined:
+  with a stratified labelled set it depends on the design, while the paired difference
+  does not. `paired_recovery`'s McNemar test is what keeps a difference of a handful of
+  cells from being read as a result — with a few hundred labelled cells most differences
+  between reasonable representations will not clear it, and that is the honest answer.
+- **An external call that is itself a classifier's output measures agreement with that
+  classifier**, decision boundary and errors alike. It ranks representations; it does not
+  certify them. If it disagrees with subsample ARI about the best setting, prefer the
+  reproducibility number and say so.
+
+Design weights are supported for a stratified labelled set, but read what the weighting
+does before leaning on it:
+
+```python
+score = loo_knn_recovery(coords, truth, weights=design_weights, strata=strata)
+score.accuracy_ipw       # population estimate
+score.by_stratum()       # what the weighting hides
+```
+
+A design that oversamples the cells where two classifiers disagree gives those cells
+*small* weights, precisely because they were oversampled — so the population estimate is
+dominated by the easy stratum and its standard error can swamp the effect being measured.
+`by_stratum()` is the informative view when that is the case.
+
+### Purity against an audit label — the tripwire
+
+```python
+from cellpax import label_purity
+label_purity(h.nested_labels, ft.dataframe("l23")["is_inhib_label_nn"])
+```
+
+Per cluster per level, sorted worst-first: `n_audit_labels`, `dominant`, `purity`. A
+cluster spanning a boundary the features had no access to is a genuine red flag rather
+than something to tune away.
+
+One thing to watch: **it only has teeth where straddling is possible.** Cluster a cohort
+that was itself selected on the audit label and every purity is 1.0 by construction, which
+is not evidence of anything. It bites when the audit label comes from a different source
+than the one that defined the cohort — then the two genuinely disagree about some cells,
+and a cluster containing both is telling you something.
 
 ## Comparing approaches
 
@@ -551,9 +1129,156 @@ compare_many([a, b, c], metric="ari")  # pairwise agreement matrix
 ```python
 ft.embed("l23", method="pca", n_components=2, name="pca")   # sklearn PCA
 ft.embed("l23", method="umap", n_components=2)              # optional umap-learn
+ft.embed("l23", method="pacmap", seed=0)                    # optional pacmap
+ft.embed("l23", method="localmap", seed=0)                  # LocalMAP, same package
 ft.embedding("l23", name="pca")                             # stored coordinates
 ft.dataframe("l23", embedding="pca")                        # joined onto the tidy view
 ```
+
+Install the optional backends with `pip install 'cellpax[embeddings]'` (or `[umap]` /
+`[pacmap]` individually). `pacmap` pulls `faiss-cpu` and `numba`, and numba constrains the
+numpy version — worth knowing before adding it to a pinned environment.
+
+### Choosing a backend
+
+They differ in what they try to preserve, and the difference matters here because these
+figures are read to judge clusterings.
+
+- **`umap`** preserves local neighbourhoods. Its inter-cluster distances are *not*
+  meaningful — the gap between two clouds says nothing about how different they are — so
+  reading a UMAP for "how far apart are these types" is reading something that isn't there.
+- **`pacmap`** adds mid-near pairs alongside neighbour and further pairs, and shifts the
+  weighting across three optimisation phases, specifically so global layout carries
+  information too. That is the one thing UMAP is worst at and that these figures are most
+  often used for.
+- **`localmap`** (Wang et al., AAAI 2025; shipped in pacmap ≥ 0.8) adjusts the graph
+  locally during the final stage, aimed at clearer cluster boundaries. Its benefit is on
+  *ambiguous* boundaries — on well-separated blobs it does not separate them more than
+  PaCMAP does, so do not expect it to make an easy case look easier.
+- **`pca`** is linear, cheap, and exactly reproducible. Worth keeping as the baseline: if
+  a nonlinear embedding disagrees with it about something structural, that is worth
+  understanding rather than assuming the nonlinear one is right.
+
+Two things to watch:
+
+- **`pacmap` and `localmap` default to `n_neighbors=10`**, against UMAP's 15 and the 30–50
+  typically used for the Leiden graphs. Out of the box they give a more local, more
+  fragmented picture than the existing UMAPs — not a like-for-like swap. Sweep it.
+- **They reduce their own input, conditionally.** With `apply_pca=True` (their default) and
+  more than 100 input features, they truncated-SVD to 100 dimensions before constructing
+  pairs. Below 100 features nothing happens, so on an 81-column set the flag is not a knob
+  at all. Passing `space=` sets it `False` automatically, since reducing an
+  already-reduced-and-whitened space would partly undo the weighting. Whatever is in force
+  shows in `graph_provenance()` as e.g. `scaled -> tsvd(100)`, so the table never reports a
+  space that wasn't used.
+
+Unseeded calls are reproducible anyway: `seed=None` derives a deterministic seed from
+the table seed and the call's identity (see
+[Seeds and reproducibility](#seeds-and-reproducibility)), so a figure made without
+thinking about seeds can still be regenerated. Pass `seed=` explicitly when you want a
+particular stream — all three optional backends accept it.
+
+### Two embeddings are better than one
+
+Since the backends fail differently, running two turns a single ambiguous observation into
+a comparison. A cell misplaced in *both* is more likely genuinely unusual; one misplaced in
+only one is that algorithm's artifact:
+
+```python
+ft.embed("l23", method="umap", name="umap", seed=0)
+ft.embed("l23", method="pacmap", name="pacmap", seed=0)
+
+from cellpax import neighbor_label_composition
+for name in ("umap", "pacmap"):
+    coords = ft.embedding("l23", name=name).drop(ft.id_column).to_numpy()
+    print(name, neighbor_label_composition(coords, labels.codes)
+          .group_by("verdict").len().sort("verdict"))
+```
+
+Compare either against `ft.triage_labels(labels)`, which runs the same check in the
+*clustering* space — that three-way comparison is what separates "the label is wrong" from
+"this embedding placed it badly".
+
+One caution worth stating plainly: a better global layout looks more decisive, with cleaner
+gaps and more convincing separation. That invites more confidence in the picture, not less
+— and global structure being better preserved is not the same as being reliable enough to
+settle whether a clustering is right. The criteria under
+[Validating a representation](#validating-a-representation) do not use the embedding at
+all, and that is deliberate.
+
+### Getting at the coordinates
+
+Coordinate columns are prefixed with the embedding's name — `umap_core0`, `umap_core1` —
+because they share a flat namespace with the metadata in `dataframe()`. Rebuilding those
+names by hand means writing the embedding's name three times in one call: twice as a
+prefix and once as `embedding=`. `embedding_view` hands back the frame *and* the names
+together, so it is written once:
+
+```python
+v = ft.embedding_view("l23", name="umap_core", labels=lbl)
+
+sns.scatterplot(**v.xy, data=v.frame, hue=lbl.name, palette=lbl.color_map())
+v.frame.filter(pl.col(v.x) > 10)          # coordinates as predicates, not just axes
+```
+
+`name` is optional when the mask holds exactly one embedding, and raises listing the
+candidates when it holds several — so a defaulted name is never a silent guess.
+`ft.embeddings` lists every stored `(mask, name)` pair, which matters because `embed`
+derives a name when you don't pass one (`embed(method="umap", columns="analysis")` stores
+`"umap_analysis"`).
+
+### Coordinates from elsewhere
+
+`add_embedding` registers coordinates `embed` didn't compute, after which everything else
+treats them identically — `embedding_view`, `dataframe(embedding=…)`, persistence:
+
+```python
+xy = ft.dataframe(mask).select(["soma_x_um", "soma_depth_um"]).to_numpy()
+ft.add_embedding(xy, mask, name="soma_xz", space="anatomical")
+
+v = ft.embedding_view(mask, name="soma_xz")
+sns.scatterplot(**v.xy, data=v.frame, hue="ct_combo")
+```
+
+The obvious use is a backend `embed` doesn't wrap. But **soma position makes a perfectly
+good "embedding"**, and registering it that way lets an anatomical plot reuse the same
+labels, joins and colour maps as a UMAP rather than being assembled separately.
+
+Coordinates may be an array in mask row order, or a frame carrying the id column — in
+which case row order doesn't matter and the ids are matched. Coverage is checked when you
+add them, not when you read them, so a mismatch fails immediately instead of surfacing
+later as silently dropped cells.
+
+Two things to watch:
+
+- **Set `space=` to something meaningful.** Nothing else records where the coordinates came
+  from, and unlike a fitted model this label persists — `graph_provenance()` reports it
+  after a reload.
+- **There's no model behind them**, so `embedding_model` raises and `project` can't push new
+  cells in. That's the same position a reloaded embedding is in.
+
+On dimensionality: `coords`, `v[i]` and `n_components` describe however many components
+the embedding actually has, while `xy` names its own two-dimensionality rather than
+pretending the rest do not exist.
+
+```python
+v = ft.embedding_view("l23", name="three_d")
+v.coords          # ('three_d0', 'three_d1', 'three_d2')
+v.n_components    # 3
+v.xy              # {'x': 'three_d0', 'y': 'three_d1'}   the first two
+v.pair(0, 2)      # {'x': 'three_d0', 'y': 'three_d2'}   a stated choice
+```
+
+`x` and `y` are aliases for `v[0]` and `v[1]`, so on a one-component embedding `y` raises
+naming the component count rather than returning something misleading.
+
+Two things to watch:
+
+- **The coordinate names come from the stored frame**, not from rebuilding `f"{name}{i}"`.
+  That matters after a `load`: coordinates persist while fitted models do not, so a view
+  built from the model would work in-session and break on reload.
+- **`columns` selects what `scaled` applies to**, not what the frame carries. Every feature
+  column is present either way; `columns` narrows which ones come back scaled.
 
 To color a scatter by a `LabelSet` you haven't (or won't) `attach`, join it onto
 the embedding directly — both are keyed by cell id, so no attaching or row-order
@@ -595,3 +1320,50 @@ restored, so scaled values reproduce).
 CellPax ships no plotting layer by design — `dataframe(...)`, `embedding(...)`,
 and `compare(...).alluvial_frame()` return tidy frames you hand straight to
 seaborn/matplotlib, which is easier to tailor per figure.
+
+Two figures are worth the assembly, and the frames for both come out of
+`ConsensusHierarchy`.
+
+**Dendrogram with merges coloured by stability.** `dendrogram_frame()` returns the layout
+as line segments rather than drawing it, because `scipy.cluster.hierarchy.dendrogram`
+computes the layout and draws it in one step, which makes per-merge colouring awkward.
+Leaf positions follow `leaf_order`, the same order `sorted_matrix` uses, so the dendrogram
+lines up with the consensus block image.
+
+```python
+seg = h.dendrogram_frame()
+norm = plt.Normalize(0, 1)
+for row in seg.iter_rows(named=True):
+    ax.plot([row["x0"], row["x1"]], [row["y0"], row["y1"]],
+            color=plt.cm.viridis(norm(row["coclustering_frequency"])), lw=0.8)
+```
+
+Merges that survive across many resolutions are types; merges appearing only at high
+resolution are subtypes. Colour by `coclustering_frequency` for overall stability, or join
+`merge_support()` on `merge` and colour by `resolution_min_supporting` to separate the two
+directly.
+
+**UMAP coloured by per-cell stability**, as the companion to one coloured by hard labels:
+
+```python
+v = ft.embedding_view("l23", name="umap")
+frame = v.frame.join(h.cell_stability_frame(), on="cell_id")
+sns.scatterplot(**v.xy, data=frame.to_pandas(),
+                hue="stability", palette="magma", s=1, ax=ax)
+```
+
+The expectation to check: low-stability cells should concentrate along interdigitated
+cluster boundaries and along continuous streaks between clusters. Scattered uniformly
+instead, the instability is not about boundaries and the cut is not the thing to adjust —
+look at `ft.graph_provenance()` and `axis_stability` instead.
+
+The ordered correlation matrix uses the existing `SortedMatrix` shape, so the recipe in
+its docstring applies unchanged:
+
+```python
+sm = feature_correlation(ft.features("l23", columns="analysis"),
+                         ft.collections["analysis"].columns)
+ax.imshow(sm.matrix, vmin=-1, vmax=1, cmap="RdBu_r")
+ax.set_xticks(range(sm.n_cells), sm.cell_ids, rotation=90, fontsize=4)
+ax.hlines(sm.boundaries[1:-1] - 0.5, *ax.get_xlim(), lw=0.5)
+```

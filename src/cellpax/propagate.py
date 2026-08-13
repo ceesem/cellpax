@@ -34,6 +34,7 @@ against the reference rows, whose labels are known, rather than a priori.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -76,6 +77,12 @@ def _check(features: np.ndarray, codes: np.ndarray, preserve_labeled: bool):
     codes = np.asarray(codes, dtype=np.int64).reshape(-1)
     if features.shape[0] != codes.shape[0]:
         raise ValueError("features and codes must have the same number of rows")
+    below = np.unique(codes[codes < _UNASSIGNED])
+    if below.size:
+        raise ValueError(
+            f"codes below -1 have no meaning here ({below.tolist()}); -1 is the "
+            "only unassigned sentinel"
+        )
     fit_rows = np.flatnonzero(codes != _UNASSIGNED)
     if fit_rows.size < 2:
         raise ValueError("propagation needs at least two labeled cells to vote")
@@ -275,7 +282,7 @@ def propagate_spread(
     tol: float = 1e-6,
     agreement_folds: int = 5,
     seed: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, Recovery]:
+) -> tuple[np.ndarray, np.ndarray, Recovery | None]:
     """Diffuse cluster codes along a neighbor graph until the label field settles.
 
     Label spreading in the Zhou/Zhu sense: each row's label distribution is
@@ -298,7 +305,8 @@ def propagate_spread(
     ``n_neighbors``, since the mass accumulated is not a fixed count of votes, so
     ``min_confidence`` cuts on a smooth distribution. :class:`Recovery` is measured over
     ``agreement_folds`` stratified folds — reference labels withheld a fold at a time
-    and re-derived, reporting misassignment and abstention apart (pass 0 to skip).
+    and re-derived, reporting misassignment and abstention apart (pass 0 to skip,
+    in which case the recovery is ``None``).
     There's no free leave-one-out here: a clamped row's label reaches its unlabeled
     neighbors and comes back on the next hop, so removing a row's influence means
     removing its label. The graph is built once and reused across folds, so this
@@ -329,15 +337,19 @@ def propagate_spread(
         preserve_labeled=preserve_labeled,
         min_confidence=min_confidence,
     )
-    recovery = _spread_recovery(
-        transition,
-        codes,
-        fit_rows,
-        folds=agreement_folds,
-        alpha=alpha,
-        max_iter=max_iter,
-        tol=tol,
-        seed=seed,
+    recovery = (
+        _spread_recovery(
+            transition,
+            codes,
+            fit_rows,
+            folds=agreement_folds,
+            alpha=alpha,
+            max_iter=max_iter,
+            tol=tol,
+            seed=seed,
+        )
+        if agreement_folds
+        else None
     )
     return out, confidence, recovery
 
@@ -346,23 +358,29 @@ def _transition_matrix(
     features: np.ndarray, n_neighbors: int, mutual: bool, weights: Weights
 ) -> Any:
     """Row-normalized affinity over a (mutual) kNN graph; empty rows stay empty."""
-    from scipy.sparse import diags
+    from scipy.sparse import coo_matrix, diags
     from sklearn.neighbors import kneighbors_graph
 
     if weights not in ("uniform", "distance"):
         raise ValueError(f"weights must be 'uniform' or 'distance', got {weights!r}")
     k = int(min(n_neighbors, features.shape[0] - 1))
-    directed = kneighbors_graph(features, k, mode="distance", include_self=False)
+    # the adjacency pattern comes from connectivity, not distance: a coincident
+    # neighbor is an explicit zero under mode="distance", and sparse algebra
+    # silently drops explicit zeros, which would disconnect exact duplicates
+    directed = kneighbors_graph(features, k, mode="connectivity", include_self=False)
 
-    pattern = directed.copy()
-    pattern.data = np.ones_like(pattern.data)
     # an edge survives only if both cells name each other (mutual) or either does
-    keep = pattern.multiply(pattern.T) if mutual else pattern.maximum(pattern.T)
-    distance = directed.maximum(directed.T).multiply(keep).tocsr()
+    keep = (
+        directed.multiply(directed.T) if mutual else directed.maximum(directed.T)
+    ).tocoo()
 
     if weights == "distance":
-        affinity = distance.copy()
-        affinity.data = 1.0 / (affinity.data + _distance_floor(distance.data))
+        gaps = np.linalg.norm(features[keep.row] - features[keep.col], axis=1)
+        # the floor keeps a zero-distance edge at a large weight, not an infinite one
+        affinity = coo_matrix(
+            (1.0 / (gaps + _distance_floor(gaps)), (keep.row, keep.col)),
+            shape=keep.shape,
+        ).tocsr()
     else:
         affinity = keep.tocsr().astype(float)
 
@@ -461,6 +479,58 @@ def _spread_recovery(
     return Recovery(recovered / total, unreachable / total, f"{folds}-fold")
 
 
+# -- calibrating min_confidence ----------------------------------------------------
+
+
+def confidence_curve(
+    truth: np.ndarray,
+    predicted: np.ndarray,
+    confidence: np.ndarray,
+) -> pl.DataFrame:
+    """Coverage against error at every ``min_confidence`` cut that changes anything.
+
+    The calibration read for choosing ``min_confidence``: run a *probe* propagation
+    with ``preserve_labeled=False`` first — that relabels the reference rows from
+    their neighborhoods too, so their confidence is a winner-share comparable with
+    everyone else's — then pass the reference codes as ``truth`` (``-1`` where the
+    answer isn't known), the probe's propagated codes as ``predicted``, and the
+    probe's per-row ``confidence``, all row-aligned.
+
+    Returns one row per distinct confidence value among the known-truth cells — the
+    only cuts at which the kept set actually changes, since under
+    ``weights="uniform"`` confidence is quantized and a cut between grid points does
+    nothing. Columns: ``cut``, ``n_kept`` (known-truth cells at or above it),
+    ``kept_fraction`` (of all known-truth cells) and ``error_rate`` (wrong
+    predictions among the kept). Read it as a purity-versus-coverage curve and pick
+    the cut whose trade you can live with. Cells with no known truth never enter
+    it — and remember the cut measures ambiguity, not novelty: a cell far outside
+    the reference is unanimous at 1.0, which is what ``method="spread"`` is for.
+    """
+    truth = np.asarray(truth, dtype=np.int64).reshape(-1)
+    predicted = np.asarray(predicted, dtype=np.int64).reshape(-1)
+    confidence = np.asarray(confidence, dtype=float).reshape(-1)
+    if not (truth.shape[0] == predicted.shape[0] == confidence.shape[0]):
+        raise ValueError("truth, predicted and confidence must have the same length")
+    known = truth != _UNASSIGNED
+    n_known = int(known.sum())
+    if n_known == 0:
+        raise ValueError("no cells have a known truth code to calibrate against")
+    wrong = predicted != truth
+    rows = []
+    for cut in np.unique(confidence[known]):
+        kept = known & (confidence >= cut)
+        n_kept = int(kept.sum())
+        rows.append(
+            {
+                "cut": float(cut),
+                "n_kept": n_kept,
+                "kept_fraction": n_kept / n_known,
+                "error_rate": float(wrong[kept].mean()),
+            }
+        )
+    return pl.DataFrame(rows)
+
+
 # -- result ----------------------------------------------------------------------
 
 
@@ -477,11 +547,15 @@ class Propagation:
         labels: Any,
         reference: Any,
         confidence: np.ndarray,
-        recovery: Recovery,
+        recovery: Recovery | None,
         *,
         method: str,
         n_neighbors: int,
         space: str,
+        params: dict[str, Any] | None = None,
+        rungs: np.ndarray | None = None,
+        rung_names: Sequence[str] | None = None,
+        rung_recovery: dict[str, Recovery | None] | None = None,
     ) -> None:
         self._labels = labels
         self._reference = reference
@@ -490,6 +564,10 @@ class Propagation:
         self._method = method
         self._n_neighbors = int(n_neighbors)
         self._space = space
+        self._params = params
+        self._rungs = None if rungs is None else np.asarray(rungs, dtype=np.int64)
+        self._rung_names = None if rung_names is None else list(rung_names)
+        self._rung_recovery = rung_recovery
 
     @property
     def labels(self) -> Any:
@@ -521,9 +599,58 @@ class Propagation:
         return self._method
 
     @property
-    def recovery(self) -> Recovery:
-        """The full recovery read: agreement, abstention, and which estimator ran."""
+    def space(self) -> str:
+        """The representation the neighbours were found in, e.g. ``'pca(0.95)'``.
+
+        A ladder propagation reports ``'ladder(<rungs>)'`` — each rung was its
+        own space, so no single label describes the geometry.
+        """
+        return self._space
+
+    @property
+    def recovery(self) -> Recovery | None:
+        """The full recovery read: agreement, abstention, and which estimator ran.
+
+        ``None`` when it was skipped (``agreement_folds=0``).
+        """
         return self._recovery
+
+    @property
+    def params(self) -> dict[str, Any] | None:
+        """The call that produced this propagation, as passed by the caller.
+
+        ``FeatureTable.propagate_labels`` records its arguments here for
+        provenance; a Propagation built by hand carries ``None``.
+        """
+        return self._params
+
+    @property
+    def rungs(self) -> np.ndarray | None:
+        """Which ladder rung labeled each cell, in ``cell_ids`` order.
+
+        ``None`` unless the propagation ran with ``ladder=``. Values index
+        ``rung_names``; ``-1`` marks a cell no usable rung's features were valid
+        for (its label is unassigned — the honest answer, not a fallback vote).
+        Confidence is comparable *within* a rung, not across rungs: each rung is
+        its own feature space with its own local label competition.
+        """
+        return None if self._rungs is None else self._rungs.copy()
+
+    @property
+    def rung_names(self) -> list[str] | None:
+        """The ladder's collection names, richest first, indexed by ``rungs``."""
+        return None if self._rung_names is None else list(self._rung_names)
+
+    @property
+    def rung_recovery(self) -> dict[str, Recovery | None] | None:
+        """Per-rung :class:`Recovery`, keyed by rung name.
+
+        Each rung's recovery is computed over the reference cells that voted in
+        it, so comparing rungs answers the question the ladder poses: how much
+        does each narrower feature set still carry? ``None`` for a rung whose
+        recovery was skipped or that had too few valid reference cells to run.
+        """
+        return None if self._rung_recovery is None else dict(self._rung_recovery)
 
     def self_agreement(self) -> float:
         """How often the reference's own labels are recovered without being given.
@@ -538,26 +665,43 @@ class Propagation:
 
         This is only the fraction recovered — see ``recovery`` for how the rest
         failed, since a misassigned cell and an unreachable one call for different
-        fixes, and for which estimator produced the number.
+        fixes, and for which estimator produced the number. ``nan`` when recovery
+        was skipped (``agreement_folds=0``).
         """
-        return self._recovery.agreement
+        return float("nan") if self._recovery is None else self._recovery.agreement
 
     def n_reference(self) -> int:
         """Cells whose label came from the reference rather than from propagation."""
         return int(self._reference.assigned.sum())
 
     def frame(self, *, id_column: str = "cell_id") -> pl.DataFrame:
-        """``to_frame`` of the propagated labels plus a ``{name}_confidence`` column."""
-        return self._labels.to_frame(id_column=id_column).with_columns(
+        """``to_frame`` of the propagated labels plus a ``{name}_confidence`` column.
+
+        A ladder propagation adds a ``{name}_rung`` column naming the collection
+        that labeled each cell (null where no rung was valid).
+        """
+        frame = self._labels.to_frame(id_column=id_column).with_columns(
             pl.Series(f"{self._labels.name}_confidence", self._confidence)
         )
+        if self._rungs is not None and self._rung_names is not None:
+            names = [self._rung_names[r] if r >= 0 else None for r in self._rungs]
+            frame = frame.with_columns(
+                pl.Series(f"{self._labels.name}_rung", names, dtype=pl.Utf8)
+            )
+        return frame
 
     def __repr__(self) -> str:
+        if self._recovery is None:
+            agreement = "self_agreement=skipped"
+        else:
+            agreement = (
+                f"self_agreement={self._recovery.agreement:.3f} "
+                f"({self._recovery.estimator})"
+            )
         return (
             f"Propagation(method={self._method!r}, labels={self._labels.name!r}, "
             f"n_cells={len(self._labels)}, reference={self.n_reference()}, "
             f"unassigned={self._labels.n_unassigned}, "
-            f"self_agreement={self._recovery.agreement:.3f} "
-            f"({self._recovery.estimator}), "
+            f"{agreement}, "
             f"n_neighbors={self._n_neighbors}, space={self._space!r})"
         )

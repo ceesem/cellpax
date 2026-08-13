@@ -26,6 +26,20 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 
+[project.optional-dependencies]
+# Embedding backends are optional: each is only needed by ft.embed(method=...), and
+# pacmap in particular pulls faiss-cpu and numba, which constrain the numpy version.
+umap = [
+    "umap-learn>=0.5",
+]
+pacmap = [
+    "pacmap>=0.8",
+]
+embeddings = [
+    "umap-learn>=0.5",
+    "pacmap>=0.8",
+]
+
 [dependency-groups]
 dev = [
     "ipykernel",

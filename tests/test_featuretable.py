@@ -172,14 +172,135 @@ def test_fitted_scaler_transforms() -> None:
     from cellpax.featuretable import FittedScaler
 
     class _Identity:
+        def fit(self, x):
+            return self
+
         def transform(self, x):
             return x
 
     x = np.array([[0.0, 1.0, 4.0], [3.0, 8.0, 9.0]])
     fs = FittedScaler(scaler=_Identity(), transforms=["ihs", "log", "sqrt"])
+    fs.fit(x)
     out = fs.transform(x)
     assert np.allclose(out[:, 0], np.arcsinh(x[:, 0]))  # ihs
     assert np.allclose(out[:, 2], np.sqrt(x[:, 2]))  # sqrt
     assert out[0, 1] < out[1, 1]  # log is monotone increasing
     with pytest.raises(ValueError, match="Unknown per-feature transform"):
-        FittedScaler(scaler=_Identity(), transforms=["cube"]).transform(x[:, :1])
+        FittedScaler(scaler=_Identity(), transforms=["cube"]).fit(x[:, :1])
+
+
+def test_log_shift_is_a_fitted_parameter_not_a_batch_property() -> None:
+    """The same raw value must land at the same transformed value in every batch."""
+    from cellpax.featuretable import FittedScaler
+
+    class _Identity:
+        def fit(self, x):
+            return self
+
+        def transform(self, x):
+            return x
+
+    fit_batch = np.array([[1.0], [10.0], [100.0]])
+    fs = FittedScaler(scaler=_Identity(), transforms=["log"])
+    fs.fit(fit_batch)
+    reference = fs.transform(np.array([[1.0]]))[0, 0]
+
+    # a later batch with a different minimum must not move the transform
+    later = fs.transform(np.array([[1.0], [5.0]]))
+    assert later[0, 0] == reference
+
+    # values outside the fitted domain raise instead of going NaN
+    negative_fit = FittedScaler(scaler=_Identity(), transforms=["log"])
+    negative_fit.fit(np.array([[-2.0], [3.0]]))
+    with pytest.raises(ValueError, match="outside the domain"):
+        negative_fit.transform(np.array([[-5.0]]))
+
+    unfitted = FittedScaler(scaler=_Identity(), transforms=["log"])
+    with pytest.raises(ValueError, match="no fitted shifts"):
+        unfitted.transform(fit_batch)
+
+
+# -- mutation guards and invalidation ------------------------------------------
+
+
+def test_add_column_refuses_to_overwrite_a_feature_silently() -> None:
+    ft = _table()
+    with pytest.raises(ValueError, match="is a feature column"):
+        ft.add_column([0.0] * 40, "m0")
+    with pytest.raises(ValueError, match="is the id column"):
+        ft.add_column([1] * 40, "cell_id")
+
+
+def test_a_deliberate_feature_overwrite_drops_the_stale_scaler() -> None:
+    ft = _table()
+    before = ft.features(scaled=True)
+    assert abs(before[:, 0].mean()) < 1e-9  # standardized around zero
+
+    ft.add_column([v + 1000.0 for v in ft._df["m0"].to_list()], "m0", overwrite=True)
+    after = ft.features(scaled=True)
+    # a stale cached scaler would report a mean of ~ +1000 in scaled units
+    assert abs(after[:, 0].mean()) < 1e-9
+
+
+def test_preprocess_without_the_screen_applies_the_method_everywhere() -> None:
+    ft = _table()
+    ft.preprocess(skew_screen=False, method="ihs")
+    assert set(ft.transforms.values()) == {"ihs"}
+    ft.preprocess(skew_screen=False, method=None)
+    assert set(ft.transforms.values()) == {None}
+
+
+def test_add_features_rejects_the_reserved_mask_prefix() -> None:
+    ft = _table()
+    source = pl.DataFrame(
+        {"cell_id": pl.Series(range(1, 41), dtype=pl.Int64), "_mask_evil": [1.0] * 40}
+    )
+    with pytest.raises(ValueError, match="cannot start with"):
+        ft.add_features(source)
+
+
+def test_mask_names_cannot_contain_slashes() -> None:
+    ft = _table()
+    with pytest.raises(ValueError, match="item paths"):
+        ft.add_mask("a/b", pl.col("m0") > 0)
+
+
+def test_string_cell_ids_work_through_label_alignment() -> None:
+    from cellpax.labels import LabelSet
+
+    rng = np.random.default_rng(0)
+    df = pl.DataFrame(
+        {
+            "cell_id": [f"c{i}" for i in range(30)],
+            "m0": np.r_[rng.normal(0, 0.2, 15), rng.normal(5, 0.2, 15)],
+            "m1": np.r_[rng.normal(0, 0.2, 15), rng.normal(5, 0.2, 15)],
+        }
+    )
+    ft = FeatureTable(df, features=["m0", "m1"])
+    labels = LabelSet(
+        np.array([f"c{i}" for i in range(30)]),
+        np.array([0] * 15 + [1] * 15),
+        name="kind",
+    )
+    purity = ft.neighborhood_purity(labels, n_neighbors=5)
+    assert purity["purity"].mean() > 0.9
+
+
+def test_set_id_column_rekeys_stored_embeddings_and_clusterings() -> None:
+    ft = _table()
+    ft.embed(method="pca", n_components=2, name="p")
+    clus = ft.cluster(n_neighbors=10, n_times=2, n_jobs=1, name="run")
+    old_ids = clus.cell_ids
+
+    id_map = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 41), dtype=pl.Int64),
+            "new_id": pl.Series(range(101, 141), dtype=pl.Int64),
+        }
+    )
+    ft.set_id_column("new_id", id_map=id_map)
+
+    assert "new_id" in ft.embedding(name="p").columns
+    assert np.array_equal(ft.clustering("run").cell_ids, old_ids + 100)
+    # the tidy view can still join the embedding on the new key
+    assert ft.dataframe(embedding="p").height == 40

@@ -83,6 +83,12 @@ class LabelSet:
             raise ValueError("cell_ids and labels must have the same length")
         if np.unique(self._cell_ids).shape[0] != self._cell_ids.shape[0]:
             raise ValueError("cell_ids must be unique")
+        below = np.unique(self._labels[self._labels < _UNASSIGNED])
+        if below.size:
+            raise ValueError(
+                f"labels below -1 have no meaning ({below.tolist()}); -1 is the "
+                "only unassigned sentinel"
+            )
         self.name = name
         self.mask = mask
         self._meta: dict[int, Label] = {
@@ -268,6 +274,16 @@ class LabelSet:
             }
         )
 
+    def to_series(self) -> pl.Series:
+        """Per-cell cluster names as a Series named after this label set.
+
+        The one-column form of ``to_frame``, for when you already have the rows
+        lined up and only want the names — e.g. straight into ``ft.add_column``
+        or a plotting call, without a join on ``cell_id``. Unassigned cells are
+        null, like the column ``attach`` writes.
+        """
+        return pl.Series(self.name, self.to_names(), dtype=pl.String)
+
     # -- per-cell arrays (model fitting) ---------------------------------------
 
     @property
@@ -314,15 +330,21 @@ class LabelSet:
         (e.g. ``ft.features(mask)``) instead of trusting that both are in the
         same order. Cells this label set doesn't cover get ``missing``.
         """
-        by_cell = dict(
-            zip((int(c) for c in self._cell_ids), (int(v) for v in self._labels))
-        )
+        # cell ids stay whatever type they are — string ids are as valid a key
+        # as integers, and numpy scalars hash equal to their Python counterparts
+        by_cell = dict(zip(self._cell_ids, (int(v) for v in self._labels)))
         return np.array(
-            [by_cell.get(int(c), missing) for c in np.asarray(cell_ids).reshape(-1)],
+            [by_cell.get(c, missing) for c in np.asarray(cell_ids).reshape(-1)],
             dtype=np.int64,
         )
 
     def _check_codes(self, codes: np.ndarray) -> None:
+        below = sorted({int(c) for c in codes if int(c) < _UNASSIGNED})
+        if below:
+            raise ValueError(
+                f"codes below -1 have no meaning ({below}); -1 is the only "
+                "unassigned sentinel"
+            )
         unknown = sorted({int(c) for c in codes} - set(self._meta) - {_UNASSIGNED})
         if unknown:
             raise ValueError(f"no cluster for ids {unknown}; known: {self.ids}")
@@ -347,8 +369,8 @@ class LabelSet:
         Cluster ids, names and colors are preserved (so codes stay comparable
         with the parent's) — handy for train/test splits.
         """
-        index = {int(c): i for i, c in enumerate(self._cell_ids)}
-        wanted = [int(c) for c in np.asarray(cell_ids).reshape(-1)]
+        index = {c: i for i, c in enumerate(self._cell_ids)}
+        wanted = list(np.asarray(cell_ids).reshape(-1))
         absent = [c for c in wanted if c not in index]
         if absent:
             raise KeyError(
@@ -361,6 +383,43 @@ class LabelSet:
             meta=dict(self._meta),
             name=name or self.name,
             mask=self.mask,
+        )
+
+    def reindex(
+        self,
+        cell_ids: Sequence[int] | np.ndarray,
+        *,
+        fill: str | None = None,
+        name: str | None = None,
+        mask: str | None = None,
+    ) -> "LabelSet":
+        """A new LabelSet over exactly these cells, covered by this one or not.
+
+        The lenient counterpart of ``subset``, which raises on cells it doesn't
+        know because silently dropping a train/test split is worse than stopping.
+        Here the missing cells are the point: they come back unassigned, or in the
+        cluster named ``fill``. That's how a label set computed on one population
+        is widened to a whole mask — what ``FeatureTable.flatten_labels`` uses to
+        give every cell in a mask a value.
+
+        ``fill`` reuses an existing cluster of that name rather than adding a
+        second one, so ``fill="unassigned"`` over a set that already has an
+        ``unassigned`` cluster stays one cluster.
+        """
+        codes = self.codes_for(cell_ids)
+        meta = dict(self._meta)
+        if fill is not None:
+            fill_id = next((i for i in sorted(meta) if meta[i].name == fill), None)
+            if fill_id is None:
+                fill_id = max(meta, default=-1) + 1
+                meta[fill_id] = Label(id=fill_id, name=fill)
+            codes = np.where(codes == _UNASSIGNED, fill_id, codes)
+        return LabelSet(
+            cell_ids,
+            codes,
+            meta=meta,
+            name=name or self.name,
+            mask=self.mask if mask is None else mask,
         )
 
     def drop_unassigned(self, *, name: str | None = None) -> "LabelSet":
@@ -444,11 +503,25 @@ class LabelSet:
         """Merge clusters into one, named ``into``.
 
         The surviving id is the lowest of ``members``, so ids are left with gaps;
-        call ``compact`` if you need contiguous ``0..k-1`` codes again.
+        call ``compact`` if you need contiguous ``0..k-1`` codes again. ``into``
+        may reuse a member's own name, but a name held by a cluster *outside*
+        the merge is refused — it would leave two clusters sharing a name, which
+        every name-based verb would then reject as ambiguous.
         """
         ids = [self._resolve(m) for m in members]
         if len(ids) < 2:
             raise ValueError("merge requires at least two clusters")
+        taken = sorted(
+            i
+            for i, meta in self._meta.items()
+            if meta.name == into and i not in set(ids)
+        )
+        if taken:
+            raise ValueError(
+                f"cluster {taken[0]} is already named {into!r}; merging into that "
+                "name would make it ambiguous — merge it in too, or pick another "
+                "name"
+            )
         target = min(ids)
         for i in ids:
             if i != target:
@@ -472,9 +545,15 @@ class LabelSet:
         return self
 
     def reorder(self, order: Sequence[int | str]) -> "LabelSet":
-        """Renumber cluster ids to a new order (0..k-1) given names or ids."""
+        """Renumber cluster ids to a new order (0..k-1) given names or ids.
+
+        Every cluster with cells must appear exactly once. Clusters known only
+        through metadata — emptied by ``subset``, say — may be listed too, and
+        keep their ``Label`` (name, color, description) under the new
+        numbering; metadata for ids left off the list is dropped.
+        """
         resolved = [self._resolve(k) for k in order]
-        if set(resolved) != set(self.ids):
+        if len(set(resolved)) != len(resolved) or not set(resolved) >= set(self.ids):
             raise ValueError("reorder must list every cluster exactly once")
         remap = {old: new for new, old in enumerate(resolved)}
         new_labels = self._labels.copy()
@@ -484,7 +563,7 @@ class LabelSet:
         self._meta = {
             remap[old]: replace(meta, id=remap[old])
             for old, meta in self._meta.items()
-            if old in remap  # drop metadata for clusters with no cells
+            if old in remap  # ids left off the list drop out
         }
         return self
 
@@ -492,9 +571,14 @@ class LabelSet:
         """Renumber cluster ids to contiguous ``0..k-1``, keeping the current order.
 
         ``merge`` leaves gaps in the ids; multi-class fitting (xgboost's
-        ``num_class``, sklearn's ``classes_``) wants them contiguous.
+        ``num_class``, sklearn's ``classes_``) wants them contiguous. Clusters
+        known only through metadata — emptied by ``subset``, say — keep their
+        identity, renumbered past the populated ones so the codes cells
+        actually use stay contiguous from 0.
         """
-        return self.reorder(self.ids)
+        populated = self.ids
+        empty = [i for i in sorted(self._meta) if i not in set(populated)]
+        return self.reorder([*populated, *empty])
 
     def reorder_by(
         self,
@@ -512,42 +596,118 @@ class LabelSet:
         ``values`` are aggregated with ``agg`` and clusters are renumbered so the
         lowest (or highest, ``ascending=False``) aggregate becomes cluster 0 — e.g.
         sorting clusters by mean soma depth so cluster numbers read top-to-bottom.
+
+        Nulls/NaNs are ignored in the aggregate rather than poisoning it; a cluster
+        with no value at all sorts to the end in both directions.
         """
         if isinstance(values, Mapping):
-            by_cell = {int(k): float(v) for k, v in values.items()}
+            by_cell = {
+                k: (np.nan if v is None else float(v)) for k, v in values.items()
+            }
         else:
             ids = self._cell_ids if cell_ids is None else np.asarray(cell_ids)
             arr = np.asarray(values, dtype=float)
             if arr.shape[0] != ids.shape[0]:
                 raise ValueError("values must have one entry per cell_id")
-            by_cell = dict(zip((int(c) for c in ids), arr.tolist()))
+            by_cell = dict(zip(ids, arr.tolist()))
         try:
-            per_cell = np.array([by_cell[int(c)] for c in self._cell_ids], dtype=float)
+            per_cell = np.array([by_cell[c] for c in self._cell_ids], dtype=float)
         except KeyError as error:
             raise KeyError(f"no value for cell_id {error.args[0]}") from error
-        agg_fn = np.mean if agg == "mean" else np.median
-        order = sorted(self.ids, key=lambda i: agg_fn(per_cell[self._labels == i]))
-        if not ascending:
-            order = order[::-1]
-        return self.reorder(order)
+        agg_fn = np.nanmean if agg == "mean" else np.nanmedian
 
-    def combine(self, other: "LabelSet", *, name: str | None = None) -> "LabelSet":
-        """Union two LabelSets over disjoint cells into a new one."""
-        if set(self._cell_ids.tolist()) & set(other._cell_ids.tolist()):
-            raise ValueError("combine requires disjoint cell sets")
-        offset = max([*self._meta, *self.ids], default=-1) + 1
-        shifted = np.where(
-            other._labels == _UNASSIGNED, _UNASSIGNED, other._labels + offset
-        )
-        meta = dict(self._meta)
-        for i, m in other._meta.items():
-            meta[i + offset] = replace(m, id=i + offset)
+        def key(i: int) -> float:
+            block = per_cell[self._labels == i]
+            block = block[~np.isnan(block)]
+            if not block.size:
+                return np.inf  # no value at all sorts to the end either way
+            value = float(agg_fn(block))
+            return value if ascending else -value
+
+        return self.reorder(sorted(self.ids, key=key))
+
+    def combine(
+        self,
+        *others: "LabelSet",
+        mode: Literal["disjoint", "priority"] = "disjoint",
+        name: str | None = None,
+    ) -> "LabelSet":
+        """Union label sets into one, in priority order — ``self`` first.
+
+        ``mode="disjoint"`` (the default) is for labellings of *separate*
+        populations — exc and inh clustered apart, say. The cell sets must not
+        overlap, and each set's cluster ids are offset past the ones before it so
+        nothing collides: two clusters that happen to share a name stay two
+        clusters, and ids reserved by metadata alone are never reused.
+
+        ``mode="priority"`` is for layering labellings of the *same* population,
+        where each cell takes the label of the first set that assigned it — a fine
+        round of clustering over a coarse one, or a stack of curated subsets.
+        Overlaps are the point rather than an error, and a set that covers a cell
+        but leaves it unassigned falls through to the next one, so ordering the
+        list most-specific-first fills holes without overwriting detail.
+
+        Under ``priority`` clusters are matched **by name**: ``"L5IT"`` from two
+        sets becomes one cluster, keeping the first set's color and description
+        (and its id). Names carry the meaning here, so name your clusters before
+        combining — an un-renamed set is named after its ids (``"0"``, ``"1"``, …)
+        and will merge with another un-renamed set on that basis.
+
+        The mask is kept only if every set agrees on it, since a union over
+        several masks isn't any one of them; ``reindex`` is how you pin the result
+        to a mask of your own.
+        """
+        if mode not in ("disjoint", "priority"):
+            raise ValueError(f"unknown mode {mode!r}; use 'disjoint' or 'priority'")
+        sources = [self, *others]
+        if mode == "disjoint":
+            seen: set[int] = set()
+            for source in sources:
+                cells = {int(c) for c in source._cell_ids}
+                if seen & cells:
+                    raise ValueError("combine requires disjoint cell sets")
+                seen |= cells
+
+        # merged identities first, so each source gets an id remapping to write through
+        meta: dict[int, Label] = {}
+        by_name: dict[str, int] = {}
+        remaps: list[dict[int, int]] = []
+        for source in sources:
+            offset = max(meta, default=-1) + 1
+            remap: dict[int, int] = {}
+            for i, identity in source._meta.items():
+                if mode == "priority" and identity.name in by_name:
+                    remap[i] = by_name[identity.name]  # same name, same cluster
+                    continue
+                remap[i] = i + offset
+                meta[i + offset] = replace(identity, id=i + offset)
+                by_name.setdefault(identity.name, i + offset)
+            remaps.append(remap)
+
+        cell_ids: list[Any] = []
+        labels: list[int] = []
+        position: dict[int, int] = {}
+        for source, remap in zip(sources, remaps):
+            for cell_id, code in zip(source._cell_ids, source._labels):
+                code = int(code)
+                key = int(cell_id)
+                if key not in position:
+                    position[key] = len(cell_ids)
+                    cell_ids.append(cell_id)
+                    labels.append(_UNASSIGNED if code == _UNASSIGNED else remap[code])
+                elif code != _UNASSIGNED and labels[position[key]] == _UNASSIGNED:
+                    # an earlier set covered this cell without assigning it
+                    labels[position[key]] = remap[code]
+
+        masks = {source.mask for source in sources}
         return LabelSet(
-            np.concatenate([self._cell_ids, other._cell_ids]),
-            np.concatenate([self._labels, shifted]),
+            np.asarray(cell_ids)
+            if cell_ids
+            else np.asarray([], dtype=self._cell_ids.dtype),
+            np.asarray(labels, dtype=np.int64),
             meta=meta,
             name=name or self.name,
-            mask=self.mask if self.mask == other.mask else None,
+            mask=masks.pop() if len(masks) == 1 else None,
         )
 
     # -- IntEnum bindings ------------------------------------------------------

@@ -9,6 +9,7 @@ nav:
 - User Guide: guide.md
 - Function Reference:
     - reference/api.md
+- Migration: migration.md
 - Changelog: changelog.md
 
 

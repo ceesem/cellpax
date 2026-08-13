@@ -81,50 +81,34 @@ ft.transforms       # e.g. {'axon_len': None, 'dend_vol': 'ihs', 'dend_area': 'i
 ## 4. Cluster
 
 `ft.cluster(...)` runs repeated kNN/Leiden consensus (fauxnograph) on the scaled
-features and returns a `SimilarityMatrix`. Name it to store it.
+features (PCA-reduced) and returns a `Clustering` — the consensus matrix plus the
+mask it covers, so it can cut itself into labels. Name it to store it too.
 
 ```python
-ft.cluster(columns="axon", n_neighbors=12, n_times=5, seed=0, name="run")
-sim = ft.clustering("run")
-sim.cluster_count_curve()   # (distance thresholds, n clusters) — helps pick a cut
+clus = ft.cluster(columns="axon", n_neighbors=12, n_times=5, seed=0, name="run")
+clus.cluster_count_curve()  # (distance thresholds, n clusters) — helps pick a cut
+clus.mask, clus.space       # what it covers, and the space it compared in
 ```
 
 !!! note "fauxnograph runs in parallel"
     Pass `n_jobs=1` for a deterministic single-threaded run or to silence joblib
     worker warnings in some environments.
 
-## 5. Resolve clusters into labels — two ways
+## 5. Resolve clusters into labels
 
-### By a distance threshold
-
-Cut the consensus dendrogram at one threshold. Simple, but a single cut can't be
-right everywhere.
+Cut the consensus dendrogram at a threshold — and read `threshold_scan()` first,
+so the cut is a choice rather than a guess:
 
 ```python
-labels = ft.label("run", distance_threshold=0.6, name="subclass")
+labels = clus.label(distance_threshold=0.6, name="subclass")
 labels.counts()
 ```
 
-### By CHOIR (no threshold)
-
-`cluster_choir` keeps each split in the tree **only where it's statistically
-justified** — a random-forest permutation test decides whether two child clusters
-are distinguishable — so some branches resolve deeply while others merge, with no
-threshold to tune (following [CHOIR](https://www.choirclustering.com/), Sant et
-al., *Nature Genetics* 2025).
-
-```python
-labels = ft.cluster_choir("run", name="subclass", min_cluster_size=8)
-len(labels.ids)             # a data-driven cluster count
-```
-
-You can also prune **any** over-clustering, not just the consensus tree — CHOIR's
-design favours an intentional over-split. Feed a high-resolution Leiden partition:
-
-```python
-over = ft.overcluster(resolution=3.0)                     # single high-res Leiden
-labels = ft.cluster_choir(over_clustering=over, min_cluster_size=8)
-```
+A single cut can't be right everywhere, which is what the hierarchy tools are for:
+`clus.hierarchy()` keeps every level, `clus.merge_support()` says which merges hold
+across resolutions (a type) and which appear only in fine runs (a subtype), and
+`clus.soft_labels(labels)` gives each cell's ensemble-derived affinity to every
+cluster when the hard assignment is too blunt.
 
 ## 6. Name labels — and bind to an IntEnum
 
@@ -157,7 +141,7 @@ labels.apply_enum(ITLabels)
 ## 7. Compare approaches
 
 ```python
-threshold = ft.label("run", distance_threshold=0.6, name="threshold")
+threshold = clus.label(distance_threshold=0.6, name="threshold")
 cmp = compare(labels, threshold)
 cmp.agreement()        # {'ari': ..., 'nmi': ..., 'fmi': ..., 'jaccard': ..., 'n': ...}
 cmp.contingency()      # long-form cross-tab
@@ -192,5 +176,5 @@ list_analyses(folio)                                 # -> ["l23it"]
 
 The **[User Guide](guide.md)** covers each piece in depth: hierarchical masks,
 collection algebra, the preprocessing/scaling model, clustering parameters, the
-three CHOIR modes (consensus / per-node reselection / arbitrary over-clustering),
-the full `LabelSet` verb set, comparison metrics, and persistence layout.
+consensus hierarchy and merge-support tools, the full `LabelSet` verb set,
+comparison metrics, and persistence layout.

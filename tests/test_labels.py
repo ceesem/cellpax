@@ -86,6 +86,31 @@ def test_relabeling_verbs() -> None:
         ls.merge(["L2"], into="x")
 
 
+def test_codes_below_minus_one_are_rejected_everywhere() -> None:
+    with pytest.raises(ValueError, match=r"\[-2\]"):
+        LabelSet([1, 2], [0, -2])
+
+    ls = LabelSet([1, 2], [0, 1])
+    with pytest.raises(ValueError, match=r"\[-2\]"):
+        ls.with_codes([3, 4], [0, -2])
+    with pytest.raises(ValueError, match=r"\[-3\]"):
+        ls.decode([-3])
+
+    # -1 stays the one unassigned sentinel, accepted as always
+    assert LabelSet([1, 2], [0, -1]).n_unassigned == 1
+
+
+def test_merge_refuses_a_name_already_held_by_a_bystander() -> None:
+    ls = LabelSet([1, 2, 3], [0, 1, 2], names=["a", "b", "c"])
+    with pytest.raises(ValueError, match="already named 'c'"):
+        ls.merge(["a", "b"], into="c")
+    assert ls.names == ["a", "b", "c"]  # nothing was merged on the way to the error
+    assert ls.codes.tolist() == [0, 1, 2]
+
+    ls.merge(["a", "b"], into="b")  # a member's own name is fine
+    assert set(ls.names) == {"b", "c"}
+
+
 def test_reorder_by_mapping() -> None:
     ls = LabelSet([1, 2, 3, 4, 5, 6], [0, 0, 1, 1, 2, 2])
     # cluster 0 -> depth ~800, cluster 1 -> ~200, cluster 2 -> ~500
@@ -96,6 +121,17 @@ def test_reorder_by_mapping() -> None:
     ls2 = LabelSet([1, 2, 3, 4, 5, 6], [0, 0, 1, 1, 2, 2])
     ls2.reorder_by(depths, ascending=False)
     assert ls2.names == ["0", "2", "1"]
+
+
+def test_reorder_by_sorts_value_less_clusters_last_in_both_directions() -> None:
+    ls = LabelSet([1, 2, 3, 4, 5, 6], [0, 0, 1, 1, 2, 2])
+    depths = {1: 810, 2: 790, 3: 190, 4: 210, 5: None, 6: None}
+    ls.reorder_by(depths)
+    assert ls.names == ["1", "0", "2"]  # the value-less cluster sorts last
+
+    ls_desc = LabelSet([1, 2, 3, 4, 5, 6], [0, 0, 1, 1, 2, 2])
+    ls_desc.reorder_by(depths, ascending=False)
+    assert ls_desc.names == ["0", "1", "2"]  # still last, not bumped to the front
 
 
 def test_reorder_by_array_aligned_to_cell_ids() -> None:
@@ -266,6 +302,21 @@ def test_compact_after_merge_gives_contiguous_codes() -> None:
     assert ls.codes.tolist() == [0, 0, 1, 1]
 
 
+def test_compact_keeps_the_identity_of_a_cluster_a_subset_emptied() -> None:
+    ls = LabelSet([1, 2, 3], [0, 1, 2], names=["a", "b", "c"]).set_colors({"b": "#0f0"})
+
+    sub = ls.subset([1, 3]).compact()
+    assert sub.codes.tolist() == [0, 1]  # the cells' codes stay contiguous from 0
+    assert sub.names == ["a", "c"]
+    assert sub.cluster("b").color == "#0f0"  # empty right now, but not forgotten
+    assert sub.cluster("b").id == 2  # renumbered past the populated clusters
+
+    # a zero-cell cluster may also be listed in an explicit reorder
+    relisted = ls.subset([1, 3]).reorder(["c", "b", "a"])
+    assert relisted.cluster("b").id == 1
+    assert relisted.codes.tolist() == [2, 0]
+
+
 def test_catalog_and_color_map() -> None:
     ls = LabelSet([1, 2, 3, 4], [0, 0, 1, -1], name="subclass")
     ls.rename({0: "A", 1: "B"}).set_colors({"A": "#f00"})
@@ -319,7 +370,90 @@ def test_reorder_tolerates_metadata_for_absent_clusters() -> None:
     assert combined.cluster(1).name == "reserved"
 
 
+def test_combine_is_n_ary_and_matches_chaining() -> None:
+    a = LabelSet([1], [0]).rename({0: "a"})
+    b = LabelSet([2], [0]).rename({0: "b"})
+    c = LabelSet([3], [0]).rename({0: "c"})
+    chained = a.combine(b).combine(c)
+    assert a.combine(b, c).catalog().to_dicts() == chained.catalog().to_dicts()
+
+
+def test_combine_priority_takes_the_first_set_that_assigned_each_cell() -> None:
+    fine = LabelSet([1, 2, 3], [0, -1, -1], name="fine").rename({0: "a"})
+    coarse = LabelSet([1, 2, 3, 4], [0, 0, 1, -1], name="coarse").rename(
+        {0: "a", 1: "b"}
+    )
+    flat = fine.combine(coarse, mode="priority")
+
+    assert flat.cell_ids.tolist() == [1, 2, 3, 4]  # first-appearance order
+    # cell 2 is covered by fine but unassigned there, so it falls through to coarse
+    assert flat.to_names() == ["a", "a", "b", None]
+    assert flat.name == "fine"  # the receiver names the result, as combine always has
+
+    with pytest.raises(ValueError, match="disjoint cell sets"):
+        fine.combine(coarse)  # the default still refuses the overlap
+
+
+def test_combine_priority_merges_clusters_by_name_and_keeps_the_first_color() -> None:
+    x = LabelSet([1], [0]).rename({0: "L5IT"}).set_colors({"L5IT": "#111111"})
+    y = LabelSet([2], [0]).rename({0: "L5IT"}).set_colors({"L5IT": "#999999"})
+
+    merged = x.combine(y, mode="priority")
+    assert merged.ids == [0]  # one cluster, not two
+    assert merged.color_map() == {"L5IT": "#111111"}
+    assert merged.counts() == {"L5IT": 2}
+
+    apart = x.combine(y)  # mode="disjoint" keeps same-named clusters distinct
+    assert apart.ids == [0, 1]
+    assert [c.color for c in apart.meta.values()] == ["#111111", "#999999"]
+
+
+def test_combine_priority_appends_new_names_past_a_gapped_id_space() -> None:
+    left = LabelSet([1, 2, 3], [0, 1, 2], name="left").rename(["a", "b", "c"])
+    left.merge(["b", "c"], into="bc")  # leaves a gap: ids 0, 1
+    right = LabelSet([3, 4], [0, 1], name="right").rename({0: "a", 1: "d"})
+
+    flat = left.combine(right, mode="priority")
+    assert flat.cluster("a").id == 0  # a known name keeps the first set's id
+    assert flat.cluster("d").id > max(flat.cluster(n).id for n in ("a", "bc"))
+    assert flat.counts() == {"a": 1, "bc": 2, "d": 1}
+
+
+def test_reindex_widens_to_cells_this_set_never_covered() -> None:
+    ls = LabelSet([1, 2, 3], [0, 1, -1], name="cls").rename(["a", "b"])
+
+    assert ls.reindex([1, 9]).to_names() == ["a", None]  # subset would raise on 9
+    filled = ls.reindex([1, 3, 9], fill="other")
+    assert filled.to_names() == ["a", "other", "other"]
+    assert filled.cell_ids.tolist() == [1, 3, 9]
+
+    # a cluster already named `fill` is reused rather than duplicated
+    named = LabelSet([1, 2], [0, 1]).rename(["a", "other"])
+    assert named.reindex([1, 2, 9], fill="other").counts() == {"a": 1, "other": 2}
+
+
+def test_reindex_carries_name_and_mask() -> None:
+    ls = LabelSet([1, 2], [0, 1], name="cls", mask="left").rename(["a", "b"])
+    assert ls.reindex([1]).mask == "left"  # kept unless overridden
+    wider = ls.reindex([1, 9], name="flat", mask="all")
+    assert (wider.name, wider.mask) == ("flat", "all")
+
+
+def test_to_series_names_itself_after_the_label_set() -> None:
+    ls = LabelSet([1, 2, 3], [0, 1, -1], name="subclass").rename(["a", "b"])
+    series = ls.to_series()
+    assert series.name == "subclass"
+    assert series.to_list() == ["a", "b", None]  # unassigned reads as null
+
+
 def _two_blobs(n: int = 60) -> FeatureTable:
+    """Two tight, well-separated blobs over three features.
+
+    Shifted identically along every dimension, so the features are perfectly
+    correlated and ``ft.cluster``'s default ``pca=0.95`` collapses them to a single
+    component — which splits each blob further. Tests below pass ``pca=False`` to
+    hold the space fixed, since what's under test is labeling, not clustering.
+    """
     rng = np.random.default_rng(0)
     coords = np.vstack(
         [rng.normal(0, 0.3, (n // 2, 3)), rng.normal(8, 0.3, (n // 2, 3))]
@@ -345,12 +479,11 @@ def test_ft_labelset_producers_record_mask() -> None:
     explicit_mask = ft.overcluster(mask="half", n_neighbors=10, resolution=1.0, seed=0)
     assert explicit_mask.mask == "half"
 
-    ft.cluster(mask="half", n_neighbors=10, n_times=2, seed=0, n_jobs=1, name="run")
+    ft.cluster(
+        mask="half", n_neighbors=10, n_times=2, seed=0, n_jobs=1, pca=False, name="run"
+    )
     threshold_labels = ft.label("run", mask="half", distance_threshold=1.0)
     assert threshold_labels.mask == "half"
-
-    choir_labels = ft.cluster_choir("run", mask="half", min_cluster_size=3, n_jobs=1)
-    assert choir_labels.mask == "half"
 
 
 def test_ft_dataframe_with_labels_infers_mask() -> None:
@@ -370,7 +503,7 @@ def test_ft_labels_property_tracks_attached_labelsets() -> None:
     ft = _two_blobs(60)
     assert ft.labels == []
 
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     ft.attach(labels)
     assert ft.labels == ["subclass"]
@@ -385,7 +518,7 @@ def test_ft_labels_property_tracks_attached_labelsets() -> None:
 
 def test_ft_label_and_attach_roundtrip() -> None:
     ft = _two_blobs(60)
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     assert len(labels.ids) == 2
     labels.rename(["A", "B"])
@@ -414,7 +547,9 @@ def test_classifier_round_trip_through_featuretable() -> None:
 
     ft = _two_blobs(60)
     ft.add_mask("train", pl.col("cell_id") <= 40)
-    ft.cluster(mask="train", n_neighbors=10, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(
+        mask="train", n_neighbors=10, n_times=3, seed=0, n_jobs=1, pca=False, name="run"
+    )
     labels = ft.label("run", mask="train", distance_threshold=0.5, name="subclass")
     names = [f"C{i}" for i in labels.ids]
     labels.rename(names).set_colors({names[0]: "#f00"})
@@ -445,7 +580,7 @@ def test_classifier_round_trip_through_featuretable() -> None:
 
 def test_ft_detach_removes_label_columns() -> None:
     ft = _two_blobs(60)
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     ft.attach(labels)
     assert ft.labels == ["subclass"]
@@ -464,7 +599,7 @@ def test_ft_reorder_labels_by_column() -> None:
     ft.add_column(
         np.concatenate([np.full(30, 800.0), np.full(30, 200.0)]), "soma_depth_um"
     )
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     assert len(labels.ids) == 2
 
@@ -477,7 +612,7 @@ def test_ft_reorder_labels_by_column() -> None:
 
 def test_ft_labelset_reconstructs_from_attached_column() -> None:
     ft = _two_blobs(60)
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     labels.rename(["A", "B"])
     ft.attach(labels)
@@ -552,7 +687,7 @@ def test_ft_labelset_from_plain_string_column_without_id_companion() -> None:
 
 def test_ft_dataframe_compare_reorder_accept_column_name() -> None:
     ft = _two_blobs(60)
-    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, name="run")
+    ft.cluster(n_neighbors=15, n_times=3, seed=0, n_jobs=1, pca=False, name="run")
     labels = ft.label("run", distance_threshold=0.5, name="subclass")
     ft.attach(labels)
     other = ft.label("run", distance_threshold=0.5, name="rerun")
@@ -572,3 +707,89 @@ def test_ft_dataframe_compare_reorder_accept_column_name() -> None:
     )
     reordered = ft.reorder_labels("subclass", "soma_depth_um")
     assert isinstance(reordered, LabelSet)
+
+
+# -- flattening labels across masks ---------------------------------------------
+
+
+def _descended() -> FeatureTable:
+    """A table carrying a coarse label and a finer one over part of it.
+
+    The shape the recursive descent leaves behind: ``fine`` covers only the cells
+    ``coarse`` sent down one branch, and is unassigned for some even there.
+    """
+    ft = _two_blobs(60)
+    ft.add_mask("core", pl.col("cell_id") <= 40)
+    coarse = LabelSet(range(1, 41), [0] * 20 + [1] * 20, name="coarse", mask="core")
+    coarse.rename(["exc", "inh"]).set_colors({"exc": "#111111", "inh": "#222222"})
+    fine = LabelSet(range(1, 21), [0] * 10 + [-1] * 10, name="fine", mask="core")
+    fine.rename({0: "exc_a"}).set_colors({"exc_a": "#333333"})
+    return ft.attach(coarse).attach(fine)
+
+
+def test_flatten_labels_lets_the_finest_label_win_and_the_coarse_fill_in() -> None:
+    ft = _descended()
+    flat = ft.flatten_labels(["fine", "coarse"], mask="core", name="leaf")
+
+    assert len(flat) == 40  # every cell in the mask, whether labelled or not
+    names = flat.to_frame().sort("cell_id")["leaf"].to_list()
+    assert names[:10] == ["exc_a"] * 10  # fine won where it assigned
+    assert names[10:20] == ["exc"] * 10  # fine covered these but left them unassigned
+    assert names[20:] == ["inh"] * 20  # coarse alone reaches here
+    assert flat.color_map() == {
+        "exc_a": "#333333",
+        "exc": "#111111",
+        "inh": "#222222",
+    }  # colors merged out of both label sets
+    assert flat.mask == "core"
+
+
+def test_flatten_labels_scopes_to_the_mask_and_fills_what_nothing_covers() -> None:
+    ft = _descended()
+    flat = ft.flatten_labels(["fine", "coarse"], name="leaf", fill="unlabelled")
+
+    assert len(flat) == 60  # no mask given, so every cell in the table
+    assert flat.n_unassigned == 0
+    assert flat.counts()["unlabelled"] == 20  # the 20 cells outside "core"
+
+    scoped = ft.flatten_labels(["fine", "coarse"], mask="core", name="leaf")
+    assert len(scoped) == 40  # cells outside the mask are dropped, not filled
+
+
+def test_flatten_labels_reports_which_label_won_each_cell() -> None:
+    ft = _descended()
+    flat, source = ft.flatten_labels(
+        ["fine", "coarse"], name="leaf", source_name="from"
+    )
+
+    assert source.counts() == {"fine": 10, "coarse": 30}
+    assert source.n_unassigned == 20  # the cells that neither label reached
+    assert len(source) == len(flat)
+    ft.attach(flat).attach(source)
+    assert ft.dataframe().filter(pl.col("from") == "fine").height == 10
+
+
+def test_flatten_labels_round_trips_merged_identities_through_attach() -> None:
+    ft = _descended()
+    ft.attach(ft.flatten_labels(["fine", "coarse"], mask="core", name="leaf"))
+    rebuilt = ft.labelset("leaf")
+
+    assert rebuilt.mask == "core"  # the mask it was flattened onto, recorded
+    assert rebuilt.color_map() == {
+        "exc_a": "#333333",
+        "exc": "#111111",
+        "inh": "#222222",
+    }
+
+
+def test_flatten_labels_accepts_labelsets_and_rejects_bad_input() -> None:
+    ft = _descended()
+    # a LabelSet that was never attached is fine alongside a column name
+    extra = LabelSet([59, 60], [0, 0], name="extra").rename({0: "leftover"})
+    flat = ft.flatten_labels(["fine", "coarse", extra], name="leaf")
+    assert flat.counts()["leftover"] == 2
+
+    with pytest.raises(ValueError, match="at least one label"):
+        ft.flatten_labels([])
+    with pytest.raises(KeyError, match="Unknown label 'nope'"):
+        ft.flatten_labels(["nope", "coarse"])

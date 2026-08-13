@@ -7,14 +7,14 @@ import polars as pl
 import pytest
 
 from cellpax.featuretable import FeatureTable
-from cellpax.propagate import propagate_knn, propagate_spread
+from cellpax.propagate import confidence_curve, propagate_knn, propagate_spread
 
 
 def _core_and_periphery(per_type: int = 30, *, errant: int = 0) -> FeatureTable:
     """Three types, each with a tight core and a diffuse periphery around it.
 
     ``errant`` adds cells far from every type, standing in for reconstructions whose
-    features are measurable but meaningless. They get ``true_type`` ``-9``.
+    features are measurable but meaningless. They get ``true_type`` ``-1``.
     """
     rng = np.random.default_rng(0)
     centers = np.array([[0, 0, 0, 0], [6, 6, 0, 0], [0, 0, 6, 6]], dtype=float)
@@ -27,7 +27,7 @@ def _core_and_periphery(per_type: int = 30, *, errant: int = 0) -> FeatureTable:
     if errant:
         blocks.append(rng.normal(60, 0.3, (errant, 4)))
         is_core += [False] * errant
-        true_type += [-9] * errant
+        true_type += [-1] * errant
     coords = np.vstack(blocks)
     df = pl.DataFrame(
         {
@@ -119,6 +119,15 @@ def test_propagate_argument_errors() -> None:
             propagate(features, np.array([0, -1, 1]), weights="nope")
 
 
+def test_a_code_below_minus_one_is_rejected_before_it_corrupts_the_vote() -> None:
+    # a -2 would wrap around one-hot indexing and land its vote on the last cluster
+    features = np.array([[0.0], [1.0], [2.0], [3.0]])
+    codes = np.array([0, 1, -1, -9])
+    for propagate in (propagate_knn, propagate_spread):
+        with pytest.raises(ValueError, match=r"\[-9\]"):
+            propagate(features, codes)
+
+
 # -- diffusion -------------------------------------------------------------------
 
 
@@ -130,7 +139,7 @@ def _core_periphery_and_junk() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     junk = rng.normal(60, 0.3, (5, 4))  # nowhere near anything real
     features = np.vstack([core, periphery, junk])
     codes = np.array([0] * 30 + [1] * 30 + [-1] * 45)
-    truth = np.array([0] * 30 + [1] * 30 + [0] * 20 + [1] * 20 + [-9] * 5)
+    truth = np.array([0] * 30 + [1] * 30 + [0] * 20 + [1] * 20 + [-1] * 5)
     return features, codes, truth
 
 
@@ -183,7 +192,7 @@ def test_spread_recovery_is_stratified_fold_recovery() -> None:
     assert repeat == recovery
 
     skipped = propagate_spread(features, codes, n_neighbors=20, agreement_folds=0)[2]
-    assert np.isnan(skipped.agreement) and skipped.estimator == "none"
+    assert skipped is None  # 0 skips the fold-wise diffusions entirely
 
 
 def test_stratified_folds_spread_every_cluster_across_every_fold() -> None:
@@ -241,6 +250,17 @@ def test_vote_recovery_can_be_measured_fold_wise_for_comparison() -> None:
     assert folded.abstained == 0.0  # a vote can't abstain, however far away it is
 
 
+def test_spread_reaches_a_cell_coincident_with_its_reference() -> None:
+    # exact duplicates: each unlabeled copy's only mutual neighbor sits at distance
+    # zero, the case low-cardinality integer features produce all the time
+    features = np.array([[0.0], [0.0], [5.0], [5.0]])
+    codes = np.array([0, -1, 1, -1])
+
+    spread, confidence, _ = propagate_spread(features, codes, n_neighbors=1)
+    assert spread.tolist() == [0, 0, 1, 1]  # each duplicate takes its twin's label
+    assert (confidence[[1, 3]] > 0).all()
+
+
 def test_spread_smoothing_relabels_the_reference() -> None:
     # cell 3 is labeled against the group it sits in; cell 8 is unlabeled
     features = np.array([[0.0], [0.1], [0.2], [0.3], [5.0], [5.1], [5.2], [5.3], [5.4]])
@@ -256,6 +276,44 @@ def test_spread_smoothing_relabels_the_reference() -> None:
         features, codes, n_neighbors=3, preserve_labeled=False, alpha=0.9
     )
     assert smoothed[3] == 0  # its neighborhood outweighs its own label
+
+
+# -- calibrating min_confidence ----------------------------------------------------
+
+
+def test_confidence_curve_trades_coverage_for_purity() -> None:
+    truth = np.array([0, 0, 1, 1, -1])
+    predicted = np.array([0, 1, 1, 0, 0])
+    confidence = np.array([0.9, 0.2, 0.8, 0.4, 1.0])
+
+    curve = confidence_curve(truth, predicted, confidence)
+    # one row per cut that changes the kept set — the unknown-truth cell's 1.0
+    # never appears, because it can't move the calibration either way
+    assert curve["cut"].to_list() == [0.2, 0.4, 0.8, 0.9]
+    assert curve["n_kept"].to_list() == [4, 3, 2, 1]  # monotone as the cut rises
+    assert curve["kept_fraction"].to_list() == [1.0, 0.75, 0.5, 0.25]
+    assert curve["error_rate"].to_list() == pytest.approx([0.5, 1 / 3, 0.0, 0.0])
+
+
+def test_confidence_curve_matches_a_probe_propagation() -> None:
+    features, codes, _ = _core_periphery_and_junk()
+    probe, confidence, _ = propagate_knn(
+        features, codes, n_neighbors=10, preserve_labeled=False
+    )
+    curve = confidence_curve(codes, probe, confidence)
+
+    known = int((codes != -1).sum())
+    assert curve["n_kept"].max() <= known
+    assert curve["n_kept"].is_sorted(descending=True)  # keeping less as the cut rises
+    assert ((curve["kept_fraction"] > 0) & (curve["kept_fraction"] <= 1)).all()
+    assert ((curve["error_rate"] >= 0) & (curve["error_rate"] <= 1)).all()
+
+
+def test_confidence_curve_needs_aligned_arrays_and_some_known_truth() -> None:
+    with pytest.raises(ValueError, match="same length"):
+        confidence_curve(np.array([0, 1]), np.array([0]), np.array([0.5]))
+    with pytest.raises(ValueError, match="known truth"):
+        confidence_curve(np.array([-1, -1]), np.array([0, 1]), np.array([0.5, 0.6]))
 
 
 # -- the FeatureTable verb -------------------------------------------------------
@@ -391,7 +449,7 @@ def test_propagate_labels_method_spread() -> None:
 def test_propagate_labels_spread_leaves_unreachable_cells_unassigned() -> None:
     ft = _core_and_periphery(errant=5)
     labels = _core_labels(ft)
-    errant_ids = ft.dataframe().filter(pl.col("true_type") == -9)["cell_id"].to_numpy()
+    errant_ids = ft.dataframe().filter(pl.col("true_type") == -1)["cell_id"].to_numpy()
 
     spread = ft.propagate_labels(labels, to="exc", method="spread", n_neighbors=20)
     vote = ft.propagate_labels(labels, to="exc", method="vote", n_neighbors=20)

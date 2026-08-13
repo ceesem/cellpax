@@ -17,6 +17,22 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.featuretable.FittedScaler
 
+::: cellpax.featuretable.FittedEmbedding
+
+::: cellpax.featuretable.EmbeddingView
+
+## The clustering space
+
+::: cellpax.space.FittedSpace
+
+::: cellpax.clustering.PercentileClipper
+
+::: cellpax.clustering.SigmaClipper
+
+::: cellpax.clustering.make_clipped_scaler
+
+::: cellpax.clustering.clipped_scaler_factory
+
 ## Labels
 
 ::: cellpax.labels.LabelSet
@@ -25,19 +41,73 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ## Clustering
 
+::: cellpax.clustering.Clustering
+
 ::: cellpax.clustering.SimilarityMatrix
+
+::: cellpax.clustering.Partitions
+
+::: cellpax.clustering.ConsensusHierarchy
+
+::: cellpax.clustering.SortedMatrix
 
 ::: cellpax.clustering.fauxnograph_coclustering
 
-::: cellpax.clustering.make_clipped_scaler
+::: cellpax.clustering.kneighbor_graph
 
-::: cellpax.clustering.clipped_scaler_factory
+::: cellpax.clustering.axis_stability
 
-## CHOIR
+::: cellpax.clustering.neighborhood_purity
 
-::: cellpax.choir.choir_labels
+::: cellpax.clustering.neighborhood_self_predictions
 
-::: cellpax.choir.overcluster_linkage
+::: cellpax.clustering.neighbor_label_composition
+
+## Diagnostics
+
+::: cellpax.diagnostics.feature_correlation
+
+::: cellpax.diagnostics.block_weights
+
+::: cellpax.diagnostics.tie_report
+
+::: cellpax.diagnostics.duplicate_rows
+
+::: cellpax.diagnostics.clip_comparison
+
+::: cellpax.diagnostics.covariate_sensitivity
+
+::: cellpax.diagnostics.stratum_shift
+
+## Validation
+
+::: cellpax.validate.subsample_stability
+
+::: cellpax.validate.clustering_stability
+
+::: cellpax.validate.Stability
+
+::: cellpax.validate.loo_knn_recovery
+
+::: cellpax.validate.graph_knn_recovery
+
+::: cellpax.validate.paired_recovery
+
+::: cellpax.validate.RecoveryScore
+
+::: cellpax.validate.label_purity
+
+## Label propagation
+
+::: cellpax.propagate.confidence_curve
+
+::: cellpax.propagate.propagate_knn
+
+::: cellpax.propagate.propagate_spread
+
+::: cellpax.propagate.Propagation
+
+::: cellpax.propagate.Recovery
 
 ## Comparison
 
