@@ -1011,6 +1011,62 @@ keeps its label anyway. That is a useful flag for reviewing the core, but it mea
 the confidence column is not one population — filter to the propagated cells before
 taking a quantile of it.
 
+### Conformal assignment: sets with a certificate
+
+`propagate_labels`' confidence is a plurality margin — useful, calibrated
+against nothing. `ft.assign` answers the stronger question — *which labels can
+this cell defensibly be given?* — with a finite-sample guarantee attached:
+
+```python
+assignment = ft.assign(core, to="exc", columns="stable")
+
+assignment.prediction_set(alpha=0.1)     # labels not rejected at 90% coverage
+assignment.set_sizes(alpha=0.1)          # 1 = decisive, 3 = honestly torn
+ft.attach(assignment.to_labelset(alpha=0.1))   # singletons keep their label,
+                                               # everything else abstains
+assignment.coverage(alpha=0.1)           # the self-check, per class
+```
+
+The curated reference is split into a training part and a calibration part;
+a classifier (any sklearn estimator — the guarantee doesn't depend on its
+quality, only the set sizes do) is fit on the first and its surprise on the
+second becomes the yardstick. Every cell then gets a **p-value per label**,
+and that matrix is the stored evidence: `alpha` is a *read-time* parameter,
+so one `assign` call serves every coverage level you later care about — the
+same stance the boundary report takes with its thresholds.
+
+Calibration is **Mondrian by class** by default: each label's threshold comes
+from calibration cells of that label, so 90% coverage means 90% *for the rare
+type too*, not on average. The price is honest arithmetic — a class needs at
+least `⌈1/alpha⌉ − 1` calibration cells to back its guarantee, and
+`prediction_set` names the classes that fall short rather than letting them
+borrow a threshold.
+
+**When the target drifts away from the core** — truncation being the standing
+example — the plain guarantee quietly dies on the drifted cells: their scores
+exceed everything in calibration and their sets come back empty (measured on
+the truncation benchmark: 26% coverage at nominal 90%). Two remedies, both
+kept while the toolkit is deliberately overcomplete. Passing
+`shift_covariates=["completeness"]` switches to weighted conformal
+(Tibshirani et al. 2019): calibration cells resembling each test cell in the
+covariates count for more, restoring coverage at the honest price of
+conceding both labels where the classes have genuinely merged.
+`conditional_prediction_set` (optional `conditional` extra) is the
+finer instrument — Gibbs–Cherian–Candès conditional coverage, holding at
+*every* completeness level while keeping sets small (88% coverage at mean
+set size 0.91 on the same benchmark) — at the cost of a construction-time
+`alpha` and an LP per cell.
+
+Two boundaries worth respecting. An **empty set is not novelty detection**:
+the guarantee assumes exchangeability with the calibration cells, which is
+precisely what a truncated or foreign cell violates — `plausibility()` is a
+screen, `score_cells` and the validity machinery are the real tools, and
+`assign` warns when its columns' validity domains don't cover the target for
+exactly this reason. And the calibrated **probabilities that ride along**
+(`assignment.probabilities`) are a different object from the sets:
+probabilities rank and average nicely but can be wrong together; the sets
+carry the certificate.
+
 ### Smoothing and refilling
 
 Same verb, two variations that were workhorses of the old pipeline:

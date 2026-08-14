@@ -2685,6 +2685,227 @@ class FeatureTable:
             id_column=self._id_column,
         )
 
+    def assign(
+        self,
+        labels: Any,
+        *,
+        to: str | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        pca: bool | float = 0.95,
+        classifier: Any = None,
+        calibration_fraction: float = 0.25,
+        mondrian: Literal["class"] | None = "class",
+        shift_covariates: Sequence[str] | None = None,
+        on_invalid: Literal["warn", "raise", "ignore"] = "warn",
+        name: str | None = None,
+        seed: int | None = None,
+    ) -> Any:
+        """Conformal label assignment: per-cell, per-label p-values with a
+        coverage certificate — see :mod:`cellpax.assign`.
+
+        The curated reference (``labels``, inside mask ``to``) is split
+        stratified into a training part and a calibration part; a classifier
+        is fit on the first, its nonconformity on the second becomes the
+        yardstick, and every cell of ``to`` gets a p-value per label.
+        ``alpha`` is deliberately *not* a parameter here: the returned
+        :class:`~cellpax.assign.Assignment` holds the evidence, and sets,
+        hard labels (``to_labelset``), and coverage checks are derived at
+        read time.
+
+        ``mondrian="class"`` (default) calibrates per class, so the
+        guarantee holds for the rare types and not just on average; classes
+        with too few calibration cells for a requested ``alpha`` are named in
+        a warning when you ask. ``classifier`` is any sklearn-style
+        estimator with ``predict_proba`` (default: a seeded
+        ``RandomForestClassifier``); the guarantee does not depend on its
+        quality — only the set sizes do.
+
+        The same validity discipline as ``propagate_labels`` applies: the
+        guarantee assumes the cells are exchangeable with the calibration
+        cells, which is exactly what invalid features break, so propagating
+        this onto cells outside the columns' validity domain warns
+        (``on_invalid``).
+
+        ``shift_covariates`` names metadata columns (completeness metrics,
+        above all) along which the target population is *known* to drift away
+        from the curated core. The p-values are then computed with weighted
+        conformal prediction (Tibshirani et al. 2019): calibration cells that
+        resemble each test cell in the covariates count for more, restoring
+        coverage under the shift the covariates capture — at the price of
+        larger sets where comparable calibration cells are scarce, and no
+        guarantee at all where they don't exist. See
+        :func:`cellpax.assign.conditional_prediction_set` for the
+        conditional-coverage alternative (optional ``conditional`` extra).
+        """
+        from crepes import WrapClassifier
+
+        from cellpax.assign import Assignment
+
+        labels = self._resolve_labels(labels)
+        target = to or _DEFAULT_MASK
+        target_ids = self._cell_ids(target)
+        reference_ids = labels.cell_ids[labels.assigned]
+        outside = np.setdiff1d(reference_ids, target_ids)
+        if outside.size:
+            raise ValueError(
+                f"{outside.size} of {reference_ids.size} reference cells are "
+                f"outside mask {target!r}; assignment needs the reference inside "
+                f"the target mask, so one feature space covers both"
+            )
+        invalid = ~self.fully_valid(target, columns=columns)
+        if invalid.any() and on_invalid != "ignore":
+            message = (
+                f"{int(invalid.sum())} of {len(target_ids)} cells in mask "
+                f"{target!r} are outside the validity domain of the assignment "
+                f"columns; the coverage guarantee assumes exchangeability with "
+                f"the calibration cells, which invalid features break. Restrict "
+                f"columns=, or on_invalid='ignore' to accept it"
+            )
+            if on_invalid == "raise":
+                raise ValueError(message)
+            warnings.warn(message)
+
+        resolved_seed = (
+            seed
+            if seed is not None
+            else self._derive_seed("assign", target, name or labels.name)
+        )
+        cols = self._resolve_columns(columns)
+        if pca is False:
+            data = self.features(target, scaled=True, columns=cols)
+            space = "scaled"
+        else:
+            fitted = self.space(
+                target, columns=cols, explained_variance=0.95 if pca is True else pca
+            )
+            data = fitted.transform_scaled(
+                self.features(target, scaled=True, columns=cols)
+            )
+            space = fitted.label
+
+        reference_codes = labels.codes_for(target_ids)
+        is_reference = reference_codes != -1
+        if not 0 < calibration_fraction < 1:
+            raise ValueError("calibration_fraction must be in (0, 1)")
+
+        # stratified split: every class keeps at least one cell on each side,
+        # so the classifier sees every class and every class can calibrate
+        rng = np.random.default_rng(resolved_seed)
+        calibration = np.zeros(target_ids.shape[0], dtype=bool)
+        for class_id in np.unique(reference_codes[is_reference]):
+            members = np.flatnonzero(reference_codes == class_id)
+            if members.size < 2:
+                warnings.warn(
+                    f"class id {class_id} has {members.size} reference cell(s); "
+                    f"it needs at least 2 (one to train on, one to calibrate on) "
+                    f"and is excluded from the assignment"
+                )
+                reference_codes = reference_codes.copy()
+                reference_codes[members] = -1
+                continue
+            n_calibration = max(1, int(round(members.size * calibration_fraction)))
+            n_calibration = min(n_calibration, members.size - 1)
+            chosen = rng.choice(members, size=n_calibration, replace=False)
+            calibration[chosen] = True
+        is_reference = reference_codes != -1
+        train = is_reference & ~calibration
+        if train.sum() < 2 or calibration.sum() < 2:
+            raise ValueError(
+                "assignment needs at least two training and two calibration "
+                "reference cells after the stratified split"
+            )
+
+        if classifier is None:
+            from sklearn.ensemble import RandomForestClassifier
+
+            classifier = RandomForestClassifier(random_state=resolved_seed)
+        if shift_covariates is None:
+            wrapped = WrapClassifier(classifier)
+            wrapped.fit(data[train], reference_codes[train])
+            wrapped.calibrate(
+                data[calibration],
+                reference_codes[calibration],
+                class_cond=mondrian == "class",
+            )
+            p_values = wrapped.predict_p(data, seed=resolved_seed)
+            class_ids = np.asarray(wrapped.learner.classes_, dtype=np.int64)
+        else:
+            from cellpax.assign import density_ratio_weights, weighted_p_values
+
+            missing = [c for c in shift_covariates if c not in self._df.columns]
+            if missing:
+                raise KeyError(f"Unknown shift covariate columns: {missing}")
+            covariates = (
+                self._df.filter(self.mask_series(target))
+                .select(list(shift_covariates))
+                .to_numpy()
+                .astype(float)
+            )
+            classifier.fit(data[train], reference_codes[train])
+            class_ids = np.asarray(classifier.classes_, dtype=np.int64)
+            weights_calibration, weights_all = density_ratio_weights(
+                covariates[calibration], covariates, seed=resolved_seed
+            )
+            # hinge nonconformity from the same classifier crepes would use:
+            # 1 - p_model(candidate class)
+            proba_calibration = classifier.predict_proba(data[calibration])
+            column_of = {int(k): j for j, k in enumerate(class_ids)}
+            own = np.array([column_of[int(c)] for c in reference_codes[calibration]])
+            calibration_scores = 1.0 - proba_calibration[np.arange(own.size), own]
+            test_scores = 1.0 - classifier.predict_proba(data)
+            p_values = weighted_p_values(
+                calibration_scores,
+                reference_codes[calibration],
+                test_scores,
+                class_ids=class_ids,
+                calibration_weights=weights_calibration,
+                test_weights=weights_all,
+            )
+
+        probabilities = None
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            from sklearn.frozen import FrozenEstimator
+
+            calibrated = CalibratedClassifierCV(
+                FrozenEstimator(classifier), method="sigmoid"
+            )
+            calibrated.fit(data[calibration], reference_codes[calibration])
+            probabilities = calibrated.predict_proba(data)
+        except Exception as error:  # noqa: BLE001 — probabilities are optional
+            warnings.warn(
+                f"probability calibration failed ({error}); the Assignment "
+                f"carries conformal p-values only"
+            )
+
+        counts = {
+            int(class_id): int(((reference_codes == class_id) & calibration).sum())
+            for class_id in class_ids
+        }
+        result_name = name or f"{labels.name}_assign"
+        return Assignment(
+            target_ids,
+            p_values,
+            probabilities,
+            class_ids=class_ids,
+            reference=labels,
+            calibration_counts=counts,
+            name=result_name,
+            mask=target,
+            params={
+                "columns": list(cols),
+                "pca": pca,
+                "space": space,
+                "classifier": type(classifier).__name__,
+                "calibration_fraction": calibration_fraction,
+                "mondrian": mondrian,
+                "shift_covariates": (
+                    None if shift_covariates is None else list(shift_covariates)
+                ),
+                "seed": resolved_seed,
+            },
+        )
+
     def parametrize(
         self,
         mask: str | None = None,

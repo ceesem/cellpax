@@ -7,6 +7,11 @@ propagation from a curated core, cross-approach comparison, and first-class
 DataFolio save/load build on it.
 """
 
+from cellpax.assign import (
+    Assignment,
+    conditional_prediction_set,
+    weighted_p_values,
+)
 from cellpax.boundary import boundary_report
 from cellpax.clustering import (
     Clustering,
@@ -70,6 +75,7 @@ from cellpax.validate import (
 __version__ = "0.0.1"
 
 __all__ = [
+    "Assignment",
     "Clustering",
     "Comparison",
     "ConsensusHierarchy",
@@ -100,6 +106,7 @@ __all__ = [
     "clustering_stability",
     "compare",
     "compare_many",
+    "conditional_prediction_set",
     "confidence_curve",
     "covariate_sensitivity",
     "duplicate_rows",
@@ -128,4 +135,5 @@ __all__ = [
     "tie_report",
     "to_anndata",
     "twonn_dimension",
+    "weighted_p_values",
 ]

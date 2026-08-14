@@ -9,6 +9,7 @@ description = "Cell feature universe analysis for connectomics"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "crepes>=0.9",
     "datafolio",
     "diptest>=0.8",
     "igraph>=1.0.0",
@@ -44,6 +45,13 @@ embeddings = [
 # re-implementing what scanpy/scvi already do.
 anndata = [
     "anndata>=0.10",
+]
+# Gibbs–Cherian–Candès conditional conformal prediction (the shift-aware
+# coverage candidate). cvxpy is what MAPIE actually needs for this path —
+# its own 'conditional' extra also pins torch, which this route avoids.
+conditional = [
+    "mapie>=1.5",
+    "cvxpy>=1.7",
 ]
 # Density-valley significance, information imbalance, and intrinsic dimension.
 # Pinned to a commit: the 0.3.4 PyPI wheel still declares numpy<2.0 and an

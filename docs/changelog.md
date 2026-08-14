@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — conformal assignment
+
+- **Added `ft.assign` → `Assignment`**: split-conformal label assignment over a
+  curated reference, Mondrian by class so the coverage guarantee holds for rare
+  types and not just on average (engine: the `crepes` package, new core
+  dependency — numpy/pandas/scipy only). The stored object is the *evidence* — a
+  per-cell, per-label p-value matrix — and `alpha` is a read-time parameter:
+  `prediction_set(alpha)`, `set_sizes`, `to_labelset` (singletons keep their
+  label, ambiguity and no-fit both abstain), `coverage` (the per-class
+  self-check), and `frame()` all derive from it. Classes with too few
+  calibration cells to back a requested `alpha` are named in a warning instead
+  of silently borrowing a threshold; sigmoid-calibrated probabilities ride along
+  as a separate, certificate-free object. Deterministic under the derived table
+  seed, params recorded. The docstrings are explicit that an empty set is not
+  novelty detection and that the guarantee assumes exchangeability — which is
+  why `assign` warns when its columns' validity domains don't cover the target.
+- **Added shift-aware coverage, two ways, benchmarked.** `ft.assign(...,
+  shift_covariates=["completeness"])` computes weighted conformal p-values
+  (Tibshirani et al. 2019; in-library, keeps the read-time-alpha evidence
+  matrix), and `conditional_prediction_set` adapts MAPIE's
+  Gibbs–Cherian–Candès conditional conformal (new `conditional` extra:
+  `mapie` + `cvxpy` — deliberately *not* MAPIE's own extra, which drags torch).
+  On the truncation-shift benchmark (features drift with completeness, core
+  curated from complete cells; nominal 90%): vanilla conformal covers the
+  truncated tier at **26%** — undercoverage by silent empty sets; weighted
+  restores **100%** by conceding both labels there (mean set size 2.0);
+  conditional restores **88%** at mean set size **0.91** — near-nominal
+  coverage while staying discriminative, at ~1s per thousand cells and a
+  construction-time alpha. Both live behind adapters pending the
+  overcomplete-then-prune review.
+
 ## Unreleased — the AnnData bridge, the boundary report, and gradients
 
 The verification pass before this phase set the policy: own the bookkeeping and the

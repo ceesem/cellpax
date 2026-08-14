@@ -119,6 +119,10 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.interop.from_anndata
 
+## Conformal assignment
+
+::: cellpax.assign.Assignment
+
 ## Label propagation
 
 ::: cellpax.propagate.confidence_curve
