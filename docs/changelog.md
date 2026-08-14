@@ -2,6 +2,33 @@
 
 ## Unreleased — conformal assignment
 
+- **Added `ft.describe()`** — the session state at a glance, as formatted text:
+  masks with sizes and validity-domain markers, collections, validity domains,
+  stored clusterings (space, run counts, seeds), embeddings (with whether a
+  fitted model is still live or only coordinates survive), attached labels,
+  scaler rule, transforms, and the table seed. The in-memory companion to
+  `folio.describe()`.
+- **Added `ft.set_scaler_factory` and a `scaler_factory=` override on
+  `load_feature_table`** — the second shakedown gap: reusing an existing table
+  under a different clip rule (percentile → sigma, say) meant rebuilding it and
+  losing masks, collections, and label metadata. The swap refits scalers lazily
+  and drops everything computed under the old scaling with a warning naming what
+  went; the load-time override leaves the folio untouched until saved over.
+  Deliberately no per-call factory choice — that would key every cache on the
+  factory and resurrect the combinatorial fitting the redesign removed.
+- **`ft.cluster` now accepts `feature_weights=` and `space=`** — the gap the first
+  workflow shakedown found: block weights reached `embed`/`overcluster`/`project`
+  but not the headline consumer. `feature_weights` folds
+  :func:`block_weights` multipliers into the space the graph is built in;
+  `space=` supplies a prebuilt `FittedSpace`, so one weighted/whitened fit
+  provably serves clustering, embeddings, and the boundary report. A passed
+  space is the representation choice — combining it with `pca=`/`alpha=`/
+  `feature_weights=` raises. `params` records the weight digest (arrays don't
+  ride in a JSON manifest; the weighted space itself persists), and
+  `boundary_report` resolves weighted runs through the space cache by that
+  digest — refusing, rather than silently examining unweighted geometry, when
+  the space is unavailable (pass `space=` explicitly then).
+
 - **Added `ft.assign` → `Assignment`**: split-conformal label assignment over a
   curated reference, Mondrian by class so the coverage guarantee holds for rare
   types and not just on average (engine: the `crepes` package, new core

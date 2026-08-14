@@ -891,6 +891,160 @@ class FeatureTable:
                 stacklevel=3,
             )
 
+    def describe(self) -> str:
+        """The table at a glance, as formatted text — ``print(ft.describe())``.
+
+        Everything a session accumulates that ``repr`` is too short for:
+        masks with sizes, collections, validity domains, stored clusterings
+        (with their space and run counts), embeddings (and whether a fitted
+        model is still live or only coordinates survive), attached labels,
+        plus the scaler rule, transforms, and the table seed. The companion
+        to ``folio.describe()`` on the persistence side.
+        """
+        from collections import Counter
+
+        lines: list[str] = []
+        lines.append(
+            f"FeatureTable — {self.n_cells:,} cells × {self.n_features} features "
+            f"(id: {self._id_column!r}, seed: {self._seed})"
+        )
+        try:
+            from cellpax.persist import _scaler_tag
+
+            tag = _scaler_tag(self._scaler_factory)
+            if isinstance(tag, dict):
+                # show only the parameters the mode actually uses
+                mode = tag.get("mode", "percentile")
+                relevant = (
+                    ("kind", "mode", "n_sigma")
+                    if mode == "sigma"
+                    else ("kind", "mode", "lower", "upper")
+                )
+                scaler = ", ".join(f"{k}={tag[k]}" for k in relevant if k in tag)
+            else:
+                scaler = str(tag)
+        except Exception:  # noqa: BLE001 — a display, never a failure
+            scaler = type(self._scaler_factory).__name__
+        transform_counts = Counter(
+            self._transforms.get(c) or "none" for c in self._features
+        )
+        transforms = (
+            ", ".join(f"{k}×{v}" for k, v in transform_counts.most_common())
+            if self._transforms
+            else "not preprocessed"
+        )
+        lines.append(f"scaler: {scaler} · transforms: {transforms}")
+
+        domain_masks = set(self._validity.values())
+        lines.append(f"\nmasks ({len(self.masks)})")
+        for mask_name in self.masks:
+            count = int(self.mask_series(mask_name).sum())
+            marker = "  [validity domain]" if mask_name in domain_masks else ""
+            lines.append(f"  {mask_name:<24} {count:>9,}{marker}")
+
+        if self._collections:
+            lines.append(f"\ncollections ({len(self._collections)})")
+            for cname, collection in self._collections.items():
+                lines.append(f"  {cname:<24} {len(collection.columns):>3} columns")
+
+        if self._validity:
+            lines.append("\nvalidity domains")
+            by_mask: dict[str, list[str]] = {}
+            for feature, mask_name in self._validity.items():
+                by_mask.setdefault(mask_name, []).append(feature)
+            for mask_name, features in by_mask.items():
+                shown = ", ".join(features[:3])
+                more = f" (+{len(features) - 3} more)" if len(features) > 3 else ""
+                lines.append(f"  {mask_name} ← {shown}{more}")
+
+        if self._clusterings:
+            lines.append(f"\nclusterings ({len(self._clusterings)})")
+            for cname, clus in self._clusterings.items():
+                runs = (
+                    f"  runs={clus.partitions.n_runs}"
+                    if getattr(clus, "partitions", None) is not None
+                    else "  runs=–"
+                )
+                seed_note = ""
+                if clus.params and clus.params.get("seed") is not None:
+                    seed_note = f"  seed={clus.params['seed']}"
+                lines.append(
+                    f"  {cname:<16} mask={clus.mask}  n={clus.shape[0]:,}  "
+                    f"space={clus.space or 'unknown'}{runs}{seed_note}"
+                )
+
+        if self._embeddings:
+            lines.append(f"\nembeddings ({len(self._embeddings)})")
+            for (mask_name, ename), frame in self._embeddings.items():
+                dims = len(frame.columns) - 1
+                if (mask_name, ename) in self._external_embeddings:
+                    origin, _ = self._external_embeddings[(mask_name, ename)]
+                    source = f"external ({origin})"
+                elif (mask_name, ename) in self._embedding_models:
+                    model = self._embedding_models[(mask_name, ename)]
+                    source = f"{model.method}, model live"
+                else:
+                    params = self._embedding_params.get((mask_name, ename)) or {}
+                    source = f"{params.get('method', '?')}, coords only"
+                lines.append(f"  {mask_name}/{ename:<20} {dims}D  {source}")
+
+        attached = self.labels
+        if attached:
+            lines.append(f"\nlabels ({len(attached)})")
+            for column in attached:
+                series = self._df[f"{column}_id"]
+                n_clusters = series.drop_nulls().n_unique()
+                record = self._label_meta.get(column, {})
+                mask_note = f"  mask={record['mask']}" if record.get("mask") else ""
+                confidence = (
+                    "  +confidence"
+                    if f"{column}_confidence" in self._df.columns
+                    else ""
+                )
+                lines.append(
+                    f"  {column:<20} {n_clusters:>3} clusters{mask_note}{confidence}"
+                )
+
+        internal = (
+            {self._id_column}
+            | set(self._features)
+            | {c for lbl in attached for c in (lbl, f"{lbl}_id", f"{lbl}_confidence")}
+        )
+        metadata = [c for c in self.columns if c not in internal]
+        if metadata:
+            shown = ", ".join(metadata[:8])
+            more = f", … (+{len(metadata) - 8} more)" if len(metadata) > 8 else ""
+            lines.append(f"\nmetadata columns ({len(metadata)}): {shown}{more}")
+        return "\n".join(lines)
+
+    def set_scaler_factory(self, scaler_factory: Any) -> "FeatureTable":
+        """Swap the scaler factory — reuse an existing table under a new rule.
+
+        The way to move a saved analysis from, say, the percentile clip to the
+        sigma clip without rebuilding the table: swap the factory and every
+        scaler refits lazily under the new rule the next time a scaled view is
+        asked for. Everything computed in the *old* scaled space — cached
+        scalers and spaces, fitted models, stored embeddings and clusterings —
+        is dropped with a warning naming what went, because serving results
+        from a scaling that no longer exists is the audit bug this machinery
+        was built to prevent. A saved analysis on disk is unaffected until
+        you save over it, so A/B-ing two rules is swap → measure → swap back
+        (or hold two loaded tables).
+
+        ``load_feature_table(..., scaler_factory=…)`` is the load-time form of
+        the same thing. There is deliberately no *per-call* factory choice:
+        that would key every scaler cache on the factory and resurrect the
+        combinatorial fitting the redesign removed.
+        """
+        validated = _validate_scaler_factory(scaler_factory)
+        if validated is self._scaler_factory:
+            return self
+        self._scaler_factory = validated
+        self._invalidate_feature_fits(
+            "the scaler factory was swapped, changing every scaled value"
+        )
+        return self
+
     def set_id_column(
         self,
         name: str,
@@ -1283,6 +1437,8 @@ class FeatureTable:
         pca: bool | float = 0.95,
         alpha: float = 0.0,
         eigenvalue_floor: float = 0.0,
+        space: FittedSpace | None = None,
+        feature_weights: np.ndarray | None = None,
         seed: int | None = None,
         n_jobs: int = -1,
         name: str | None = None,
@@ -1410,6 +1566,21 @@ class FeatureTable:
         ``alpha > 0`` labels will look *worse* on an existing UMAP even when the
         clustering improved; score the change on ``cellpax.validate``, not on the figure.
 
+        ``feature_weights`` (from :func:`~cellpax.diagnostics.block_weights`)
+        folds per-feature multipliers into the space the graph is built in, so
+        a correlated block counts once rather than once per column — the
+        pre-rotation counterpart of ``alpha``, and they compose. ``space=``
+        goes further and supplies the whole representation as a prebuilt
+        :class:`~cellpax.space.FittedSpace`, the same object ``embed`` and
+        ``overcluster`` accept — which is how one weighted (or whitened) fit
+        provably serves every consumer. A passed space *is* the representation
+        choice, so combining it with ``pca=`` / ``alpha=`` /
+        ``feature_weights=`` raises rather than picking one silently; apply
+        whitening via ``space.with_alpha(...)`` before passing. One
+        bookkeeping consequence: weights are arrays, so ``params`` records
+        their digest rather than their values — replaying a weighted run goes
+        through the persisted space, not through ``params`` alone.
+
         ``graph_type`` selects the edge weighting, and may be a list to sweep it as a
         third consensus axis alongside resolution and seed — see
         :func:`~cellpax.clustering.kneighbor_graph` for the three weightings and their
@@ -1436,14 +1607,55 @@ class FeatureTable:
         resolved_seed = (
             seed if seed is not None else self._derive_seed("cluster", mask, name)
         )
-        if pca is False:
+        weight_digest = (
+            None
+            if feature_weights is None
+            else hashlib.blake2b(
+                np.asarray(feature_weights, dtype=float).tobytes(), digest_size=8
+            ).hexdigest()
+        )
+        if space is not None:
+            # a passed space already embodies the representation choices, so
+            # arguments that would re-make them are conflicts, not preferences
+            if feature_weights is not None:
+                raise ValueError(
+                    "pass feature_weights when cluster builds the space, or bake "
+                    "them into the space you pass — not both"
+                )
+            if pca is not True and pca != 0.95:
+                raise ValueError(
+                    "space= already fixes the representation; drop pca= (it would "
+                    "be silently ignored otherwise)"
+                )
+            if alpha or eigenvalue_floor:
+                raise ValueError(
+                    "space= already fixes the representation; apply alpha via "
+                    "space.with_alpha(...) before passing it"
+                )
+            if columns is not None and list(space.columns) != cols:
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            cols = list(space.columns)
+            pca = None  # params marker: representation came from a passed space
+            data = space.transform_scaled(
+                self.features(mask, scaled=True, columns=cols)
+            )
+            space_label = space.label
+        elif pca is False:
             if alpha:
                 raise ValueError(
                     "alpha weights PCA components, so it needs pca to be on; pass "
                     "pca=0.95 (or a component count) alongside alpha"
                 )
+            if feature_weights is not None:
+                raise ValueError(
+                    "feature_weights are frozen into the fitted space, so they "
+                    "need pca to be on; pass pca=0.95 (or a component count)"
+                )
             data = self.features(mask, scaled=True, columns=cols)
-            space = "scaled"
+            space_label = "scaled"
         else:
             variance = 0.95 if pca is True else float(pca)
             fitted = self.space(
@@ -1452,12 +1664,13 @@ class FeatureTable:
                 explained_variance=variance,
                 alpha=alpha,
                 eigenvalue_floor=eigenvalue_floor,
+                feature_weights=feature_weights,
                 seed=seed,
             )
             data = fitted.transform_scaled(
                 self.features(mask, scaled=True, columns=cols)
             )
-            space = fitted.label
+            space_label = fitted.label
         matrix, partitions = fauxnograph_coclustering(
             data,
             return_partitions=True,
@@ -1492,6 +1705,11 @@ class FeatureTable:
             "pca": pca,
             "alpha": alpha,
             "eigenvalue_floor": eigenvalue_floor,
+            # arrays can't ride in a JSON manifest: the digest identifies the
+            # weights, and the weighted space itself persists — so replaying a
+            # weighted run goes through the stored space, not params alone
+            "feature_weights": weight_digest,
+            "space": space_label,
             "seed": resolved_seed,
         }
         order_values = None
@@ -1505,7 +1723,7 @@ class FeatureTable:
             cell_ids=self._cell_ids(mask),
             mask=mask or _DEFAULT_MASK,
             columns=tuple(cols),
-            space=space,
+            space=space_label,
             normalized=normalize,
             method=method,
             order_by=order_by,
@@ -3111,6 +3329,7 @@ class FeatureTable:
         min_cluster_size: int = 1,
         n_neighbors: int = 15,
         density: str = "knn",
+        space: FittedSpace | None = None,
         **thresholds: float,
     ) -> pl.DataFrame:
         """Per-cluster-pair evidence: is each boundary a gap or a cut?
@@ -3135,29 +3354,66 @@ class FeatureTable:
         codes = clustering._row_codes(labels, distance_threshold, min_cluster_size)
         params = clustering.params or {}
         cols = params.get("columns") or (list(clustering.columns) or None)
-        pca = params.get("pca", None)
-        if pca is None and clustering.params is None:
-            warnings.warn(
-                "this clustering carries no recorded parameters (saved before "
-                "they were recorded, or built by hand); using raw scaled "
-                "features over its columns rather than its original space"
+        weight_digest = params.get("feature_weights")
+        if space is not None:
+            data = space.transform_scaled(
+                self.features(clustering.mask, scaled=True, columns=list(space.columns))
             )
-            pca = False
-        elif pca is None:
-            pca = 0.95
-        if pca is False:
-            data = self.features(clustering.mask, scaled=True, columns=cols)
-        else:
-            fitted = self.space(
-                clustering.mask,
-                columns=cols,
-                explained_variance=0.95 if pca is True else pca,
-                alpha=params.get("alpha", 0.0),
-                eigenvalue_floor=params.get("eigenvalue_floor", 0.0),
-            )
+        elif weight_digest is not None:
+            # the weights themselves can't ride in params (arrays don't JSON);
+            # the fitted weighted space carries them — find it by its digest
+            matches = [
+                cached
+                for key, cached in self._space_cache.items()
+                if key[0] == clustering.mask
+                and key[1] == tuple(cols or ())
+                and key[4] == weight_digest
+            ]
+            if not matches:
+                raise ValueError(
+                    "this clustering was computed with feature weights, and the "
+                    "weighted space is not in the cache (a reload restores it; "
+                    "otherwise rebuild it with ft.space(mask, columns=..., "
+                    "feature_weights=w) or pass space=) — reporting boundaries "
+                    "in the unweighted space would examine the wrong geometry"
+                )
+            fitted = matches[0]
+            if params.get("alpha") or params.get("eigenvalue_floor"):
+                fitted = fitted.with_alpha(
+                    params.get("alpha", 0.0),
+                    eigenvalue_floor=params.get("eigenvalue_floor", 0.0),
+                )
             data = fitted.transform_scaled(
                 self.features(clustering.mask, scaled=True, columns=cols)
             )
+        else:
+            pca = params.get("pca", None)
+            if pca is None and clustering.params is None:
+                warnings.warn(
+                    "this clustering carries no recorded parameters (saved before "
+                    "they were recorded, or built by hand); using raw scaled "
+                    "features over its columns rather than its original space"
+                )
+                pca = False
+            elif pca is None:
+                raise ValueError(
+                    "this clustering was computed in an externally supplied space "
+                    f"({params.get('space', 'unknown')!r}); pass space= so the "
+                    "report examines the geometry that made the clusters"
+                )
+            if pca is False:
+                data = self.features(clustering.mask, scaled=True, columns=cols)
+            else:
+                fitted = self.space(
+                    clustering.mask,
+                    columns=cols,
+                    explained_variance=0.95 if pca is True else pca,
+                    alpha=params.get("alpha", 0.0),
+                    eigenvalue_floor=params.get("eigenvalue_floor", 0.0),
+                )
+                data = fitted.transform_scaled(
+                    self.features(clustering.mask, scaled=True, columns=cols)
+                )
         names = None
         if labels is not None and hasattr(labels, "ids"):
             names = {int(i): n for i, n in zip(labels.ids, labels.names)}

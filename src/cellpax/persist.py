@@ -432,8 +432,19 @@ def save_feature_table(
     )
 
 
-def load_feature_table(folio: DataFolio | str | Path, name: str) -> Any:
-    """Load a FeatureTable previously saved under ``name``."""
+def load_feature_table(
+    folio: DataFolio | str | Path, name: str, *, scaler_factory: Any = None
+) -> Any:
+    """Load a FeatureTable previously saved under ``name``.
+
+    ``scaler_factory`` overrides the saved scaler rule at load time — the way
+    to reuse an existing analysis under, say, a sigma clip instead of the
+    percentile clip it was saved with. The override goes through
+    ``set_scaler_factory``, so results computed under the old scaling
+    (restored embeddings and clusterings) are dropped with a warning rather
+    than served against geometry that no longer exists; the folio itself is
+    untouched until you save over it.
+    """
     from cellpax.clustering import Clustering
     from cellpax.featuretable import FeatureCollection, FeatureTable
 
@@ -562,6 +573,8 @@ def load_feature_table(folio: DataFolio | str | Path, name: str) -> Any:
             partitions=partitions,
             params=meta.get("params"),
         )
+    if scaler_factory is not None:
+        ft.set_scaler_factory(scaler_factory)
     return ft
 
 

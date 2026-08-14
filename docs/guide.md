@@ -295,10 +295,19 @@ from cellpax import block_weights
 names  = list(ft.collections["analysis"].columns)
 scaled = ft.features(mask, scaled=True, columns="analysis")
 
-w     = block_weights(scaled, names)               # one weight per feature
-space = ft.space(mask, columns="analysis", feature_weights=w)
+w = block_weights(scaled, names)                   # one weight per feature
+ft.cluster(mask, columns="analysis", feature_weights=w, name="run")
+
+space = ft.space(mask, columns="analysis", feature_weights=w)   # the same fit,
 space.label                                        # 'pca(0.95, weighted)'
+ft.embed(mask, space=space, method="umap")         # shared by every consumer
 ```
+
+`cluster` also accepts a prebuilt `space=` outright (like `embed` and
+`overcluster`), which is how one weighted or whitened fit provably serves the
+consensus, the embeddings, and `boundary_report` together; a passed space
+*is* the representation choice, so combining it with `pca=`/`alpha=` raises
+rather than silently picking one.
 
 The default `method="mfa"` divides each correlated block by the standard deviation along
 its own first principal direction — Escofier & Pagès' multiple factor analysis. That's an
@@ -350,6 +359,14 @@ ft = FeatureTable(df, features=cols,
 a handful of extreme cells cannot move, identical at n=500 and n=21000, and clipping
 *only* what is actually extreme — possibly nothing. It also has **no fitted parameters**,
 so a frozen transform carries no clip bounds for a future dataset to shift.
+
+An existing table doesn't need rebuilding to change rules:
+`ft.set_scaler_factory(clipped_scaler_factory(mode="sigma", n_sigma=4.0))` swaps the
+rule and lazily refits every scaler — dropping, with a warning, anything computed
+under the old scaling rather than serving it against geometry that no longer exists —
+and `load_feature_table(folio, name, scaler_factory=…)` is the load-time form, leaving
+the saved analysis untouched until you save over it. A/B-ing two rules is swap →
+measure → swap back, since refits are lazy and cheap.
 
 Two things to watch:
 

@@ -971,3 +971,80 @@ def test_attaching_a_propagation_carries_confidence_alongside() -> None:
 
     ft.detach("kind_nn")
     assert "kind_nn_confidence" not in ft.columns
+
+
+# -- weighted and externally-supplied spaces -------------------------------------
+
+
+def test_cluster_accepts_feature_weights_and_records_the_weighted_space() -> None:
+    from cellpax.diagnostics import block_weights
+
+    ft = _table()
+    names = list(ft.feature_columns)
+    weights = block_weights(ft.features("core", scaled=True), names)
+
+    plain = ft.cluster("core", **_PARAMS, name="plain")
+    weighted = ft.cluster("core", **_PARAMS, feature_weights=weights, name="weighted")
+
+    assert "weighted" in weighted.space and "weighted" not in plain.space
+    assert weighted.params["feature_weights"] is not None
+    assert plain.params["feature_weights"] is None
+    assert (weighted.similarity_matrix != plain.similarity_matrix).nnz > 0
+
+
+def test_cluster_with_a_prebuilt_space_matches_feature_weights() -> None:
+    from cellpax.diagnostics import block_weights
+
+    ft = _table()
+    weights = block_weights(ft.features("core", scaled=True), ft.feature_columns)
+    space = ft.space("core", feature_weights=weights)
+
+    by_weights = ft.cluster("core", **_PARAMS, feature_weights=weights, name="w")
+    by_space = ft.cluster("core", **_PARAMS, space=space, name="w")
+
+    assert (by_weights.similarity_matrix != by_space.similarity_matrix).nnz == 0
+    assert by_space.params["pca"] is None  # the external-space marker
+
+
+def test_a_passed_space_refuses_conflicting_representation_arguments() -> None:
+    ft = _table()
+    space = ft.space("core")
+    with pytest.raises(ValueError, match="not both"):
+        ft.cluster("core", **_PARAMS, space=space, feature_weights=np.ones(20))
+    with pytest.raises(ValueError, match="drop pca="):
+        ft.cluster("core", **_PARAMS, space=space, pca=False)
+    with pytest.raises(ValueError, match="with_alpha"):
+        ft.cluster("core", **_PARAMS, space=space, alpha=0.5)
+    with pytest.raises(ValueError, match="feature_weights are frozen"):
+        ft.cluster("core", **_PARAMS, pca=False, feature_weights=np.ones(20))
+
+
+def test_boundary_report_refuses_the_wrong_geometry_for_weighted_runs() -> None:
+    from cellpax.diagnostics import block_weights
+
+    ft = _table()
+    weights = block_weights(ft.features("core", scaled=True), ft.feature_columns)
+    clus = ft.cluster("core", **_PARAMS, feature_weights=weights, name="run")
+    lbl = clus.label(distance_threshold=0.5, name="kind")
+
+    # in-session: the weighted space is cached, found by digest
+    report = ft.boundary_report("run", labels=lbl)
+    assert report.height >= 1
+
+    # if the cache is gone, refusing beats reporting on the wrong geometry
+    ft._space_cache.clear()
+    with pytest.raises(ValueError, match="wrong geometry"):
+        ft.boundary_report("run", labels=lbl)
+    # ...and an explicit space= resolves it
+    space = ft.space("core", feature_weights=weights)
+    assert ft.boundary_report("run", labels=lbl, space=space).height >= 1
+
+
+def test_boundary_report_demands_a_space_for_external_space_runs() -> None:
+    ft = _table()
+    space = ft.space("core")
+    clus = ft.cluster("core", **_PARAMS, space=space, name="run")
+    lbl = clus.label(distance_threshold=0.5, name="kind")
+    with pytest.raises(ValueError, match="externally supplied space"):
+        ft.boundary_report("run", labels=lbl)
+    assert ft.boundary_report("run", labels=lbl, space=space).height >= 1

@@ -304,3 +304,51 @@ def test_set_id_column_rekeys_stored_embeddings_and_clusterings() -> None:
     assert np.array_equal(ft.clustering("run").cell_ids, old_ids + 100)
     # the tidy view can still join the embedding on the new key
     assert ft.dataframe(embedding="p").height == 40
+
+
+def test_describe_shows_the_session_state_at_a_glance() -> None:
+    from cellpax.clustering import clipped_scaler_factory
+    from cellpax.labels import LabelSet
+
+    rng = np.random.default_rng(0)
+    n = 60
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, n + 1), dtype=pl.Int64),
+            "m0": np.r_[rng.normal(0, 0.3, 30), rng.normal(6, 0.3, 30)],
+            "m1": np.r_[rng.normal(0, 0.3, 30), rng.normal(6, 0.3, 30)],
+            "depth": rng.uniform(0, 900, n),
+        }
+    )
+    ft = FeatureTable(
+        df,
+        features=["m0", "m1"],
+        scaler_factory=clipped_scaler_factory(mode="sigma", n_sigma=4.0),
+        seed=7,
+    )
+    ft.preprocess()
+    ft.add_mask("half", pl.col("cell_id") <= 30)
+    ft.define_features("both", columns=["m0", "m1"])
+    ft.set_validity(columns=["m0"], where="half")
+    ft.embed(method="pca", n_components=2, name="p")
+    ft.cluster(n_neighbors=10, n_times=2, n_jobs=1, name="run")
+    ft.attach(
+        LabelSet(
+            ft._cell_ids(), np.array([0] * 30 + [1] * 30), names=["a", "b"], name="kind"
+        )
+    )
+
+    text = ft.describe()
+    assert "60 cells × 2 features" in text and "seed: 7" in text
+    assert "sigma" in text and "n_sigma=4.0" in text
+    assert "ihs" in text or "none" in text
+    assert "half" in text and "[validity domain]" in text
+    assert "both" in text and "2 columns" in text
+    assert "run" in text and "runs=" in text and "space=" in text
+    assert "all/p" in text and "model live" in text
+    assert "kind" in text and "2 clusters" in text
+    assert "depth" in text  # metadata outline
+
+    # a fresh minimal table doesn't crash on the empty sections
+    bare = FeatureTable(df, features=["m0", "m1"])
+    assert "not preprocessed" in bare.describe()

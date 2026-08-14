@@ -349,3 +349,80 @@ def test_an_unknown_scaler_tag_refuses_to_load(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="unknown scaler tag"):
         load_feature_table(path, name="t")
+
+
+# -- swapping the scaler rule on an existing table ---------------------------------
+
+
+def _outlier_table(n: int = 60) -> FeatureTable:
+    """A cohort small enough for the percentile clip's breakdown, with one outlier."""
+    rng = np.random.default_rng(0)
+    values = rng.normal(0, 1, n)
+    values[0] = 60.0
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, n + 1), dtype=pl.Int64),
+            "m0": values,
+            "m1": rng.normal(0, 1, n),
+        }
+    )
+    from cellpax.clustering import make_clipped_scaler
+
+    return FeatureTable(df, features=["m0", "m1"], scaler_factory=make_clipped_scaler)
+
+
+def test_set_scaler_factory_changes_the_scaled_values() -> None:
+    from cellpax.clustering import clipped_scaler_factory
+
+    ft = _outlier_table()
+    percentile = ft.features(scaled=True)
+    ft.set_scaler_factory(clipped_scaler_factory(mode="sigma", n_sigma=4.0))
+    sigma = ft.features(scaled=True)
+
+    # the outlier's scaled value differs between rules: percentile lets the
+    # outlier stretch its own bound on a small cohort, sigma does not
+    assert not np.isclose(percentile[0, 0], sigma[0, 0])
+    assert abs(sigma[0, 0]) <= 4.0 + 1e-9  # clipped at the sigma bound exactly
+
+
+def test_set_scaler_factory_drops_results_computed_under_the_old_rule() -> None:
+    from cellpax.clustering import clipped_scaler_factory
+
+    ft = _outlier_table()
+    ft.embed(method="pca", n_components=2, name="p")
+    ft.cluster(n_neighbors=10, n_times=2, n_jobs=1, name="run")
+
+    with pytest.warns(UserWarning, match="scaler factory was swapped"):
+        ft.set_scaler_factory(clipped_scaler_factory(mode="sigma", n_sigma=4.0))
+    assert not ft._embeddings and not ft._clusterings and not ft._scaler_cache
+
+    # swapping to the factory already in place is a silent no-op
+    factory = ft._scaler_factory
+    ft.embed(method="pca", n_components=2, name="p")
+    ft.set_scaler_factory(factory)
+    assert ("all", "p") in ft._embeddings
+
+
+def test_load_with_a_scaler_override_reuses_an_existing_analysis(tmp_path) -> None:
+    from cellpax.clustering import clipped_scaler_factory
+    from cellpax.persist import load_feature_table
+
+    ft = _outlier_table()
+    ft.cluster(n_neighbors=10, n_times=2, n_jobs=1, name="run")
+    ft.save(tmp_path / "folio", "a")
+
+    with pytest.warns(UserWarning, match="scaler factory was swapped"):
+        swapped = load_feature_table(
+            tmp_path / "folio",
+            "a",
+            scaler_factory=clipped_scaler_factory(mode="sigma", n_sigma=4.0),
+        )
+    # old-scaling results dropped on the loaded table, folio untouched
+    assert not swapped._clusterings
+    untouched = load_feature_table(tmp_path / "folio", "a")
+    assert "run" in untouched._clusterings
+
+    # saving the swapped table persists the sigma configuration faithfully
+    swapped.save(tmp_path / "folio", "b")
+    back = load_feature_table(tmp_path / "folio", "b")
+    assert np.allclose(back.features(scaled=True), swapped.features(scaled=True))
