@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased — the AnnData bridge, the boundary report, and gradients
+
+The verification pass before this phase set the policy: own the bookkeeping and the
+consensus-derived statistics, import every algorithm with a maintained home, and
+bridge to foreign data models rather than depending on them.
+
+- **Added `cellpax.interop`**: `ft.to_anndata()` / `FeatureTable.from_anndata()`
+  bridge the scanpy/scvi ecosystem instead of re-implementing it. Masks travel as
+  `mask_*` obs columns, embeddings as id-aligned `obsm["X_*"]`, feature metadata as
+  `var`, and provenance (mask, scaled, transforms, validity domains, seed) under
+  `uns["cellpax"]`, so a cellpax export round-trips and a foreign AnnData imports.
+  `anndata` is a new optional extra, imported lazily.
+- **Added `boundary_report`** (module function and `ft.boundary_report`): per
+  cluster pair, four independent reads on whether the boundary is a *gap* or a
+  *cut through one thing* — Hartigan's dip on the centroid axis (via the new
+  `diptest` dependency), kNN cross-edge connectivity against the configuration
+  null (the PAGA statistic, implemented in-library), saddle-to-peak density along
+  the boundary (in-library kNN proxy, or dadapy's PAk estimator via
+  `density="pak"`), and the consensus co-clustering profile (cross mean + the
+  intermediate-frequency band — the ensemble's own read, available nowhere else).
+  Per-leg votes and a majority `verdict` (`discrete` / `continuous` /
+  `ambiguous`); the columns are the result, the verdict is a summary. The table
+  wrapper rebuilds the space the clustering was computed in from its recorded
+  parameters. This is the replacement for what CHOIR pretended to answer:
+  separability certifies every cut, so the report measures the boundary instead.
+- **Added `ft.parametrize` → `Gradient`** — the follow-through on a `continuous`
+  verdict: a Hastie–Stuetzle principal curve (in-library; the Python ecosystem has
+  no maintained implementation) yields per-cell arc length in `[0, 1]` with
+  feature loadings, `ft.attach` support, and `bin()` back to named labels as
+  *declared interval cuts* of a persisted coordinate rather than pretended modes.
+  Two guards run inside the fit: an intrinsic-dimension gate (decimated TwoNN —
+  a structure that isn't a curve warns before being compressed into one) and a
+  nuisance tripwire (a coordinate that tracks a completeness metric warns before
+  the artifact acquires a biological name).
+- **Added `information_imbalance` and `feature_relevance`** (Glielmo et al., PNAS
+  Nexus 2022; plain rank-based numpy, no jax — dadapy's DiffImbalance is the
+  learned-weights upgrade): does one coordinate space predict another's
+  neighbourhoods, and which features carry the full space's structure, in
+  single-feature and drop-one modes. Notes document the sharp edge the tests
+  pinned: after z-scoring, a binary cluster-separating feature carries *less*
+  neighbourhood information than a continuous coordinate — "separates my
+  clusters" and "carries neighbourhood information" are different claims.
+- **Added the `dadapy` optional extra**, pinned to a commit: the 0.3.4 PyPI wheel
+  still declares `numpy<2.0` and an exact jax pin, while the repo has since
+  unpinned both — the extra moves to `dadapy>=0.3.5` when a fixed release exists.
+- `diptest` becomes a core dependency (small, C-backed, maintained).
+
 ## Unreleased — validity domains
 
 A feature can be measurable for a cell and still be uninformative about it — a

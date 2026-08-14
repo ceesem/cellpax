@@ -437,3 +437,238 @@ def test_stratum_shift_validates_reference_and_names() -> None:
         stratum_shift(data, strata, names, reference="z")
     with pytest.raises(TypeError, match="not the string"):
         stratum_shift(data, strata, "analysis")
+
+
+# -- information imbalance ---------------------------------------------------------
+
+
+def test_identical_spaces_have_near_zero_imbalance_both_ways() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(300, 3))
+    a_to_b, b_to_a = information_imbalance(a, a.copy())
+    assert a_to_b < 0.1
+    assert b_to_a < 0.1
+
+
+def test_independent_spaces_have_near_one_imbalance_both_ways() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(300, 3))
+    b = rng.normal(size=(300, 3))
+    a_to_b, b_to_a = information_imbalance(a, b)
+    assert a_to_b > 0.6
+    assert b_to_a > 0.6
+
+
+def test_a_space_predicts_its_own_shadow_better_than_the_reverse() -> None:
+    """The asymmetry the statistic exists for. b is a's first coordinate: being near
+    in the full 3-D space forces being near in that coordinate, so Delta(a -> b) is
+    small; being near in one coordinate says little about the other two, so
+    Delta(b -> a) is large. A small-then-large pair reads as 'a contains b'."""
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(300, 3))
+    b = a[:, :1]
+    a_to_b, b_to_a = information_imbalance(a, b)
+    assert a_to_b + 0.2 < b_to_a, "the richer space should predict its projection"
+    assert a_to_b < 0.4
+
+
+def test_a_one_dimensional_array_is_accepted_as_a_single_coordinate() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(100, 3))
+    flat = information_imbalance(a, a[:, 0])
+    column = information_imbalance(a, a[:, :1])
+    assert flat == column
+
+
+def test_larger_k_still_reads_correctly_at_both_extremes() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(300, 3))
+    same_to, same_from = information_imbalance(a, a.copy(), k=5)
+    assert same_to < 0.1 and same_from < 0.1
+    other_to, other_from = information_imbalance(a, rng.normal(size=(300, 3)), k=5)
+    assert other_to > 0.6 and other_from > 0.6
+
+
+def test_imbalance_is_deterministic() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(120, 4))
+    b = rng.normal(size=(120, 2))
+    assert information_imbalance(a, b, k=3) == information_imbalance(a, b, k=3)
+
+
+def test_imbalance_validates_row_alignment_cohort_size_and_k() -> None:
+    from cellpax.diagnostics import information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(100, 3))
+    with pytest.raises(ValueError, match="row-aligned"):
+        information_imbalance(a, rng.normal(size=(99, 3)))
+    with pytest.raises(ValueError, match="fewer than 10"):
+        information_imbalance(a[:5], a[:5])
+    with pytest.raises(ValueError, match="k must be between"):
+        information_imbalance(a, a, k=0)
+    with pytest.raises(ValueError, match="k must be between"):
+        information_imbalance(a, a, k=100)
+
+
+def test_the_memory_guard_refuses_large_cohorts_and_suggests_subsampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real threshold is 20,000 cells; 20k^2 doubles is not something a test
+    should allocate, so the constant is lowered instead of the data enlarged."""
+    import cellpax.diagnostics as diagnostics
+    from cellpax.diagnostics import feature_relevance, information_imbalance
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(50, 3))
+    monkeypatch.setattr(diagnostics, "_MAX_CELLS", 30)
+    with pytest.raises(ValueError, match="subsampl"):
+        information_imbalance(a, a)
+    with pytest.raises(ValueError, match="subsampl"):
+        feature_relevance(a, ["f0", "f1", "f2"])
+
+
+# -- feature relevance -------------------------------------------------------------
+
+
+def _one_structural_feature(n: int = 300, seed: int = 0):
+    """Two blobs separated along f0; f1 and f2 are low-amplitude noise.
+
+    All the neighbourhood structure worth having lives in one feature. The native
+    scales *are* the design — the blob separation dwarfs the noise — so the ranking
+    tests pass ``standardize=False``; z-scoring would deliberately erase exactly this
+    kind of dominance, which is what
+    ``test_after_z_scoring_a_blob_bit_is_not_worth_more_than_a_continuous_coordinate``
+    pins.
+    """
+    rng = np.random.default_rng(seed)
+    blob = np.repeat([-4.0, 4.0], n // 2)
+    f0 = blob + rng.normal(scale=0.5, size=n)
+    noise = rng.normal(scale=0.4, size=(n, 2))
+    return np.column_stack([f0, noise]), ["structure", "noise_a", "noise_b"]
+
+
+def test_single_mode_ranks_the_only_structural_feature_first() -> None:
+    from cellpax.diagnostics import feature_relevance
+
+    data, names = _one_structural_feature()
+    report = feature_relevance(data, names, mode="single", standardize=False)
+    assert report.columns == ["feature", "delta_to_full", "delta_from_full"]
+    assert report["feature"][0] == "structure"
+    by_name = {row["feature"]: row for row in report.to_dicts()}
+    assert by_name["structure"]["delta_to_full"] < 0.5
+    assert by_name["noise_a"]["delta_to_full"] > 0.7
+    assert by_name["noise_b"]["delta_to_full"] > 0.7
+
+
+def test_drop_one_mode_says_removing_the_structural_feature_degrades_most() -> None:
+    from cellpax.diagnostics import feature_relevance
+
+    data, names = _one_structural_feature()
+    report = feature_relevance(data, names, mode="drop_one", standardize=False)
+    assert report.columns == ["feature", "delta_without"]
+    assert report["feature"][0] == "structure"
+    # sorted descending: most indispensable first
+    deltas = report["delta_without"].to_list()
+    assert deltas == sorted(deltas, reverse=True)
+    by_name = {row["feature"]: row for row in report.to_dicts()}
+    assert by_name["structure"]["delta_without"] > 0.6
+    assert by_name["noise_a"]["delta_without"] < 0.4
+
+
+def test_after_z_scoring_a_blob_bit_is_not_worth_more_than_a_continuous_coordinate() -> (
+    None
+):
+    """The docstring's caveat, pinned: the imbalance sees *neighbourhood* information
+    only. Z-scored, a balanced two-blob feature saturates at ~2 sigma of separation
+    and resolves nothing within a blob, so its one bit of blob membership carries no
+    more local information than a plain continuous noise coordinate — the single-mode
+    deltas land in one band rather than the blob feature winning. Anyone expecting
+    'the clustering feature must rank first' should read this test."""
+    from cellpax.diagnostics import feature_relevance
+
+    rng = np.random.default_rng(0)
+    n = 300
+    f0 = np.repeat([-4.0, 4.0], n // 2) + rng.normal(scale=0.5, size=n)
+    data = np.column_stack([f0, rng.normal(size=(n, 2))])
+    report = feature_relevance(
+        data, ["structure", "noise_a", "noise_b"], mode="single", standardize=True
+    )
+    deltas = report["delta_to_full"].to_list()
+    assert max(deltas) - min(deltas) < 0.2, "all three carry comparable local info"
+    by_name = {row["feature"]: row for row in report.to_dicts()}
+    assert by_name["structure"]["delta_to_full"] > 0.5, "blobs alone are not enough"
+
+
+def test_a_duplicated_structural_feature_is_covered_for_on_drop_one() -> None:
+    """The disagreement between the modes, pinned: a twin makes a feature look
+    dispensable to drop-one even though it scores well alone."""
+    from cellpax.diagnostics import feature_relevance
+
+    rng = np.random.default_rng(0)
+    n = 300
+    unique = np.repeat([-4.0, 4.0], n // 2) + rng.normal(scale=0.5, size=n)
+    twin = np.tile([-4.0, 4.0], n // 2) + rng.normal(scale=0.5, size=n)
+    twin_copy = twin + rng.normal(scale=0.05, size=n)
+    data = np.column_stack([unique, twin, twin_copy])
+    names = ["unique", "twin_a", "twin_b"]
+
+    report = feature_relevance(data, names, mode="drop_one")
+    by_name = {row["feature"]: row for row in report.to_dicts()}
+    assert by_name["unique"]["delta_without"] > by_name["twin_a"]["delta_without"]
+    assert by_name["unique"]["delta_without"] > by_name["twin_b"]["delta_without"]
+
+
+def test_standardize_strips_a_feature_of_a_purely_unit_borne_advantage() -> None:
+    """The reason the default is on: a noise feature in big units dominates raw
+    Euclidean distance and looks like it alone reproduces the space. Z-scoring takes
+    exactly that advantage away and nothing else."""
+    from cellpax.diagnostics import feature_relevance
+
+    data, names = _one_structural_feature()
+    data = data.copy()
+    data[:, 1] *= 1000.0  # noise_a now out-scales everything
+
+    raw = feature_relevance(data, names, mode="single", standardize=False)
+    scaled = feature_relevance(data, names, mode="single", standardize=True)
+    raw_by = {row["feature"]: row for row in raw.to_dicts()}
+    scaled_by = {row["feature"]: row for row in scaled.to_dicts()}
+    assert raw["feature"][0] == "noise_a", "raw distances follow scale, not structure"
+    assert raw_by["noise_a"]["delta_to_full"] < 0.2
+    assert scaled_by["noise_a"]["delta_to_full"] > 0.5, "the unit advantage is gone"
+
+
+def test_feature_relevance_works_with_larger_k_and_is_deterministic() -> None:
+    from cellpax.diagnostics import feature_relevance
+
+    data, names = _one_structural_feature()
+    first = feature_relevance(data, names, mode="single", k=4, standardize=False)
+    second = feature_relevance(data, names, mode="single", k=4, standardize=False)
+    assert first.equals(second)
+    assert first["feature"][0] == "structure"
+
+
+def test_feature_relevance_validates_mode_names_and_width() -> None:
+    from cellpax.diagnostics import feature_relevance
+
+    data, names = _one_structural_feature(n=50)
+    with pytest.raises(ValueError, match="mode must be"):
+        feature_relevance(data, names, mode="loo")
+    with pytest.raises(TypeError, match="not the string"):
+        feature_relevance(data, "analysis")
+    with pytest.raises(ValueError, match="names were given"):
+        feature_relevance(data, names[:-1])
+    with pytest.raises(ValueError, match="at least two features"):
+        feature_relevance(data[:, :1], names[:1])

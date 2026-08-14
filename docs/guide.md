@@ -514,17 +514,84 @@ truncation-safe collection; a cell extreme under one and ordinary under the
 other is being flagged by its invalid features — truncation talking, not
 biology.
 
-### A note on statistically "validated" splits
+### Is that boundary a gap or a cut?
 
-Earlier versions shipped a CHOIR-style resolver (`cluster_choir`) that kept each
-split of the tree only where its two children were random-forest–distinguishable
-beyond a permutation null. It has been removed, deliberately. That test certifies
-*separability*, and in morphological feature data separability is everywhere: a
-continuum sliced at any point is stably distinguishable at its ends, so the test
-kept essentially every split and lent statistical authority to arbitrary cuts.
-The hierarchy tools above — `merge_support`, `nested_labels`, per-cell stability
-— are the honest way to reason about which splits mean something, and they say
-*where* support lives rather than stamping a p-value on a cut.
+Two clusters can be perfectly separable and still be two halves of one thing —
+any slice through a continuum is stably distinguishable at its ends, which is
+why a classifier test certifies every split it is shown (and why the CHOIR-style
+resolver earlier versions shipped was removed: it stamped p-values on arbitrary
+cuts). The question that matters is whether anything *happens* at the boundary,
+and `boundary_report` measures that four ways per cluster pair:
+
+```python
+report = ft.boundary_report("run", labels=labels)
+report.filter(pl.col("verdict") == "continuous")
+```
+
+- **`dip` / `dip_p`** — Hartigan's dip on the pair projected onto the axis
+  joining the centroids (via the `diptest` package). Two real modes dip;
+  a sliced Gaussian doesn't. Blind to curved boundaries.
+- **`connectivity_ratio`** — observed kNN cross-edges against the
+  configuration-model expectation (the statistic PAGA built cluster graphs
+  on). Read it comparatively across the report's pairs, not against a
+  universal constant.
+- **`valley_ratio`** — saddle-to-peak density along the boundary. Near 0 is a
+  gap; near 1 means the boundary runs through terrain as dense as the
+  clusters themselves — the "northwest corner vs southwest corner" signature.
+  `density="pak"` upgrades the estimator via the optional `dadapy` extra.
+- **`cocluster_cross_mean` / `cocluster_band`** — the ensemble's own read,
+  from the consensus matrix: a real gap has its cross-pair co-clustering mass
+  pinned near zero, while a cut continuum shows a *band* of intermediate
+  frequencies — cells the runs couldn't agree about because there is no fact
+  of the matter. No other leg (and no other package) has access to this.
+
+Each leg votes; `verdict` is the majority of the legs that expressed an
+opinion, with everything else `"ambiguous"`. The verdict is a summary, not a
+result — the columns are the result, the thresholds behind the votes are
+parameters, and a verdict worth acting on should hold across a couple of
+`n_neighbors` values. A `"continuous"` boundary is not a failure: it is the
+signal to stop pretending modes and parametrize the gradient instead (coming
+as `ft.parametrize`), or to merge the pair for downstream use.
+
+The hierarchy tools above — `merge_support`, `nested_labels`, per-cell
+stability — remain the complementary view: they say *where in the tree*
+support lives, while the boundary report says *what kind of boundary* each
+split created.
+
+### Parametrizing a continuum
+
+When the report says `"continuous"`, the honest object is a coordinate, not a
+better cut. `parametrize` fits a principal curve (Hastie & Stuetzle 1989,
+implemented in-library — the Python ecosystem has no maintained home for it)
+through the selected cells and returns a `Gradient`: per-cell arc length in
+`[0, 1]`, attachable like any label, and convertible back to *named interval
+cuts* of a persisted coordinate:
+
+```python
+g = ft.parametrize("l23", labels="subclass", clusters=["L2a", "L2b", "L3"],
+                   orient_by="soma_depth_um", nuisance=["axon_frac_inside"])
+g.loadings()                     # which features vary along the axis
+ft.attach(g)                     # a float column, plottable like anything
+
+labels = g.bin(3, names=["upper", "mid", "deep"])   # honest names: declared cuts
+ft.attach(labels)
+```
+
+Two guards run inside the fit rather than living in the documentation. The
+**dimension gate**: the intrinsic dimension is estimated first (TwoNN, with
+decimation so noise at the nearest-neighbour scale doesn't masquerade as
+dimensionality), and a value that doesn't look like a curve warns before you
+compress real structure into an axis. The **nuisance tripwire**: truncation
+manufactures fake gradients — partial reconstruction is *graded* feature
+loss, so a completeness artifact reads as a smooth biological axis, which is
+more insidious than a fake cluster because a continuum is what you are now
+primed to accept. Pass completeness metrics as `nuisance=` and a coordinate
+that tracks them warns before it acquires a biological name.
+
+`orient_by` fixes the arbitrary sign of the axis against a column (depth,
+say), so "0 means upper" survives a refit. Branching topologies are out of
+scope for the curve — that is elastic-principal-graph territory
+(`elpigraph-python`), a candidate future backend.
 
 ## Labels
 
@@ -1290,6 +1357,36 @@ plot_df = ft.embedding("l23", name="pca").join(
 )
 # hand straight to seaborn: x="pca0", y="pca1", hue="subclass"
 ```
+
+## The AnnData bridge
+
+CellPax deliberately isn't AnnData — masks-as-columns and id-keyed embeddings
+remove the alignment bugs a positional index invites — but the single-cell
+ecosystem's tools live on AnnData, and re-implementing them here would be the
+wrong use of anyone's time. The bridge makes them one call away:
+
+```python
+adata = ft.to_anndata("l23", scaled=True)     # needs pip install 'cellpax[anndata]'
+
+import scanpy as sc
+sc.tl.paga(adata, groups="subclass")           # borrow the ecosystem...
+
+back = FeatureTable.from_anndata(adata)        # ...and come home
+```
+
+Masks travel as `mask_*` boolean obs columns, embeddings as id-aligned
+`obsm["X_*"]` entries, feature metadata as `var`, and provenance — which mask,
+scaled or raw, per-feature transforms, validity domains, the table seed —
+under `uns["cellpax"]`, which is what lets `from_anndata` restore rather than
+guess. Foreign AnnData objects import too: obs becomes metadata, obsm entries
+become registered embeddings, and you name the id column if there's no
+provenance record to read it from.
+
+The reading of the round trip is one-way-ish by design: coordinates,
+metadata, masks, transforms, and validity all survive; fitted models,
+clusterings and the consensus matrix do not cross (they are cellpax objects
+with no AnnData equivalent) — export for the ecosystem's tools, keep the
+analysis of record on the folio side.
 
 ## Persistence
 

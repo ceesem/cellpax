@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "datafolio",
+    "diptest>=0.8",
     "igraph>=1.0.0",
     "joblib>=1.5",
     "leidenalg>=0.11.0",
@@ -39,6 +40,18 @@ embeddings = [
     "umap-learn>=0.5",
     "pacmap>=0.8",
 ]
+# The AnnData bridge (ft.to_anndata / from_anndata): one adapter instead of
+# re-implementing what scanpy/scvi already do.
+anndata = [
+    "anndata>=0.10",
+]
+# Density-valley significance, information imbalance, and intrinsic dimension.
+# Pinned to a commit: the 0.3.4 PyPI wheel still declares numpy<2.0 and an
+# exact jax pin, while the repo has since unpinned both — switch to
+# "dadapy>=0.3.5" once a fixed release exists.
+dadapy = [
+    "dadapy @ git+https://github.com/sissa-data-science/DADApy@c37e52ca3cbe00107696720e5e3efa09f8370bbb",
+]
 
 [dependency-groups]
 dev = [
@@ -46,6 +59,8 @@ dev = [
     "pytest",
     "pytest-cov",
     "bump-my-version",
+    # so the bridge tests exercise real AnnData rather than skipping in CI
+    "anndata>=0.10",
 ]
 lint = [
     "ruff",

@@ -7,6 +7,7 @@ propagation from a curated core, cross-approach comparison, and first-class
 DataFolio save/load build on it.
 """
 
+from cellpax.boundary import boundary_report
 from cellpax.clustering import (
     Clustering,
     ConsensusHierarchy,
@@ -31,6 +32,8 @@ from cellpax.diagnostics import (
     covariate_sensitivity,
     duplicate_rows,
     feature_correlation,
+    feature_relevance,
+    information_imbalance,
     stratum_shift,
     tie_report,
 )
@@ -41,6 +44,8 @@ from cellpax.featuretable import (
     FittedEmbedding,
     FittedScaler,
 )
+from cellpax.gradient import Gradient, fit_principal_curve, twonn_dimension
+from cellpax.interop import from_anndata, to_anndata
 from cellpax.labels import Label, LabelSet
 from cellpax.persist import list_analyses, load_feature_table, save_feature_table
 from cellpax.propagate import (
@@ -74,6 +79,7 @@ __all__ = [
     "FittedEmbedding",
     "FittedScaler",
     "FittedSpace",
+    "Gradient",
     "Label",
     "LabelSet",
     "Partitions",
@@ -88,6 +94,7 @@ __all__ = [
     "__version__",
     "axis_stability",
     "block_weights",
+    "boundary_report",
     "clip_comparison",
     "clipped_scaler_factory",
     "clustering_stability",
@@ -98,7 +105,11 @@ __all__ = [
     "duplicate_rows",
     "fauxnograph_coclustering",
     "feature_correlation",
+    "feature_relevance",
+    "fit_principal_curve",
+    "from_anndata",
     "graph_knn_recovery",
+    "information_imbalance",
     "kneighbor_graph",
     "label_purity",
     "list_analyses",
@@ -115,4 +126,6 @@ __all__ = [
     "stratum_shift",
     "subsample_stability",
     "tie_report",
+    "to_anndata",
+    "twonn_dimension",
 ]

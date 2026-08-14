@@ -2121,6 +2121,21 @@ class FeatureTable:
         label is no longer dropped on the floor at exactly the moment the label
         becomes a column.
         """
+        if hasattr(labels, "coordinate") and hasattr(labels, "bin"):  # a Gradient
+            gradient = labels
+            column = name or gradient.name
+            if column in self._df.columns:
+                if not overwrite:
+                    raise ValueError(
+                        f"[{column!r}] already in the table; pass overwrite=True "
+                        f"or name= to attach the gradient elsewhere"
+                    )
+                self._df = self._df.drop(column)
+            frame = gradient.to_frame(id_column=self._id_column).rename(
+                {gradient.name: column}
+            )
+            self._df = self._df.join(frame, on=self._id_column, how="left")
+            return self
         confidence: np.ndarray | None = None
         if hasattr(labels, "labels") and hasattr(labels, "confidence"):
             propagation = labels
@@ -2668,6 +2683,274 @@ class FeatureTable:
             majority=majority,
             names=dict(zip(resolved.ids, resolved.names)),
             id_column=self._id_column,
+        )
+
+    def parametrize(
+        self,
+        mask: str | None = None,
+        *,
+        labels: Any = None,
+        clusters: Sequence[str] | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        pca: bool | float = 0.95,
+        span: float = 0.1,
+        orient_by: str | None = None,
+        nuisance: Sequence[str] | None = None,
+        dimension_gate: float = 2.5,
+        name: str = "gradient",
+        seed: int | None = None,
+    ) -> Any:
+        """Fit a 1-D coordinate along a continuum — the follow-through on a
+        ``"continuous"`` boundary verdict.
+
+        Fits a Hastie–Stuetzle principal curve (see :mod:`cellpax.gradient`)
+        through the selected cells' representation and returns a
+        :class:`~cellpax.gradient.Gradient`: arc length per cell in
+        ``[0, 1]``, feature loadings computed at fit time, and ``bin()`` to
+        get back to honest named labels. ``ft.attach(gradient)`` writes the
+        coordinate as a float column.
+
+        ``labels`` + ``clusters`` restrict the fit to the cells of specific
+        clusters — the usual move after ``boundary_report`` calls their
+        boundaries continuous. ``orient_by`` names a column the coordinate
+        should correlate positively with (orientation is otherwise the first
+        principal component's, which is arbitrary in sign).
+
+        Two warnings are part of the contract. The **dimension gate**: the
+        intrinsic dimension is estimated first (TwoNN) and a value above
+        ``dimension_gate`` warns that a curve will compress structure that
+        isn't a curve. The **nuisance tripwire**: pass completeness metrics
+        (or any covariate that would make the axis an artifact) as
+        ``nuisance=`` column names, and a strong rank correlation with the
+        fitted coordinate warns — truncation manufactures fake gradients, and
+        a coordinate that tracks reconstruction quality is not biology
+        acquiring a name.
+        """
+        from scipy.stats import spearmanr
+
+        from cellpax.gradient import Gradient, fit_principal_curve, twonn_dimension
+
+        target = mask or _DEFAULT_MASK
+        cell_ids = self._cell_ids(target)
+        keep = np.ones(cell_ids.shape[0], dtype=bool)
+        if clusters is not None:
+            if labels is None:
+                raise ValueError("clusters= needs labels= to say what the names mean")
+            resolved = self._resolve_labels(labels, mask=target)
+            wanted = {str(c) for c in clusters}
+            unknown = wanted - {str(n) for n in resolved.names}
+            if unknown:
+                raise ValueError(
+                    f"clusters not in the label set: {sorted(unknown)}; "
+                    f"available: {list(resolved.names)}"
+                )
+            per_cell = resolved.to_names()
+            name_for = dict(zip(resolved.cell_ids, per_cell))
+            keep = np.array(
+                [str(name_for.get(c)) in wanted for c in cell_ids], dtype=bool
+            )
+        elif labels is not None:
+            resolved = self._resolve_labels(labels, mask=target)
+            keep = resolved.codes_for(cell_ids) != -1
+        if keep.sum() < 10:
+            raise ValueError(
+                f"parametrize needs at least 10 cells; the selection has "
+                f"{int(keep.sum())}"
+            )
+        cell_ids = cell_ids[keep]
+
+        cols = self._resolve_columns(columns)
+        scaled = self.features(target, scaled=True, columns=cols)[keep]
+        if pca is False:
+            data = scaled
+        else:
+            fitted = self.space(
+                target,
+                columns=cols,
+                explained_variance=0.95 if pca is True else pca,
+                seed=seed,
+            )
+            data = fitted.transform_scaled(scaled)
+
+        dimension = twonn_dimension(data)
+        if dimension > dimension_gate:
+            warnings.warn(
+                f"intrinsic dimension estimate {dimension:.2f} exceeds "
+                f"{dimension_gate:g}: this does not look like a curve, and a 1-D "
+                f"coordinate will compress structure. Check boundary_report / "
+                f"consider a higher-dimensional parametrization before naming "
+                f"this axis"
+            )
+
+        coordinate, _ = fit_principal_curve(data, span=span)
+
+        frame = self._df.filter(self.mask_series(target))
+        if orient_by is not None:
+            if orient_by not in self._df.columns:
+                raise KeyError(f"Unknown column {orient_by!r} for orient_by")
+            values = frame[orient_by].cast(pl.Float64).to_numpy()[keep]
+            rho = spearmanr(coordinate, values, nan_policy="omit").statistic
+            if np.isfinite(rho) and rho < 0:
+                coordinate = 1.0 - coordinate
+
+        for column in nuisance or []:
+            if column not in self._df.columns:
+                raise KeyError(f"Unknown nuisance column {column!r}")
+            values = frame[column].cast(pl.Float64).to_numpy()[keep]
+            rho = spearmanr(coordinate, values, nan_policy="omit").statistic
+            if np.isfinite(rho) and abs(rho) > 0.5:
+                warnings.warn(
+                    f"the fitted coordinate tracks nuisance column {column!r} "
+                    f"(spearman {rho:+.2f}); a gradient that follows a "
+                    f"completeness metric is an artifact acquiring a name — "
+                    f"check the validity domains before believing this axis"
+                )
+
+        loadings_rows = []
+        raw = self.features(target, scaled=False, columns=cols)[keep]
+        for j, column in enumerate(cols):
+            rho = spearmanr(coordinate, raw[:, j], nan_policy="omit").statistic
+            loadings_rows.append(
+                {
+                    "feature": column,
+                    "spearman_rho": float(rho) if np.isfinite(rho) else None,
+                }
+            )
+        loadings = (
+            pl.DataFrame(loadings_rows)
+            .with_columns(pl.col("spearman_rho").abs().alias("abs_rho"))
+            .sort("abs_rho", descending=True, nulls_last=True)
+            .drop("abs_rho")
+        )
+
+        return Gradient(
+            cell_ids,
+            coordinate,
+            name=name,
+            mask=target,
+            method="principal_curve",
+            params={
+                "columns": list(cols),
+                "clusters": None if clusters is None else [str(c) for c in clusters],
+                "pca": pca,
+                "span": span,
+                "orient_by": orient_by,
+                "nuisance": list(nuisance or []),
+                "seed": seed,
+            },
+            loadings=loadings,
+            intrinsic_dimension=dimension,
+        )
+
+    def to_anndata(
+        self,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        scaled: bool = False,
+    ) -> Any:
+        """Export to an AnnData for the scanpy/scvi ecosystem — see :mod:`cellpax.interop`.
+
+        Masks travel as ``mask_*`` obs columns, embeddings as id-aligned
+        ``obsm["X_*"]``, and provenance (mask, scaled, transforms, validity,
+        seed) under ``uns["cellpax"]`` so ``FeatureTable.from_anndata`` can
+        round-trip. Requires the optional ``anndata`` extra. The bridge exists
+        so the ecosystem's tools are one call away rather than re-implemented
+        here.
+        """
+        from cellpax.interop import to_anndata as _to_anndata
+
+        return _to_anndata(self, mask, columns=columns, scaled=scaled)
+
+    @classmethod
+    def from_anndata(
+        cls,
+        adata: Any,
+        *,
+        features: Sequence[str] | None = None,
+        id_column: str | None = None,
+        seed: int = 0,
+    ) -> "FeatureTable":
+        """Build a FeatureTable from an AnnData — the other side of :meth:`to_anndata`.
+
+        Round-trips cellpax exports (masks, transforms, validity, seed restored
+        from ``uns["cellpax"]``) and imports foreign AnnData objects (obs
+        becomes metadata, obsm entries become registered embeddings).
+        """
+        from cellpax.interop import from_anndata as _from_anndata
+
+        return _from_anndata(adata, features=features, id_column=id_column, seed=seed)
+
+    def boundary_report(
+        self,
+        clustering: Any,
+        *,
+        labels: Any = None,
+        distance_threshold: float | None = None,
+        min_cluster_size: int = 1,
+        n_neighbors: int = 15,
+        density: str = "knn",
+        **thresholds: float,
+    ) -> pl.DataFrame:
+        """Per-cluster-pair evidence: is each boundary a gap or a cut?
+
+        The table-level wrapper for :func:`cellpax.boundary.boundary_report` —
+        see that docstring for the four evidence legs (dip, connectivity,
+        density valley, consensus co-clustering profile) and how to read
+        them. This wrapper adds the two things the module function can't
+        know: it rebuilds the *space the clustering was computed in* from the
+        clustering's recorded parameters, so the boundary claim is about the
+        geometry that produced the clusters, and it passes the consensus
+        matrix along, which is the one leg only the ensemble can provide.
+
+        ``clustering`` is a stored name or a ``Clustering``; ``labels`` (a
+        ``LabelSet``) or ``distance_threshold`` chooses the cut whose
+        boundaries are examined. Clusterings from before parameters were
+        recorded fall back to raw scaled features over the clustering's
+        columns, with a warning naming the assumption.
+        """
+        if isinstance(clustering, str):
+            clustering = self.clustering(clustering)
+        codes = clustering._row_codes(labels, distance_threshold, min_cluster_size)
+        params = clustering.params or {}
+        cols = params.get("columns") or (list(clustering.columns) or None)
+        pca = params.get("pca", None)
+        if pca is None and clustering.params is None:
+            warnings.warn(
+                "this clustering carries no recorded parameters (saved before "
+                "they were recorded, or built by hand); using raw scaled "
+                "features over its columns rather than its original space"
+            )
+            pca = False
+        elif pca is None:
+            pca = 0.95
+        if pca is False:
+            data = self.features(clustering.mask, scaled=True, columns=cols)
+        else:
+            fitted = self.space(
+                clustering.mask,
+                columns=cols,
+                explained_variance=0.95 if pca is True else pca,
+                alpha=params.get("alpha", 0.0),
+                eigenvalue_floor=params.get("eigenvalue_floor", 0.0),
+            )
+            data = fitted.transform_scaled(
+                self.features(clustering.mask, scaled=True, columns=cols)
+            )
+        names = None
+        if labels is not None and hasattr(labels, "ids"):
+            names = {int(i): n for i, n in zip(labels.ids, labels.names)}
+        from cellpax.boundary import boundary_report as _boundary_report
+
+        return _boundary_report(
+            data,
+            codes,
+            similarity=clustering.similarity_matrix,
+            max_value=clustering.max_value,
+            names=names,
+            n_neighbors=n_neighbors,
+            density=density,
+            **thresholds,
         )
 
     def score_cells(

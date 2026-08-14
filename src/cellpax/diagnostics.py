@@ -1,6 +1,6 @@
 """What the feature matrix looks like before any clustering runs on it.
 
-Six questions that decide whether a clustering result is even interpretable, each
+Eight questions that decide whether a clustering result is even interpretable, each
 answered as a frame rather than as advice:
 
 :func:`feature_correlation`
@@ -27,6 +27,15 @@ answered as a frame rather than as advice:
     versions. A feature that moves when the stratum changes is measuring the dataset
     rather than the cells, and does not travel: it wants a per-stratum validity domain
     or a seat outside the portable collection.
+:func:`information_imbalance`
+    Whether one coordinate space predicts another's neighbourhoods — and, because the
+    statistic is directional, whether the prediction runs both ways. A raw feature set
+    versus its embedding, this year's extraction versus last year's: rank-based, no
+    classifier, no tuning beyond ``k``.
+:func:`feature_relevance`
+    Which features carry the full space's neighbourhood structure, ranked two ways:
+    what a feature reproduces alone, and what its removal breaks. The two disagree
+    exactly where features are redundant, which is itself the finding.
 
 None of these need a clustering to have been run, and all of them are cheap. They are the
 things worth reading *before* attributing a result to biology.
@@ -40,13 +49,17 @@ from typing import Any
 import numpy as np
 import polars as pl
 from scipy.cluster.hierarchy import fcluster, leaves_list, linkage
-from scipy.spatial.distance import squareform
+from scipy.spatial.distance import cdist, squareform
 from scipy.stats import ks_2samp, spearmanr
 
 from cellpax.clustering import SortedMatrix
 
 # Robust sigma per IQR, for a Gaussian.
 _IQR_TO_SIGMA = 1.3489795003921634
+
+# The rank statistics below hold full n x n distance matrices; past this many cells
+# that is >3 GB per matrix, and a subsample answers the same question.
+_MAX_CELLS = 20_000
 
 
 def _feature_names(columns: Any, n_features: int) -> list[str]:
@@ -660,6 +673,257 @@ def stratum_shift(
         },
     )
     return frame.sort("ks_statistic", descending=True, nulls_last=True)
+
+
+def information_imbalance(
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    k: int = 1,
+) -> tuple[float, float]:
+    """How well each of two coordinate spaces predicts the other's neighbourhoods.
+
+    The rank-based information imbalance of Glielmo, Zeni, Cheng, Laio et al.,
+    "Ranking the information content of distance measures", PNAS Nexus 1(2), 2022.
+    For each point, take its ``k`` nearest neighbours in space A (self excluded) and
+    ask where those same points rank among its neighbours in space B (rank 1 =
+    B-nearest, self excluded). Averaging that conditional rank over all points and
+    neighbours gives
+
+        Delta(A -> B) = 2 / (n^2 k) * sum_i sum_{j in knn_A(i)} rank_B(i, j)
+                      = 2 * <rank_B | nn_A> / n.
+
+    If A's neighbours are B's neighbours the conditional rank is near 1 and Delta is
+    near 0; if A says nothing about B the conditional rank is what an unconditioned
+    rank would be — n/2 in expectation — and Delta is near 1. This is the plain
+    statistic in numpy; DADApy implements the same quantity, and its differentiable
+    variant (DiffImbalance — Wild et al., Nature Communications, 2025), which *learns*
+    feature weights by gradient descent on Delta, is the heavy-duty upgrade when
+    per-feature rankings from :func:`feature_relevance` are not enough.
+
+    Parameters
+    ----------
+    a, b : numpy.ndarray
+        ``(n_cells, d_a)`` and ``(n_cells, d_b)`` coordinate matrices over the *same*
+        cells in the same row order — row alignment is the entire statistic, and only
+        the row counts can be checked. A 1-D array is treated as a single coordinate.
+        Euclidean distance within each space; scale features first if their units
+        differ, since ranks are metric-dependent.
+    k : int, default 1
+        Neighbourhood size the prediction is tested on. ``k=1`` is the paper's
+        default and the sharpest; larger ``k`` smooths the estimate at the cost of
+        asking a coarser question.
+
+    Returns
+    -------
+    tuple of (float, float)
+        ``(a_to_b, b_to_a)`` — Delta(A -> B) and Delta(B -> A), each in roughly
+        [0, 1]. The asymmetry is the point of returning both: Delta(A -> B) small
+        with Delta(B -> A) large means A contains B's information but not the
+        converse — A is the richer description, B a projection of it.
+
+    Notes
+    -----
+    How to read it: compare the two directions before reading either magnitude.
+    Near-zero both ways is equivalent descriptions; near-one both ways is unrelated
+    descriptions; one-sided is a containment relation, which no symmetric statistic
+    can express.
+
+    What it cannot see: the imbalance is about *neighbourhood* information only. A
+    feature can matter for global layout — separating distant groups, stretching a
+    gradient — while being locally redundant, and it will look dispensable here. It
+    is also blind to row alignment errors: permute one space's rows and the answer
+    is confidently "unrelated".
+
+    Both n x n distance matrices are held in memory — O(n^2), which is why cohorts
+    above ``_MAX_CELLS`` (20,000) are refused with a suggestion to subsample. Ranks
+    are computed with a stable argsort, so ties break by row order and the result is
+    deterministic for identical input.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if a.ndim == 1:
+        a = a[:, np.newaxis]
+    if b.ndim == 1:
+        b = b[:, np.newaxis]
+    if a.ndim != 2 or b.ndim != 2:
+        raise ValueError(
+            f"a and b must be (n_cells, d) matrices, got shapes {a.shape} and {b.shape}"
+        )
+    if a.shape[0] != b.shape[0]:
+        raise ValueError(
+            f"a and b must be row-aligned over the same cells: a has {a.shape[0]} "
+            f"rows but b has {b.shape[0]}"
+        )
+    _check_rank_cohort(a.shape[0], k)
+    # Squared Euclidean is monotone in Euclidean, so every rank is identical and the
+    # square root is never needed.
+    sq_a = cdist(a, a, metric="sqeuclidean")
+    sq_b = cdist(b, b, metric="sqeuclidean")
+    a_to_b = _one_way_imbalance(sq_a, _neighbour_ranks(sq_b), k)
+    b_to_a = _one_way_imbalance(sq_b, _neighbour_ranks(sq_a), k)
+    return a_to_b, b_to_a
+
+
+def feature_relevance(
+    features: np.ndarray,
+    names: Any,
+    *,
+    mode: str = "single",
+    k: int = 1,
+    standardize: bool = True,
+) -> pl.DataFrame:
+    """Rank features by how much of the full space's neighbourhood structure they carry.
+
+    Built on :func:`information_imbalance` — Glielmo et al., PNAS Nexus 2022 — so it
+    answers "which features matter" from ranks alone, with no classifier and nothing
+    to train. The two modes ask genuinely different questions:
+
+    ``mode="single"``
+        Delta(f -> full) per feature: how well the feature *alone* reproduces the
+        full space's neighbourhoods. Low is informative. ``Delta(full -> f)`` is
+        reported alongside; it is small for almost any feature the full space
+        contains, so its interest is relative, not absolute.
+    ``mode="drop_one"``
+        Delta(full minus f -> full) per feature, reported as ``delta_without``: how
+        much the neighbourhoods degrade when the feature is removed. High is
+        indispensable.
+
+    Read both before concluding anything. A feature inside a correlated block scores
+    well alone and poorly on drop-one — its twins cover for it — while a feature
+    carrying unique information does the reverse. When the two modes disagree, the
+    redundancy structure is the explanation, and :func:`feature_correlation` /
+    :func:`block_weights` are the instruments for looking at it directly.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)`` matrix, at least two features.
+    names : sequence of str
+        Feature names, in the column order of ``features``. Must be actual names: a
+        bare string is rejected rather than iterated into characters.
+    mode : {'single', 'drop_one'}, default 'single'
+        Which question to ask — see above.
+    k : int, default 1
+        Neighbourhood size, as in :func:`information_imbalance`.
+    standardize : bool, default True
+        Z-score each column first. The imbalance is metric-dependent: a feature in
+        micrometres out-votes one in unitless ratios purely by scale, so raw features
+        must be standardized for the comparison to mean anything. Pass ``False`` only
+        when the matrix is already scaled — e.g. the output of a fitted cellpax
+        scaler — where re-scaling would second-guess the pipeline's own choices.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per feature, sorted most-informative-first. ``mode="single"``:
+        ``feature``, ``delta_to_full``, ``delta_from_full``, ascending in
+        ``delta_to_full``. ``mode="drop_one"``: ``feature``, ``delta_without``,
+        descending.
+
+    Notes
+    -----
+    The caveats of :func:`information_imbalance` apply per row: this sees
+    *neighbourhood* information only, so a feature that shapes the global layout but
+    is locally redundant scores as dispensable; and both modes are read against the
+    full space as the reference, which assumes the full space is worth reproducing.
+    Concretely: z-scored, a balanced two-cluster feature saturates at ~2 sigma of
+    separation and resolves nothing within a cluster, so its one bit of cluster
+    membership will *not* outrank a continuous coordinate here — "separates my
+    clusters" and "carries neighbourhood information" are different claims.
+    Discrete features tie massively in their own 1-D distances; ties break by row
+    order (stable argsort), deterministically. O(n^2) memory, refused above
+    ``_MAX_CELLS`` cells. For *learned* weightings rather than per-feature rankings,
+    DADApy's DiffImbalance (Wild et al., Nature Communications 2025) is the
+    heavy-duty upgrade.
+    """
+    features = np.asarray(features, dtype=float)
+    if features.ndim != 2:
+        raise ValueError(
+            f"features must be a (n_cells, n_features) matrix, got shape {features.shape}"
+        )
+    feature_names = _feature_names(names, features.shape[1])
+    if mode not in {"single", "drop_one"}:
+        raise ValueError(f"mode must be 'single' or 'drop_one', got {mode!r}")
+    if features.shape[1] < 2:
+        raise ValueError(
+            "need at least two features to rank them against the full space"
+        )
+    _check_rank_cohort(features.shape[0], k)
+    if standardize:
+        std = features.std(axis=0)
+        features = (features - features.mean(axis=0)) / np.where(std > 0, std, 1.0)
+
+    sq_full = cdist(features, features, metric="sqeuclidean")
+    ranks_full = _neighbour_ranks(sq_full)
+    rows = []
+    if mode == "single":
+        for index, name in enumerate(feature_names):
+            column = features[:, [index]]
+            sq_single = cdist(column, column, metric="sqeuclidean")
+            rows.append(
+                {
+                    "feature": name,
+                    "delta_to_full": _one_way_imbalance(sq_single, ranks_full, k),
+                    "delta_from_full": _one_way_imbalance(
+                        sq_full, _neighbour_ranks(sq_single), k
+                    ),
+                }
+            )
+        return pl.DataFrame(rows).sort("delta_to_full")
+    for index, name in enumerate(feature_names):
+        column = features[:, [index]]
+        sq_single = cdist(column, column, metric="sqeuclidean")
+        # Squared distances are additive over features, so the drop-one space's
+        # distances come from a subtraction rather than a fresh cdist per feature.
+        sq_without = np.clip(sq_full - sq_single, 0.0, None)
+        rows.append(
+            {
+                "feature": name,
+                "delta_without": _one_way_imbalance(sq_without, ranks_full, k),
+            }
+        )
+    return pl.DataFrame(rows).sort("delta_without", descending=True)
+
+
+def _check_rank_cohort(n: int, k: int) -> None:
+    """Shared validation for the rank statistics: enough cells, not too many, sane k."""
+    if n < 10:
+        raise ValueError(f"neighbour ranks mean little on fewer than 10 cells, got {n}")
+    if n > _MAX_CELLS:
+        raise ValueError(
+            f"{n} cells would need a {n} x {n} distance matrix "
+            f"({8 * n * n / 1e9:.1f} GB); the statistic is stable under subsampling, "
+            f"so pass a random subset of at most {_MAX_CELLS} cells instead"
+        )
+    if not 1 <= k <= n - 1:
+        raise ValueError(f"k must be between 1 and n - 1 = {n - 1}, got {k}")
+
+
+def _neighbour_ranks(dissimilarity: np.ndarray) -> np.ndarray:
+    """Rank every point among every other point's neighbours, self excluded.
+
+    ``ranks[i, j]`` is j's rank among i's neighbours: 1 = nearest. The diagonal is
+    forced to sort last, so self holds rank n and never contaminates ranks 1..n-1.
+    Stable argsort, so ties break by row order, deterministically.
+    """
+    dissimilarity = np.array(dissimilarity, dtype=float, copy=True)
+    np.fill_diagonal(dissimilarity, np.inf)
+    order = np.argsort(dissimilarity, axis=1, kind="stable")
+    n = dissimilarity.shape[0]
+    ranks = np.empty((n, n), dtype=np.int64)
+    ranks[np.arange(n)[:, np.newaxis], order] = np.arange(1, n + 1)
+    return ranks
+
+
+def _one_way_imbalance(sq_a: np.ndarray, ranks_b: np.ndarray, k: int) -> float:
+    """Delta(A -> B) = 2 <rank_B | nn_A> / n from A's squared distances and B's ranks."""
+    sq_a = np.array(sq_a, dtype=float, copy=True)
+    np.fill_diagonal(sq_a, np.inf)
+    knn = np.argsort(sq_a, axis=1, kind="stable")[:, :k]
+    n = sq_a.shape[0]
+    conditional_ranks = ranks_b[np.arange(n)[:, np.newaxis], knn]
+    return float(2.0 * conditional_ranks.mean() / n)
 
 
 def _rankdata(values: np.ndarray) -> np.ndarray:

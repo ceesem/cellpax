@@ -79,6 +79,10 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.diagnostics.stratum_shift
 
+::: cellpax.diagnostics.information_imbalance
+
+::: cellpax.diagnostics.feature_relevance
+
 ## Validation
 
 ::: cellpax.validate.subsample_stability
@@ -96,6 +100,24 @@ clustering, labeling, embedding, comparison, and persistence).
 ::: cellpax.validate.RecoveryScore
 
 ::: cellpax.validate.label_purity
+
+## Boundary report
+
+::: cellpax.boundary.boundary_report
+
+## Gradients
+
+::: cellpax.gradient.Gradient
+
+::: cellpax.gradient.fit_principal_curve
+
+::: cellpax.gradient.twonn_dimension
+
+## AnnData bridge
+
+::: cellpax.interop.to_anndata
+
+::: cellpax.interop.from_anndata
 
 ## Label propagation
 
