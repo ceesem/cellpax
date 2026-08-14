@@ -501,3 +501,28 @@ def test_a_weighted_space_caches_separately_from_an_unweighted_one() -> None:
     assert ft.space(feature_weights=w) is weighted  # still cached
     assert plain.label == "pca(0.95)"
     assert weighted.label == "pca(0.95, weighted)"
+
+
+def test_a_space_supplies_its_own_columns_to_embed() -> None:
+    """columns= is unnecessary alongside space=, and a conflict is loud."""
+    ft = _table(60)
+    ft.define_features("pair", columns=["m0", "m1"])
+    space = ft.space(columns="pair", explained_variance=2)
+
+    ft.embed(method="pca", n_components=2, name="e", space=space, seed=0)
+    model = ft.embedding_model(name="e")
+    assert model.columns == ("m0", "m1")  # taken from the space
+
+    with pytest.raises(ValueError, match="omit columns="):
+        ft.embed(
+            method="pca",
+            n_components=2,
+            name="e2",
+            space=space,
+            columns=ft.feature_columns,
+            seed=0,
+        )
+    # naming both consistently stays allowed
+    ft.embed(
+        method="pca", n_components=2, name="e3", space=space, columns="pair", seed=0
+    )

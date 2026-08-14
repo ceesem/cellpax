@@ -2,6 +2,36 @@
 
 ## Unreleased — conformal assignment
 
+- **Save/load/list now run under `folio.pinned()`** (when datafolio provides
+  it; a no-op otherwise): one staleness check per batch instead of two cloud
+  round trips per item. Together with lazy consensus derivation this is the
+  remote-folio load fix — the profiled 66s cloud load spent ~30s rechecking an
+  unchanged manifest ~60 times.
+- **Fixed: a cross-mask `space=` silently mixed two scalings.** Every
+  `space=` consumer (`cluster`, `overcluster`, `embed`, `triage_labels`,
+  `boundary_report`, and `project` through a space-built embedding) fed the
+  space `transform_scaled(features(mask, scaled=True))` — the *target mask's*
+  scaler followed by the *space's* rotation. Correct when the space was fit on
+  that same mask (the default), a silent chimera when a parent's space was
+  passed for a child mask. All paths now call `space.transform(raw)`, so the
+  space applies its own frozen scaler — bit-identical in the same-mask case,
+  coherent in the cross-mask case, with regression tests projecting a child
+  mask through a parent space. In the same pass, `columns=` became officially
+  redundant alongside `space=` everywhere (`embed`/`overcluster`/
+  `triage_labels` now match `cluster`): the space carries its columns, and a
+  *conflicting* `columns=` raises instead of being silently discarded.
+- **Fixed: loading a saved analysis re-derived every consensus matrix eagerly.**
+  Manifest v2 stores the runs and derives the n×n matrix on load — right at 21k
+  cells, minutes-per-clustering at 100k (measured: 188s for one 100k-cell
+  clustering, of which IO was under a second; a notebook storing twenty of them
+  loaded in the better part of an hour). The matrix now derives **lazily on
+  first use**: a load stores the runs and returns immediately (measured: 0.2s
+  for the same clustering), `describe()`/`shape`/provenance never materialize,
+  and the first `label()`/`linkage`/`soft_labels` call pays the derivation it
+  actually needs. Also fixed the normalization correction inside
+  `coclustering_matrix`, which materialized an ``(nnz, n_runs)`` sparse
+  intermediate — gigabytes at consensus scale; it now restricts to
+  both-ever-dropped pairs and reads a precomputed M·Mᵀ by key search.
 - **Added `ft.describe()`** — the session state at a glance, as formatted text:
   masks with sizes and validity-domain markers, collections, validity domains,
   stored clusterings (space, run counts, seeds), embeddings (with whether a

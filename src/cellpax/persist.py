@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import warnings
 import zlib
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,19 @@ def _folio(folio: DataFolio | str | Path) -> DataFolio:
     if isinstance(folio, DataFolio):
         return folio
     return DataFolio(folio, allow_existing=True)
+
+
+def _pinned(folio: DataFolio) -> Any:
+    """One staleness check for the whole batch, where datafolio offers it.
+
+    ``folio.pinned()`` suspends the per-call manifest recheck — two cloud
+    round trips per ``get``/``add``, which dominated a profiled load (~30s of
+    66s was rechecking an unchanged manifest ~60 times). Every save/load here
+    is exactly the batch-of-reads case the pin exists for. A no-op on
+    datafolio versions that predate it.
+    """
+    pinned = getattr(folio, "pinned", None)
+    return pinned() if pinned is not None else nullcontext()
 
 
 def _scaler_tag(factory: Any) -> str | dict[str, Any]:
@@ -281,7 +295,13 @@ def save_feature_table(
     folio = _folio(folio)
     if "/" in name:
         raise ValueError("analysis name cannot contain '/'")
+    with _pinned(folio):
+        _save_feature_table(table, folio, name, overwrite=overwrite)
 
+
+def _save_feature_table(
+    table: Any, folio: DataFolio, name: str, *, overwrite: bool
+) -> None:
     n_masks = sum(1 for c in table._df.columns if c.startswith("_mask_"))
     folio.add(
         f"{name}/table",
@@ -445,10 +465,15 @@ def load_feature_table(
     than served against geometry that no longer exists; the folio itself is
     untouched until you save over it.
     """
+    folio = _folio(folio)
+    with _pinned(folio):
+        return _load_feature_table(folio, name, scaler_factory=scaler_factory)
+
+
+def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> Any:
     from cellpax.clustering import Clustering
     from cellpax.featuretable import FeatureCollection, FeatureTable
 
-    folio = _folio(folio)
     manifest = folio.get(f"{name}/manifest")
     if not isinstance(manifest, dict) or manifest.get("kind") != _KIND:
         raise ValueError(f"{name!r} is not a CellPax analysis in this folio")
@@ -515,7 +540,9 @@ def load_feature_table(
         partitions = None
         if meta.get("storage") == "partitions":
             partitions = _load_partitions(folio, name, cname)
-            matrix = partitions.coclustering(normalize=meta["normalized"])
+            # the runs are the stored object; the n×n consensus they imply is
+            # minutes of work at scale, so it derives lazily on first use
+            matrix = None
         else:
             triplets = folio.get(f"{name}/clustering/{cname}", frame="polars")
             matrix = csr_matrix(
@@ -581,6 +608,11 @@ def load_feature_table(
 def list_analyses(folio: DataFolio | str | Path) -> list[str]:
     """List CellPax analysis names stored in a folio (ignoring user content)."""
     folio = _folio(folio)
+    with _pinned(folio):
+        return _list_analyses(folio)
+
+
+def _list_analyses(folio: DataFolio) -> list[str]:
     names: list[str] = []
     for item in folio.list_contents().get("json_data", []):
         if not item.endswith("/manifest"):

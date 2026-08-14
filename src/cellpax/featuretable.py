@@ -156,10 +156,18 @@ class FittedEmbedding:
     persisted with the coordinates even though the model itself is not.
     """
 
-    def transform(self, scaled: np.ndarray) -> np.ndarray:
-        """Coordinates for already-scaled rows over ``columns``."""
+    def transform(self, features: np.ndarray) -> np.ndarray:
+        """Coordinates for new rows over ``columns``.
+
+        With a ``fitted_space``, ``features`` must be **raw**: the space applies
+        its own frozen scaler, so a space fit on one mask stays coherent when
+        the embedding serves another. Without one, ``features`` are the scaled
+        rows the model was fit on, exactly as before.
+        """
         if self.fitted_space is not None:
-            scaled = self.fitted_space.transform_scaled(scaled)
+            scaled = self.fitted_space.transform(features)
+        else:
+            scaled = features
         # pacmap/localmap query their saved faiss index here, and a faiss *search* is
         # an OpenMP parallel region just as the build is — so ``project`` needs the
         # same guard ``embed`` uses. See :func:`_faiss_single_thread`.
@@ -1639,9 +1647,11 @@ class FeatureTable:
                 )
             cols = list(space.columns)
             pca = None  # params marker: representation came from a passed space
-            data = space.transform_scaled(
-                self.features(mask, scaled=True, columns=cols)
-            )
+            # the space applies ITS OWN frozen scaler (transform, not
+            # transform_scaled): a parent's space passed for a child mask must
+            # not be fed the child's rescaled values — that would silently mix
+            # child scaling with parent rotation
+            data = space.transform(self.features(mask, scaled=False, columns=cols))
             space_label = space.label
         elif pca is False:
             if alpha:
@@ -2200,8 +2210,20 @@ class FeatureTable:
         seed = (
             seed if seed is not None else self._derive_seed("overcluster", mask, name)
         )
-        scaled = self.features(mask, scaled=True, columns=columns)
-        data = scaled if space is None else space.transform_scaled(scaled)
+        if space is None:
+            data = self.features(mask, scaled=True, columns=columns)
+        else:
+            if columns is not None and self._resolve_columns(columns) != list(
+                space.columns
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            # the space's own frozen scaler, so a cross-mask space stays coherent
+            data = space.transform(
+                self.features(mask, scaled=False, columns=list(space.columns))
+            )
         graph = kneighbor_graph(
             data,
             n_neighbors=n_neighbors,
@@ -2645,10 +2667,23 @@ class FeatureTable:
         """
         columns_label = _columns_label(columns)
         label = name or (f"{method}_{columns_label}" if columns_label else method)
-        cols = self._resolve_columns(columns)
         seed = seed if seed is not None else self._derive_seed("embed", mask, label)
-        scaled = self.features(mask, scaled=True, columns=cols)
-        data = scaled if space is None else space.transform_scaled(scaled)
+        if space is None:
+            cols = self._resolve_columns(columns)
+            data = self.features(mask, scaled=True, columns=cols)
+        else:
+            # a space carries its own columns; a conflicting columns= would be
+            # silently discarded otherwise, so it raises like cluster's does
+            if columns is not None and self._resolve_columns(columns) != list(
+                space.columns
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            cols = list(space.columns)
+            # the space's own frozen scaler, so a cross-mask space stays coherent
+            data = space.transform(self.features(mask, scaled=False, columns=cols))
         internal_reduction: str | None = None
         if method == "pca":
             from sklearn.decomposition import PCA
@@ -2889,9 +2924,17 @@ class FeatureTable:
         )
         cell_ids = self._cell_ids(name)
         codes = self._align_over_clustering(resolved, cell_ids)
+        if space is not None and columns is not None:
+            if self._resolve_columns(columns) != list(space.columns):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
         fitted = space if space is not None else self.space(name, columns=columns)
-        data = fitted.transform_scaled(
-            self.features(name, scaled=True, columns=fitted.columns)
+        # the space's own frozen scaler (transform, not transform_scaled), so a
+        # cross-mask space stays coherent; identical for the same-mask default
+        data = fitted.transform(
+            self.features(name, scaled=False, columns=list(fitted.columns))
         )
         return neighbor_label_composition(
             data,
@@ -3356,8 +3399,11 @@ class FeatureTable:
         cols = params.get("columns") or (list(clustering.columns) or None)
         weight_digest = params.get("feature_weights")
         if space is not None:
-            data = space.transform_scaled(
-                self.features(clustering.mask, scaled=True, columns=list(space.columns))
+            # the space's own frozen scaler, so a cross-mask space stays coherent
+            data = space.transform(
+                self.features(
+                    clustering.mask, scaled=False, columns=list(space.columns)
+                )
             )
         elif weight_digest is not None:
             # the weights themselves can't ride in params (arrays don't JSON);
@@ -3967,6 +4013,10 @@ class FeatureTable:
                     f"data has {matrix.shape[1]} columns but the fit covers "
                     f"{len(cols)} ({cols}); pass a polars frame to match by name"
                 )
+        if fitted_embedding is not None and fitted_embedding.fitted_space is not None:
+            # the embedding's space applies its own frozen scaler to the raw
+            # rows; pre-scaling with this mask's scaler would mix two scalings
+            return fitted_embedding.transform(matrix)
         scaled = self._scaler(name, cols).transform(matrix)
         return (
             scaled if fitted_embedding is None else fitted_embedding.transform(scaled)

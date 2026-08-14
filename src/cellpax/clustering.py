@@ -595,11 +595,27 @@ def coclustering_matrix(groups: np.ndarray, normalize: bool = False) -> csr_matr
         cx = coo_matrix(running)
         denom = np.float32(n_runs) - miss_counts[cx.row] - miss_counts[cx.col]
         if miss_counts.any():
-            miss_sparse = csr_matrix(missing.astype(np.float32))
-            shared_misses = np.asarray(
-                miss_sparse[cx.row].multiply(miss_sparse[cx.col]).sum(axis=1)
-            ).ravel()
-            denom = denom + shared_misses.astype(np.float32)
+            # the shared-miss correction, restricted to pairs where BOTH cells
+            # were ever dropped (the only pairs it can be nonzero for) and read
+            # off a precomputed M·Mᵀ by key search. The obvious row-gather
+            # (miss[rows] elementwise miss[cols]) materializes an
+            # (nnz, n_runs) sparse intermediate — gigabytes at consensus scale.
+            candidate = (miss_counts[cx.row] > 0) & (miss_counts[cx.col] > 0)
+            if candidate.any():
+                miss_sparse = csr_matrix(missing.astype(np.float32))
+                shared = (miss_sparse @ miss_sparse.T).tocoo()
+                shared_key = shared.row.astype(np.int64) * n + shared.col
+                order = np.argsort(shared_key)
+                shared_key = shared_key[order]
+                shared_value = shared.data[order]
+                key = cx.row[candidate].astype(np.int64) * n + cx.col[candidate].astype(
+                    np.int64
+                )
+                position = np.searchsorted(shared_key, key)
+                position = np.clip(position, 0, max(shared_key.size - 1, 0))
+                hit = shared_key[position] == key
+                correction = np.where(hit, shared_value[position], 0.0)
+                denom[candidate] += correction.astype(np.float32)
         data = np.where(denom > 0, cx.data / denom, np.float32(0))
         running = coo_matrix((data, (cx.row, cx.col)), shape=(n, n)).tocsr()
         running.eliminate_zeros()
@@ -1260,49 +1276,80 @@ class SimilarityMatrix:
 
     def __init__(
         self,
-        matrix: np.ndarray | csr_matrix,
+        matrix: np.ndarray | csr_matrix | None,
         *,
         similarity: bool = True,
         normalized: bool = False,
         method: Literal["average", "single", "complete"] = "average",
+        _n: int | None = None,
     ) -> None:
-        if matrix.shape[0] != matrix.shape[1]:
-            raise ValueError("similarity matrix must be square")
-        if matrix.shape[0] == 0:
-            raise ValueError("similarity matrix cannot be empty")
         if method not in {"average", "single", "complete"}:
             # centroid/median linkage is non-monotone, which surfaces later as a
             # baffling nesting-violation raise; refuse it here with its own name
             raise ValueError(
                 f"method must be 'average', 'single', or 'complete', got {method!r}"
             )
+        self.normalized = bool(normalized)
+        self.method = method
+        self._linkage: np.ndarray | None = None
+        self._leaf_order: np.ndarray | None = None
+        self._deferred: Any = None
+        if matrix is None:
+            # deferred materialization: a subclass supplies the thunk (a reload
+            # stores the runs, not the n×n matrix they imply — deriving it here
+            # would make every load pay for consensus nobody may read)
+            if _n is None:
+                raise ValueError("a deferred matrix needs _n (the cell count)")
+            self._n = int(_n)
+            self._matrix: csr_matrix | None = None
+            self._max_value: float | None = 1.0 if normalized else None
+            return
+        if matrix.shape[0] != matrix.shape[1]:
+            raise ValueError("similarity matrix must be square")
+        if matrix.shape[0] == 0:
+            raise ValueError("similarity matrix cannot be empty")
         if not issparse(matrix):
             if not np.allclose(matrix, matrix.T):
                 raise ValueError("similarity matrix must be symmetric")
             if normalized and not np.allclose(np.diag(matrix), 1.0, atol=0.01):
                 warnings.warn("diagonal is not 1.0; matrix may not be normalized")
 
-        self.max_value = (
+        self._max_value = (
             1.0
             if normalized
             else float(matrix.max() if issparse(matrix) else np.max(matrix))
         )
-        self.normalized = bool(normalized)
         if not similarity:
             # distances are dense by nature (missing entries would mean distance
             # zero, not "far"), and scalar-minus-sparse is not defined anyway
             dense = matrix.toarray() if issparse(matrix) else np.asarray(matrix)
-            matrix = self.max_value - dense
-        self.similarity_matrix = (
-            matrix.tocsr() if issparse(matrix) else csr_matrix(matrix)
-        )
-        self.method = method
-        self._linkage: np.ndarray | None = None
-        self._leaf_order: np.ndarray | None = None
+            matrix = self._max_value - dense
+        self._matrix = matrix.tocsr() if issparse(matrix) else csr_matrix(matrix)
+        self._n = int(self._matrix.shape[0])
+
+    @property
+    def similarity_matrix(self) -> csr_matrix:
+        """The consensus matrix, derived from stored runs on first use if deferred."""
+        if self._matrix is None:
+            if self._deferred is None:
+                raise ValueError("no matrix and no way to derive one")
+            derived = self._deferred()
+            self._matrix = derived.tocsr() if issparse(derived) else csr_matrix(derived)
+            self._deferred = None
+            if self._max_value is None:
+                self._max_value = float(self._matrix.max())
+        return self._matrix
+
+    @property
+    def max_value(self) -> float:
+        """Full-agreement similarity (1.0 when normalized; else the matrix max)."""
+        if self._max_value is None:
+            self.similarity_matrix  # materializes and sets it
+        return self._max_value  # type: ignore[return-value]
 
     @property
     def shape(self) -> tuple[int, int]:
-        return self.similarity_matrix.shape
+        return (self._n, self._n)
 
     @property
     def linkage(self) -> np.ndarray:
@@ -1820,7 +1867,7 @@ class Clustering(SimilarityMatrix):
 
     def __init__(
         self,
-        matrix: np.ndarray | csr_matrix,
+        matrix: np.ndarray | csr_matrix | None,
         *,
         cell_ids: np.ndarray,
         mask: str,
@@ -1836,10 +1883,32 @@ class Clustering(SimilarityMatrix):
         partitions: Partitions | None = None,
         params: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(
-            matrix, similarity=similarity, normalized=normalized, method=method
-        )
         cells = np.asarray(cell_ids)
+        if matrix is None:
+            # derive the consensus from the runs on first use. A reload takes
+            # this path: the runs are what persists, and the n×n matrix they
+            # imply is minutes of work at scale that most loads never need.
+            if partitions is None:
+                raise ValueError(
+                    "matrix=None needs partitions to derive the consensus from"
+                )
+            if partitions.n_cells != cells.shape[0]:
+                raise ValueError(
+                    f"cell_ids has {cells.shape[0]} entries but the partitions "
+                    f"cover {partitions.n_cells} cells"
+                )
+            super().__init__(
+                None,
+                similarity=similarity,
+                normalized=normalized,
+                method=method,
+                _n=cells.shape[0],
+            )
+            self._deferred = lambda: partitions.coclustering(normalize=normalized)
+        else:
+            super().__init__(
+                matrix, similarity=similarity, normalized=normalized, method=method
+            )
         if cells.shape[0] != self.shape[0]:
             raise ValueError(
                 f"cell_ids has {cells.shape[0]} entries but the matrix is "

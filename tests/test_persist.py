@@ -426,3 +426,74 @@ def test_load_with_a_scaler_override_reuses_an_existing_analysis(tmp_path) -> No
     swapped.save(tmp_path / "folio", "b")
     back = load_feature_table(tmp_path / "folio", "b")
     assert np.allclose(back.features(scaled=True), swapped.features(scaled=True))
+
+
+def test_load_defers_consensus_derivation_until_first_use(tmp_path) -> None:
+    """The n×n matrix is minutes of work at scale; a load should not pay it."""
+    from cellpax.persist import load_feature_table
+
+    ft = _built_table()
+    expected = ft.clustering("run").cluster_labels(0.5)
+    ft.save(tmp_path / "folio", "a")
+
+    back = load_feature_table(tmp_path / "folio", "a")
+    restored = back.clustering("run")
+    assert restored._matrix is None  # nothing derived at load
+    assert restored.shape == ft.clustering("run").shape  # shape known without it
+    back.describe()  # overview doesn't materialize
+    assert restored._matrix is None
+
+    labels = restored.cluster_labels(0.5)  # first real use derives it
+    assert restored._matrix is not None
+    np.testing.assert_array_equal(labels, expected)
+
+
+def test_a_deferred_unnormalized_matrix_recovers_its_max_value(tmp_path) -> None:
+    from cellpax.persist import load_feature_table
+
+    ft = _built_table()
+    raw = ft.cluster(
+        n_neighbors=15, n_times=3, seed=0, n_jobs=1, normalize=False, name="raw"
+    )
+    expected_max = raw.max_value
+    ft.save(tmp_path / "folio", "a")
+
+    restored = load_feature_table(tmp_path / "folio", "a").clustering("raw")
+    assert restored._matrix is None
+    assert restored.max_value == expected_max  # materializes to answer
+    assert restored._matrix is not None
+
+
+def test_persistence_batches_reads_under_a_single_pin(tmp_path, monkeypatch) -> None:
+    """One staleness check per save/load, not one per item, when pinned() exists."""
+    from datafolio import DataFolio
+
+    from cellpax.persist import load_feature_table
+
+    ft = _built_table()
+    entries = {"n": 0}
+    if hasattr(DataFolio, "pinned"):
+        original = DataFolio.pinned
+
+        def counting(self):
+            entries["n"] += 1
+            return original(self)
+
+        monkeypatch.setattr(DataFolio, "pinned", counting)
+        ft.save(tmp_path / "folio", "a")
+        load_feature_table(tmp_path / "folio", "a")
+        assert entries["n"] == 2  # once for the save batch, once for the load batch
+    else:  # older datafolio: the guard degrades to a no-op rather than an error
+        ft.save(tmp_path / "folio", "a")
+        assert load_feature_table(tmp_path / "folio", "a") is not None
+
+
+def test_the_pin_guard_tolerates_a_folio_without_pinned() -> None:
+    from contextlib import AbstractContextManager
+
+    from cellpax.persist import _pinned
+
+    class _Bare:
+        pass
+
+    assert isinstance(_pinned(_Bare()), AbstractContextManager)

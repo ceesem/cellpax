@@ -235,3 +235,39 @@ def test_adding_features_drops_embedding_models() -> None:
 
     with pytest.raises(KeyError, match="re-run embed"):
         ft.embedding_model("core", name="pca")
+
+
+def test_a_cross_mask_space_applies_its_own_scaler_not_the_targets() -> None:
+    """A parent space handed to a child mask must not mix the two scalings."""
+    from cellpax.clustering import fauxnograph_coclustering
+
+    ft = _table()
+    ft.add_mask("child", pl.col("cell_id") <= 30)
+    parent_space = ft.space(explained_variance=2)  # fit on "all"
+
+    # the coherent projection: raw child rows through the parent's frozen fits
+    expected = parent_space.transform(ft.features("child", scaled=False))
+
+    clus = ft.cluster(
+        "child", space=parent_space, n_neighbors=10, n_times=2, seed=3, n_jobs=1
+    )
+    manual = fauxnograph_coclustering(
+        expected, n_neighbors=10, n_times=2, seed=3, n_jobs=1
+    )
+    assert (clus.similarity_matrix != manual).nnz == 0
+
+
+def test_project_through_a_cross_mask_space_embedding_is_coherent() -> None:
+    ft = _table()
+    ft.add_mask("child", pl.col("cell_id") <= 30)
+    parent_space = ft.space(explained_variance=2)
+
+    coords = ft.embed(
+        "child", method="pca", n_components=2, name="e", space=parent_space, seed=0
+    )
+    # projecting the very rows the embedding was fit on must reproduce the
+    # stored coordinates — the round trip that a mixed scaling breaks
+    raw = ft.dataframe("child")
+    projected = ft.project(raw, "child", embedding="e")
+    stored = coords.drop(ft.id_column).to_numpy()
+    assert np.allclose(projected, stored, atol=1e-8)
