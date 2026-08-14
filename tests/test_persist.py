@@ -481,8 +481,12 @@ def test_persistence_batches_reads_under_a_single_pin(tmp_path, monkeypatch) -> 
 
         monkeypatch.setattr(DataFolio, "pinned", counting)
         ft.save(tmp_path / "folio", "a")
+        saves = entries["n"]
         load_feature_table(tmp_path / "folio", "a")
-        assert entries["n"] == 2  # once for the save batch, once for the load batch
+        loads = entries["n"] - saves
+        assert saves == 1  # one pin for the whole save batch
+        # one outer pin for the load, plus get_many's re-entrant join when present
+        assert loads == (2 if hasattr(DataFolio, "get_many") else 1)
     else:  # older datafolio: the guard degrades to a no-op rather than an error
         ft.save(tmp_path / "folio", "a")
         assert load_feature_table(tmp_path / "folio", "a") is not None
@@ -497,3 +501,25 @@ def test_the_pin_guard_tolerates_a_folio_without_pinned() -> None:
         pass
 
     assert isinstance(_pinned(_Bare()), AbstractContextManager)
+
+
+def test_load_is_identical_with_and_without_get_many(tmp_path, monkeypatch) -> None:
+    """The batch path is an optimization, never a behavior change."""
+    from datafolio import DataFolio
+
+    from cellpax.persist import load_feature_table
+
+    ft = _built_table()
+    ft.save(tmp_path / "folio", "a")
+
+    batched = load_feature_table(tmp_path / "folio", "a")
+    if hasattr(DataFolio, "get_many"):
+        monkeypatch.delattr(DataFolio, "get_many")
+    sequential = load_feature_table(tmp_path / "folio", "a")
+
+    assert np.allclose(batched.features(scaled=True), sequential.features(scaled=True))
+    assert batched.describe() == sequential.describe()
+    np.testing.assert_array_equal(
+        batched.clustering("run").cluster_labels(0.5),
+        sequential.clustering("run").cluster_labels(0.5),
+    )

@@ -7,6 +7,12 @@
   round trips per item. Together with lazy consensus derivation this is the
   remote-folio load fix — the profiled 66s cloud load spent ~30s rechecking an
   unchanged manifest ~60 times.
+- **Load fetches every frame item as one concurrent batch** via datafolio v2's
+  `get_many` (sequential fallback when absent, tested identical): every item
+  path is knowable from the manifest, so cellpax hands over the list and
+  datafolio owns the concurrency. Real `gs://` folio (62k cells, ~20
+  clusterings): ~150s originally → 66s (lazy consensus) → 33.8s (pinned) →
+  **5.3s** (batched).
 - **Fixed: a cross-mask `space=` silently mixed two scalings.** Every
   `space=` consumer (`cluster`, `overcluster`, `embed`, `triage_labels`,
   `boundary_report`, and `project` through a space-built embedding) fed the

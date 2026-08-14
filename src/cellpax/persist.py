@@ -205,12 +205,10 @@ def _save_partitions(
     )
 
 
-def _load_partitions(folio: DataFolio, name: str, cname: str) -> Any:
-    """Rebuild :class:`~cellpax.Partitions` from stored runs and settings."""
+def _load_partitions(labels: pl.DataFrame, settings: pl.DataFrame) -> Any:
+    """Rebuild :class:`~cellpax.Partitions` from stored runs and settings frames."""
     from cellpax.clustering import Partitions
 
-    labels = folio.get(f"{name}/partitions/{cname}", frame="polars")
-    settings = folio.get(f"{name}/settings/{cname}", frame="polars")
     # select by run index rather than trusting stored column order, so a backend
     # that returned run_10 before run_2 could not pair runs with wrong settings
     labels = labels.select([f"run_{run}" for run in range(len(labels.columns))])
@@ -485,7 +483,32 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
             f"v2 could silently misread it — upgrade cellpax instead"
         )
 
-    table = folio.get(f"{name}/table", frame="polars")
+    # every frame item is knowable from the manifest, so they fetch as one
+    # concurrent batch where datafolio offers it (v2's get_many); the fallback
+    # is the same reads, sequentially, under the pin we already hold
+    frame_paths = [f"{name}/table"]
+    frame_paths += [
+        f"{name}/embedding/{mask}__{ename}"
+        for mask, ename in manifest.get("embeddings", [])
+    ]
+    frame_paths += [f"{name}/space/{slug}" for slug in manifest.get("spaces", {})]
+    for cname, meta in manifest.get("clusterings", {}).items():
+        if meta.get("cell_ids_stored"):
+            frame_paths.append(f"{name}/cellids/{cname}")
+        if meta.get("storage") == "partitions":
+            frame_paths += [
+                f"{name}/partitions/{cname}",
+                f"{name}/settings/{cname}",
+            ]
+        else:
+            frame_paths.append(f"{name}/clustering/{cname}")
+    get_many = getattr(folio, "get_many", None)
+    if get_many is not None:
+        frames = get_many(frame_paths, frame="polars")
+    else:
+        frames = {path: folio.get(path, frame="polars") for path in frame_paths}
+
+    table = frames[f"{name}/table"]
     mask_cols = [c for c in table.columns if c.startswith("_mask_")]
     base = table.drop(mask_cols)
     var = pl.DataFrame(manifest["var"]) if manifest["var"] else None
@@ -507,9 +530,7 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
         for n, cols in manifest["collections"].items()
     }
     for mask, ename in manifest["embeddings"]:
-        ft._embeddings[(mask, ename)] = folio.get(
-            f"{name}/embedding/{mask}__{ename}", frame="polars"
-        )
+        ft._embeddings[(mask, ename)] = frames[f"{name}/embedding/{mask}__{ename}"]
     for mask, ename, space, n_components in manifest.get("external_embeddings", []):
         ft._external_embeddings[(mask, ename)] = (space, int(n_components))
     for slug, params in manifest.get("embedding_params", {}).items():
@@ -518,7 +539,7 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
     for slug, space_meta in manifest.get("spaces", {}).items():
         from cellpax.space import FittedSpace
 
-        arrays = _frame_arrays(folio.get(f"{name}/space/{slug}", frame="polars"))
+        arrays = _frame_arrays(frames[f"{name}/space/{slug}"])
         space = FittedSpace.from_records(space_meta, arrays)
         raw_variance = space_meta["fit_explained_variance"]
         is_count = space_meta.get(
@@ -539,12 +560,15 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
     for cname, meta in manifest["clusterings"].items():
         partitions = None
         if meta.get("storage") == "partitions":
-            partitions = _load_partitions(folio, name, cname)
+            partitions = _load_partitions(
+                frames[f"{name}/partitions/{cname}"],
+                frames[f"{name}/settings/{cname}"],
+            )
             # the runs are the stored object; the n×n consensus they imply is
             # minutes of work at scale, so it derives lazily on first use
             matrix = None
         else:
-            triplets = folio.get(f"{name}/clustering/{cname}", frame="polars")
+            triplets = frames[f"{name}/clustering/{cname}"]
             matrix = csr_matrix(
                 (
                     triplets["value"].to_numpy().astype(np.float64),
@@ -556,11 +580,7 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
         # "all" reproduces what ft.label(name, distance_threshold=…) did back then
         mask = meta.get("mask") or "all"
         if meta.get("cell_ids_stored"):
-            cell_ids = (
-                folio.get(f"{name}/cellids/{cname}", frame="polars")
-                .to_series()
-                .to_numpy()
-            )
+            cell_ids = frames[f"{name}/cellids/{cname}"].to_series().to_numpy()
         else:
             # older saves re-derive from the current mask; a same-size redefinition
             # between cluster() and save() cannot be detected here
