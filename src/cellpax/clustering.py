@@ -20,7 +20,7 @@ import logging
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import igraph as ig
 import leidenalg as la
@@ -35,6 +35,9 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
 
+if TYPE_CHECKING:
+    from cellpax.labels import LabelSet
+
 # --------------------------------------------------------------------------- #
 # scalers
 # --------------------------------------------------------------------------- #
@@ -46,6 +49,15 @@ class PercentileClipper(BaseEstimator, TransformerMixin):
     Defines the bound by *rank*, which has two consequences worth knowing before
     choosing it over :class:`SigmaClipper`.
 
+    Parameters
+    ----------
+    lower : float, default 0.1
+        Lower percentile fitted independently for each feature.
+    upper : float, default 99.9
+        Upper percentile fitted independently for each feature.
+
+    Notes
+    -----
     **The bound stops being robust on small cohorts.** An extreme percentile has a
     breakdown point of roughly ``f/100``, so at the default ``99.9`` it takes only
     ``0.001 × n`` contaminated points to move it — below one cell when ``n < 1000``.
@@ -68,13 +80,61 @@ class PercentileClipper(BaseEstimator, TransformerMixin):
         self.lower_bounds_ = None
         self.upper_bounds_ = None
 
-    def fit(self, X, y=None):
-        self.lower_bounds_ = np.percentile(X, self.lower, axis=0)
-        self.upper_bounds_ = np.percentile(X, self.upper, axis=0)
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> "PercentileClipper":
+        """Fit the per-feature percentile bounds.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            ``(n_samples, n_features)`` matrix used to estimate the bounds.
+        y : numpy.ndarray, optional
+            Ignored. Accepted for scikit-learn transformer compatibility.
+
+        Returns
+        -------
+        PercentileClipper
+            This fitted transformer.
+        """
+        # nan-aware, so a feature with missing values still gets real bounds rather
+        # than NaN ones that would turn every clipped value into NaN
+        self.lower_bounds_ = np.nanpercentile(X, self.lower, axis=0)
+        self.upper_bounds_ = np.nanpercentile(X, self.upper, axis=0)
         return self
 
-    def transform(self, X):
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Clip rows to the fitted per-feature percentile bounds.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            ``(n_samples, n_features)`` matrix to transform.
+
+        Returns
+        -------
+        numpy.ndarray
+            Clipped matrix with the same shape as ``X``.
+        """
         return np.clip(X, self.lower_bounds_, self.upper_bounds_)
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        """Return ``X`` unchanged: clipping discards information and cannot be undone.
+
+        Values inside the bounds are what ``transform`` left alone, so identity is the
+        exact inverse there; a clipped value stays at its bound. Defined so a pipeline
+        containing a clipper can still be inverted — which is what mapping one
+        dataset's distribution onto another's (``join_datasets``) needs.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            ``(n_samples, n_features)`` matrix in clipped units.
+
+        Returns
+        -------
+        numpy.ndarray
+            The same matrix.
+        """
+        return np.asarray(X)
 
 
 class SigmaClipper(BaseEstimator, TransformerMixin):
@@ -97,19 +157,73 @@ class SigmaClipper(BaseEstimator, TransformerMixin):
     else. That is a feature rather than an omission — a frozen transform carries no
     clip bounds, so reapplying it to a future dataset cannot silently absorb that
     dataset's distribution shift into the clipping step.
+
+    Parameters
+    ----------
+    n_sigma : float, default 5.0
+        Symmetric clip bound in the units produced by the preceding scaler.
     """
 
     def __init__(self, n_sigma: float = 5.0) -> None:
         self.n_sigma = n_sigma
 
-    def fit(self, X, y=None):
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> "SigmaClipper":
+        """Validate the clip threshold and record the feature count.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            ``(n_samples, n_features)`` matrix defining the input width.
+        y : numpy.ndarray, optional
+            Ignored. Accepted for scikit-learn transformer compatibility.
+
+        Returns
+        -------
+        SigmaClipper
+            This fitted transformer.
+
+        Raises
+        ------
+        ValueError
+            If ``n_sigma`` is not positive.
+        """
         if self.n_sigma <= 0:
             raise ValueError(f"n_sigma must be positive, got {self.n_sigma}")
         self.n_features_in_ = np.asarray(X).shape[1]
         return self
 
-    def transform(self, X):
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Clip values to ``[-n_sigma, n_sigma]``.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Matrix in the units of the preceding scaler.
+
+        Returns
+        -------
+        numpy.ndarray
+            Clipped matrix with the same shape as ``X``.
+        """
         return np.clip(X, -self.n_sigma, self.n_sigma)
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        """Return ``X`` unchanged: clipping discards information and cannot be undone.
+
+        Identity is exact inside ``±n_sigma``, and a clipped value stays at the bound.
+        Defined so a pipeline containing the clipper can be inverted.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Matrix in the units of the preceding scaler.
+
+        Returns
+        -------
+        numpy.ndarray
+            The same matrix.
+        """
+        return np.asarray(X)
 
 
 def make_clipped_scaler(
@@ -172,7 +286,7 @@ def clipped_scaler_factory(
     *,
     mode: Literal["percentile", "sigma"] = "percentile",
     n_sigma: float = 5.0,
-):
+) -> Callable[[], Pipeline]:
     """Return a zero-argument factory producing a fresh clipped scaler.
 
     Parameters
@@ -207,6 +321,91 @@ def clipped_scaler_factory(
         "upper": float(upper),
         "mode": mode,
         "n_sigma": float(n_sigma),
+    }
+    return factory
+
+
+def quantile_scaler_factory(
+    *,
+    clip: tuple[float, float] | None = (1.0, 99.0),
+    output_distribution: Literal["normal", "uniform"] = "normal",
+    n_quantiles: int = 1000,
+    subsample: int = 100_000,
+    random_state: int = 0,
+) -> Callable[[], Any]:
+    """Return a factory producing a percentile clip followed by a quantile transform.
+
+    A quantile transform maps each feature to its rank within the fit population and
+    then onto a fixed reference distribution, so it removes *any* monotone difference
+    in a feature's marginal — offset, scale, units, and the nonlinear warps a different
+    detection threshold or extraction pipeline introduces — not just location and
+    scale. That is what makes it the harmonizer of choice for
+    :func:`~cellpax.datasets.join_datasets`: fit once per dataset (or per dataset ×
+    subclass), then map through one dataset's transform and back out through the
+    reference's inverse.
+
+    Parameters
+    ----------
+    clip : tuple of float or None, default (1.0, 99.0)
+        Percentile bounds applied *before* the rank transform, fit on the same cells.
+        Clipping collapses each tail onto its bound, so a handful of extreme cells
+        cannot claim the outermost quantiles. ``None`` skips the clip.
+    output_distribution : {'normal', 'uniform'}, default 'normal'
+        Reference distribution of the transformed values. ``'normal'`` suits Euclidean
+        neighbour graphs when the scaler is used directly on a table.
+    n_quantiles : int, default 1000
+        Number of quantile landmarks; capped by scikit-learn at the number of fit cells.
+    subsample : int, default 100000
+        Maximum number of cells used to estimate the quantiles.
+    random_state : int, default 0
+        Seed for that subsample, fixed so a refit reproduces the same transform.
+
+    Returns
+    -------
+    callable
+        A zero-argument callable returning a fresh unfitted scaler: a
+        ``Pipeline([("clipper", PercentileClipper), ("scaler", QuantileTransformer)])``,
+        or a bare ``QuantileTransformer`` when ``clip`` is ``None``.
+
+    Notes
+    -----
+    A rank transform discards within-population scale by construction: after it, every
+    feature has the same marginal. Used as a table's own ``scaler_factory`` that is a
+    strong normalization; used through ``join_datasets``, the reference dataset's
+    inverse restores real units, so only the *difference* between datasets is removed.
+    """
+    from sklearn.preprocessing import QuantileTransformer
+
+    if clip is not None:
+        lower, upper = (float(clip[0]), float(clip[1]))
+        if not 0.0 <= lower < upper <= 100.0:
+            raise ValueError(f"clip must satisfy 0 <= lower < upper <= 100, got {clip}")
+    if output_distribution not in ("normal", "uniform"):
+        raise ValueError(
+            f"output_distribution must be 'normal' or 'uniform', got "
+            f"{output_distribution!r}"
+        )
+
+    def factory() -> Any:
+        transformer = QuantileTransformer(
+            n_quantiles=n_quantiles,
+            output_distribution=output_distribution,
+            subsample=subsample,
+            random_state=random_state,
+        )
+        if clip is None:
+            return transformer
+        return Pipeline(
+            [("clipper", PercentileClipper(lower, upper)), ("scaler", transformer)]
+        )
+
+    factory._cellpax_scaler_params = {  # type: ignore[attr-defined]
+        "kind": "quantile",
+        "clip": None if clip is None else [lower, upper],
+        "output_distribution": output_distribution,
+        "n_quantiles": int(n_quantiles),
+        "subsample": int(subsample),
+        "random_state": int(random_state),
     }
     return factory
 
@@ -556,6 +755,65 @@ def _run_single(graph, resolution, min_cluster_size, seed) -> np.ndarray:
     )
 
 
+def consensus_density(groups: np.ndarray) -> dict[str, float]:
+    """Predict how dense ``A @ A.T`` will be, before paying for it.
+
+    The consensus matrix is sparse only when the runs are *fine*. Each run
+    contributes a ``size**2`` block per cluster, so the fraction of pairs a run
+    co-clusters is ``Σ size**2 / n**2``, and a pair is nonzero in the pool when
+    any run co-clusters it. Treating runs as independent gives
+
+        density ≈ 1 - Π_runs (1 - p_run)
+
+    which is accurate to a tenth of a percent against measured nnz, and errs
+    high on real data (correlated runs overlap, so the union is smaller than the
+    independent estimate) — the safe direction for a warning.
+
+    This is the number to look at before ``Clustering.restrict``. Narrowing to a
+    coarse grain window selects the runs with the largest clusters, so the
+    restricted consensus can be an order of magnitude denser than the pool it
+    came from: at 20 runs, 40 clusters each gives ~40% density, while 4 clusters
+    each gives ~99.7%.
+
+    Returns ``density``, predicted ``nnz``, ``gb`` for the CSR matrix, and
+    ``peak_gb`` — the normalization pass runs about 1.5x the matrix.
+
+    Parameters
+    ----------
+    groups : numpy.ndarray
+        Integer ``(n_cells, n_runs)`` membership matrix; negative values mark
+        cells omitted from a run.
+
+    Returns
+    -------
+    dict of str to float
+        Predicted density, nonzero count, matrix size, peak working size, and
+        cell count.
+    """
+    n, n_runs = groups.shape
+    if n == 0 or n_runs == 0:
+        return {"density": 0.0, "nnz": 0.0, "gb": 0.0, "peak_gb": 0.0, "n_cells": n}
+    survives = 1.0
+    for run in range(n_runs):
+        column = groups[:, run]
+        column = column[column >= 0]
+        if column.size == 0:
+            continue
+        _, counts = np.unique(column, return_counts=True)
+        p_run = float((counts.astype(np.float64) ** 2).sum()) / float(n) ** 2
+        survives *= max(0.0, 1.0 - p_run)
+    density = 1.0 - survives
+    nnz = density * float(n) ** 2
+    gb = nnz * 8 / 1e9  # float32 data + int32 indices
+    return {
+        "density": density,
+        "nnz": nnz,
+        "gb": gb,
+        "peak_gb": gb * 1.5,
+        "n_cells": n,
+    }
+
+
 def coclustering_matrix(groups: np.ndarray, normalize: bool = False) -> csr_matrix:
     """Sparse co-clustering counts from an ``(n_cells, n_runs)`` label array.
 
@@ -586,40 +844,86 @@ def coclustering_matrix(groups: np.ndarray, normalize: bool = False) -> csr_matr
         running = full @ full.T
 
     if normalize:
-        # the documented denominator: the number of runs that kept *both* cells,
-        # |A_i ∩ A_j|. min(|A_i|, |A_j|) only agrees when every drop is shared;
-        # two cells dropped in different runs would otherwise be biased low.
-        n_runs = groups.shape[1]
-        missing = groups < 0
-        miss_counts = missing.sum(axis=1).astype(np.float32)
-        cx = coo_matrix(running)
-        denom = np.float32(n_runs) - miss_counts[cx.row] - miss_counts[cx.col]
-        if miss_counts.any():
-            # the shared-miss correction, restricted to pairs where BOTH cells
-            # were ever dropped (the only pairs it can be nonzero for) and read
-            # off a precomputed M·Mᵀ by key search. The obvious row-gather
-            # (miss[rows] elementwise miss[cols]) materializes an
-            # (nnz, n_runs) sparse intermediate — gigabytes at consensus scale.
-            candidate = (miss_counts[cx.row] > 0) & (miss_counts[cx.col] > 0)
-            if candidate.any():
-                miss_sparse = csr_matrix(missing.astype(np.float32))
-                shared = (miss_sparse @ miss_sparse.T).tocoo()
-                shared_key = shared.row.astype(np.int64) * n + shared.col
-                order = np.argsort(shared_key)
-                shared_key = shared_key[order]
-                shared_value = shared.data[order]
-                key = cx.row[candidate].astype(np.int64) * n + cx.col[candidate].astype(
-                    np.int64
-                )
-                position = np.searchsorted(shared_key, key)
-                position = np.clip(position, 0, max(shared_key.size - 1, 0))
-                hit = shared_key[position] == key
-                correction = np.where(hit, shared_value[position], 0.0)
-                denom[candidate] += correction.astype(np.float32)
-        data = np.where(denom > 0, cx.data / denom, np.float32(0))
-        running = coo_matrix((data, (cx.row, cx.col)), shape=(n, n)).tocsr()
-        running.eliminate_zeros()
+        _normalize_inplace(running, groups)
     return running
+
+
+def _normalize_inplace(running: csr_matrix, groups: np.ndarray) -> None:
+    """Divide co-clustering counts by the runs that kept both cells, in place.
+
+    The denominator is the documented one: ``|A_i ∩ A_j|``, the number of runs
+    that kept *both* cells. ``min(|A_i|, |A_j|)`` only agrees when every drop is
+    shared; two cells dropped in different runs would otherwise be biased low.
+
+    Done row-chunked and in place because this is where consensus memory
+    actually goes. The obvious version round-trips through COO — ``coo_matrix``,
+    a row array, a column array, a denominator, a divided copy, then a fresh
+    ``coo_matrix(...).tocsr()`` — which measures at ~4x the matrix in peak RSS.
+    That is affordable on a sparse consensus and ruinous on a dense one, and
+    ``restrict`` produces exactly the dense case: narrowing to coarse runs
+    selects the runs whose clusters are largest, and ``A @ A.T`` gains a
+    ``size**2`` block per cluster, so a pool that was 10% dense can come back at
+    99%. At 34.6k cells that is the difference between ~10 GB and ~40 GB.
+
+    Chunking keeps the temporaries proportional to a slice rather than to nnz,
+    so peak stays just above the matrix itself.
+    """
+    n, n_runs = groups.shape
+    if running.nnz == 0:
+        return
+    running.sort_indices()
+    indptr, indices, data = running.indptr, running.indices, running.data
+    missing = groups < 0
+    miss_counts = missing.sum(axis=1).astype(np.float32)
+    any_missing = bool(miss_counts.any())
+
+    shared: csr_matrix | None = None
+    if any_missing:
+        # Pairs where BOTH cells were ever dropped are the only ones the
+        # correction can touch. M·Mᵀ counts the runs that dropped both, read
+        # back per chunk rather than as one nnz-sized gather.
+        miss_sparse = csr_matrix(missing.astype(np.float32))
+        shared = (miss_sparse @ miss_sparse.T).tocsr()
+        shared.sort_indices()
+
+    # ~8M nnz per chunk keeps the working set in the low hundreds of MB
+    # regardless of how dense the consensus turned out to be.
+    per_row = max(running.nnz / max(n, 1), 1.0)
+    chunk = max(1, min(n, int(8_000_000 / per_row)))
+
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        lo, hi = int(indptr[start]), int(indptr[stop])
+        if hi == lo:
+            continue
+        cols = indices[lo:hi]
+        rows = np.repeat(
+            np.arange(start, stop, dtype=np.int64),
+            np.diff(indptr[start : stop + 1]).astype(np.int64),
+        )
+        denom = np.float32(n_runs) - miss_counts[rows] - miss_counts[cols]
+        if shared is not None:
+            sub = shared[start:stop]
+            if sub.nnz:
+                # both index spaces are row-sorted, so one key search per chunk
+                # recovers the shared-miss count for exactly these pairs
+                sub_rows = np.repeat(
+                    np.arange(start, stop, dtype=np.int64),
+                    np.diff(sub.indptr).astype(np.int64),
+                )
+                sub_key = sub_rows * n + sub.indices.astype(np.int64)
+                key = rows * n + cols.astype(np.int64)
+                position = np.searchsorted(sub_key, key)
+                np.clip(position, 0, sub_key.size - 1, out=position)
+                hit = sub_key[position] == key
+                denom += np.where(hit, sub.data[position], np.float32(0)).astype(
+                    np.float32
+                )
+        block = data[lo:hi]
+        np.divide(block, denom, out=block, where=denom > 0)
+        block[denom <= 0] = np.float32(0)
+
+    running.eliminate_zeros()
 
 
 @dataclass(frozen=True)
@@ -640,6 +944,17 @@ class Partitions:
 
     ``graph_type`` records which weighting each run's graph used, and defaults to
     ``"knn"`` throughout for runs (or reloads) from before that was a swept axis.
+
+    Attributes
+    ----------
+    labels : numpy.ndarray
+        Integer ``(n_cells, n_runs)`` membership matrix; ``-1`` is unassigned.
+    n_neighbors : numpy.ndarray
+        Neighbour count for each run, in matrix-column order.
+    resolution : numpy.ndarray
+        Leiden resolution for each run.
+    graph_type : numpy.ndarray
+        Graph weighting name for each run.
     """
 
     labels: np.ndarray
@@ -658,20 +973,34 @@ class Partitions:
 
     @property
     def n_runs(self) -> int:
+        """Number of clustering runs."""
         return int(self.labels.shape[1])
 
     @property
     def n_cells(self) -> int:
+        """Number of cells represented by each run."""
         return int(self.labels.shape[0])
 
     def cluster_counts(self) -> np.ndarray:
-        """Number of clusters each run produced."""
+        """Count clusters produced by each run.
+
+        Returns
+        -------
+        numpy.ndarray
+            One cluster count per run.
+        """
         return np.array(
             [np.unique(col[col >= 0]).size for col in self.labels.T], dtype=np.int64
         )
 
     def summary(self) -> pl.DataFrame:
-        """One row per run: its setting, cluster count, and how much it dropped."""
+        """Summarize each ensemble run.
+
+        Returns
+        -------
+        polars.DataFrame
+            Settings, cluster count, and dropped-cell count per run.
+        """
         return pl.DataFrame(
             {
                 "run": np.arange(self.n_runs, dtype=np.int64),
@@ -702,6 +1031,11 @@ class Partitions:
         weighting and eighty under another. The ``median_clusters`` column is the
         comparable one, and :meth:`filter` takes ``n_clusters_min``/``n_clusters_max``
         so the pool can be selected on it.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cluster-count summaries grouped by graph settings.
         """
         return (
             self.summary()
@@ -793,7 +1127,18 @@ class Partitions:
         )
 
     def coclustering(self, *, normalize: bool = True) -> csr_matrix:
-        """Re-consense just these runs into a co-clustering matrix."""
+        """Re-consense just these runs into a co-clustering matrix.
+
+        Parameters
+        ----------
+        normalize : bool, default True
+            Divide counts by runs that retained both cells.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+            Square co-clustering matrix over the partition rows.
+        """
         return coclustering_matrix(self.labels, normalize=normalize)
 
     def __repr__(self) -> str:
@@ -873,6 +1218,128 @@ def _leaf_members(
     return members
 
 
+def _coverage_verdict(n_runs: int, n_axes_inside: int, n_axes_total: int) -> str:
+    """Plain reading of what a grain window kept. The check people skip."""
+    if n_runs == 0:
+        return "empty: the window contains no runs at all — widen it or sweep finer"
+    if n_runs < 10:
+        return (
+            f"thin: only {n_runs} runs survive; the consensus rests on very few votes"
+        )
+    if n_axes_total > 1 and n_axes_inside <= 1:
+        return (
+            "un-marginalised: every surviving run comes from one "
+            "(graph_type, n_neighbors) — the graph axis is no longer averaged over"
+        )
+    if n_axes_total > 1 and n_axes_inside < n_axes_total / 2:
+        return f"lopsided: {n_axes_inside} of {n_axes_total} graph settings represented"
+    return f"ok: {n_runs} runs across {n_axes_inside} of {n_axes_total} graph settings"
+
+
+def _plateau_frame(frame: pl.DataFrame) -> pl.DataFrame:
+    """Group a threshold scan into runs of constant cluster count."""
+    if frame.height == 0:
+        return frame.clear()
+    return (
+        frame.with_columns(
+            (pl.col("n_clusters") != pl.col("n_clusters").shift())
+            .fill_null(True)
+            .cum_sum()
+            .alias("_block")
+        )
+        .group_by("_block")
+        .agg(
+            pl.col("distance_threshold").min().alias("lo"),
+            pl.col("distance_threshold").max().alias("hi"),
+            pl.col("n_clusters").first().alias("n_clusters"),
+            pl.col("n_unassigned").max().alias("max_unassigned"),
+            pl.col("largest_cluster").max().alias("largest_cluster"),
+            pl.col("median_cluster_size").median().alias("median_cluster_size"),
+            pl.len().alias("n_points"),
+        )
+        .with_columns(
+            (pl.col("hi") - pl.col("lo")).alias("width"),
+            ((pl.col("hi") + pl.col("lo")) / 2).alias("midpoint"),
+        )
+        .filter(pl.col("n_clusters") > 1)
+        .sort("width", descending=True)
+        .drop("_block")
+        .select(
+            "n_clusters",
+            "midpoint",
+            "width",
+            "lo",
+            "hi",
+            "max_unassigned",
+            "largest_cluster",
+            "median_cluster_size",
+            "n_points",
+        )
+    )
+
+
+@dataclass(frozen=True)
+class CutSuggestion:
+    """A defensible threshold, the evidence for it, and what it competed with.
+
+    Deliberately not just a number. The threshold alone is unreproducible — it
+    means nothing without the size floor and grain window it was chosen under —
+    and a suggestion with no visible runner-up invites more confidence than the
+    evidence carries.
+
+    ``threshold`` is ``None`` when nothing was defensible; ``reason`` says why.
+
+    Attributes
+    ----------
+    threshold : float, optional
+        Suggested dendrogram cut height, or ``None`` when none qualifies.
+    n_clusters : int, optional
+        Cluster count produced by ``threshold``.
+    width : float, optional
+        Width of the selected cluster-count plateau.
+    min_cluster_size : int
+        Size floor used while evaluating candidate cuts.
+    n_unassigned : int, optional
+        Cells excluded at the selected cut.
+    largest_cluster : int, optional
+        Size of the largest selected cluster.
+    support_ceiling : float, optional
+        Lowest merge height unsupported by every resolution band.
+    above_ceiling : bool, optional
+        Whether the suggestion exceeds ``support_ceiling``.
+    reason : str
+        Human-readable explanation of the result.
+    alternatives : polars.DataFrame
+        Leading candidate plateaus, best first.
+    """
+
+    threshold: float | None
+    n_clusters: int | None
+    width: float | None
+    min_cluster_size: int
+    n_unassigned: int | None
+    largest_cluster: int | None
+    support_ceiling: float | None
+    above_ceiling: bool | None
+    reason: str
+    alternatives: pl.DataFrame
+
+    @property
+    def ok(self) -> bool:
+        """Whether a usable threshold was found below the support ceiling."""
+        return self.threshold is not None and not self.above_ceiling
+
+    def __repr__(self) -> str:
+        if self.threshold is None:
+            return f"CutSuggestion(none — {self.reason})"
+        flag = " ABOVE SUPPORT CEILING" if self.above_ceiling else ""
+        return (
+            f"CutSuggestion(threshold={self.threshold:.3f}, "
+            f"n_clusters={self.n_clusters}, width={self.width:.3f}, "
+            f"min_cluster_size={self.min_cluster_size}{flag})"
+        )
+
+
 @dataclass(frozen=True)
 class ConsensusHierarchy:
     """The consensus read as a tree rather than as one cut through it.
@@ -899,6 +1366,25 @@ class ConsensusHierarchy:
     concentrate along interdigitated cluster boundaries and along continuous streaks
     between clusters. Scattered uniformly instead, the instability is not about boundaries
     and the cut is not the thing to adjust.
+
+    Attributes
+    ----------
+    linkage : numpy.ndarray
+        SciPy linkage matrix defining the hierarchy.
+    merge_table : polars.DataFrame
+        One row per dendrogram merge with stability evidence.
+    nested_labels : polars.DataFrame
+        Per-cell integer labels at each selected level.
+    nested_levels : polars.DataFrame
+        Metadata describing the selected hierarchy levels.
+    cell_stability : numpy.ndarray
+        Per-cell maximum co-clustering support.
+    leaf_order : numpy.ndarray
+        Dendrogram leaf ordering.
+    cell_ids : numpy.ndarray, optional
+        Cell identifiers aligned with the per-cell arrays.
+    max_value : float, default 1.0
+        Similarity value representing full agreement.
     """
 
     linkage: np.ndarray
@@ -912,10 +1398,12 @@ class ConsensusHierarchy:
 
     @property
     def n_cells(self) -> int:
+        """Number of cells represented by the hierarchy."""
         return int(self.linkage.shape[0] + 1)
 
     @property
     def n_levels(self) -> int:
+        """Number of nested label levels."""
         return int(self.nested_levels.height)
 
     def cell_stability_frame(self) -> pl.DataFrame:
@@ -923,6 +1411,11 @@ class ConsensusHierarchy:
 
         The frame the stability figure joins against an embedding: ``cell_id`` (when the
         clustering carried ids), ``stability``, and one ``level_*`` column per level.
+
+        Returns
+        -------
+        polars.DataFrame
+            Per-cell stability and labels at each hierarchy level.
         """
         data: dict[str, Any] = {}
         if self.cell_ids is not None:
@@ -945,6 +1438,11 @@ class ConsensusHierarchy:
         Returned rather than plotted because ``scipy.cluster.hierarchy.dendrogram``
         computes the layout and draws it in one step, which makes per-merge colouring
         awkward and couples the figure to whatever axes are current.
+
+        Returns
+        -------
+        polars.DataFrame
+            Three line-segment rows per dendrogram merge.
         """
         link = self.linkage
         n = self.n_cells
@@ -1218,6 +1716,23 @@ class SortedMatrix:
     >>> ax.imshow(sm.matrix, vmin=0, vmax=1, cmap="magma")  # doctest: +SKIP
     >>> ax.set_xticks(sm.centers, sm.names)                 # doctest: +SKIP
     >>> ax.hlines(sm.boundaries[1:-1], *ax.get_xlim())      # doctest: +SKIP
+
+    Attributes
+    ----------
+    matrix : numpy.ndarray
+        Dense similarity matrix in ``order``.
+    order : numpy.ndarray
+        Original row indices in displayed order.
+    codes : numpy.ndarray
+        Cluster code for each displayed row.
+    names : list of str
+        Display names in block order.
+    boundaries : numpy.ndarray
+        ``k + 1`` block-edge positions.
+    cell_ids : numpy.ndarray, optional
+        Cell identifiers in displayed order.
+    sizes : numpy.ndarray
+        Number of cells in each block.
     """
 
     matrix: np.ndarray
@@ -1235,10 +1750,22 @@ class SortedMatrix:
 
     @property
     def n_cells(self) -> int:
+        """Number of cells along either matrix axis."""
         return int(self.matrix.shape[0])
 
     def block(self, index: int) -> np.ndarray:
-        """The ``index``-th cluster's within-block submatrix."""
+        """Return one cluster's within-block submatrix.
+
+        Parameters
+        ----------
+        index : int
+            Block index in :attr:`names` order.
+
+        Returns
+        -------
+        numpy.ndarray
+            Dense within-cluster similarity block.
+        """
         start, stop = self.boundaries[index], self.boundaries[index + 1]
         return self.matrix[start:stop, start:stop]
 
@@ -1249,6 +1776,11 @@ class SortedMatrix:
         is each cluster's internal cohesion, the off-diagonal how much two clusters
         still get confused for each other. Two blocks with a high off-diagonal mean
         are the pair a higher ``distance_threshold`` would merge first.
+
+        Returns
+        -------
+        numpy.ndarray
+            Square block-by-block mean similarity matrix.
         """
         k = len(self.names)
         edges = self.boundaries
@@ -1272,6 +1804,20 @@ class SimilarityMatrix:
     Wraps a (sparse) square similarity matrix and lazily computes the linkage,
     leaf order, cluster labels at a distance threshold, and the cluster-count
     curve. Caches expensive computations.
+
+    Parameters
+    ----------
+    matrix : numpy.ndarray or scipy.sparse.csr_matrix, optional
+        Square similarity or distance matrix. ``None`` creates a deferred matrix
+        for subclasses that provide its materializer.
+    similarity : bool, default True
+        Interpret ``matrix`` as similarity when true, distance when false.
+    normalized : bool, default False
+        Whether similarity values are normalized to ``[0, 1]``.
+    method : {'average', 'single', 'complete'}, default 'average'
+        Hierarchical linkage method.
+    _n : int, optional
+        Deferred matrix size. Reserved for subclasses.
     """
 
     def __init__(
@@ -1349,6 +1895,7 @@ class SimilarityMatrix:
 
     @property
     def shape(self) -> tuple[int, int]:
+        """Square matrix shape as ``(n_cells, n_cells)``."""
         return (self._n, self._n)
 
     @property
@@ -1384,6 +1931,7 @@ class SimilarityMatrix:
 
     @property
     def leaf_order(self) -> np.ndarray:
+        """Dendrogram leaf order, computed lazily and returned as a copy."""
         if self._leaf_order is None:
             self._leaf_order = leaves_list(self.linkage)
         return self._leaf_order
@@ -1396,6 +1944,18 @@ class SimilarityMatrix:
         Labels are contiguous ``0..k-1`` (``-1`` for clusters smaller than
         ``min_cluster_size``), the same numbering every other cut in the
         library uses — ``fcluster``'s raw 1-based codes never escape.
+
+        Parameters
+        ----------
+        distance_threshold : float
+            Maximum linkage distance within a cluster.
+        min_cluster_size : int, default 1
+            Replace smaller clusters with ``-1``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Integer code for each matrix row.
         """
         labels = fcluster(self.linkage, t=distance_threshold, criterion="distance")
         labels = labels.astype(np.int64)
@@ -1466,6 +2026,34 @@ class SimilarityMatrix:
         The result is dense ``(n, n)``, so ``max_cells`` refuses to silently
         allocate a huge array; pass ``subsample`` to take that many cells spread
         proportionally across blocks instead.
+
+        Parameters
+        ----------
+        labels : LabelSet or numpy.ndarray, optional
+            Cluster definition, aligned by id when possible.
+        distance_threshold : float, optional
+            Cut height used when ``labels`` is omitted.
+        min_cluster_size : int, default 1
+            Size floor for a newly computed cut.
+        include_unassigned : bool, default True
+            Include ``-1`` rows as a trailing block.
+        subsample : int, optional
+            Approximate total cells sampled proportionally across blocks.
+        max_cells : int, default 8000
+            Refuse a larger dense result unless subsampling is requested.
+        seed : int, optional
+            Random seed for block-proportional subsampling.
+
+        Returns
+        -------
+        SortedMatrix
+            Dense matrix and the ordering metadata needed to display it.
+
+        Raises
+        ------
+        ValueError
+            If neither labels nor a threshold is supplied, alignment fails, or
+            the dense result would exceed ``max_cells``.
         """
         codes = self._row_codes(labels, distance_threshold, min_cluster_size)
         n = self.shape[0]
@@ -1542,10 +2130,18 @@ class SimilarityMatrix:
 
         The value is a fraction of runs only when the matrix is ``normalized``;
         otherwise it is a raw co-assignment count out of ``max_value``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Strongest non-self similarity for every cell.
         """
-        matrix = self.similarity_matrix.tolil(copy=True)
+        # Drop the diagonal on a CSR copy, not via LIL: LIL stores every nonzero
+        # as Python objects, ~80 bytes against CSR's 8, and this matrix is the
+        # largest thing in the session. `setdiag(0)` is structure-preserving here
+        # (it only clears entries), so CSR takes it without complaint.
+        matrix = self.similarity_matrix.copy()
         matrix.setdiag(0)
-        matrix = matrix.tocsr()
         matrix.eliminate_zeros()
         if matrix.nnz == 0:
             return np.zeros(self.shape[0], dtype=np.float64)
@@ -1569,6 +2165,20 @@ class SimilarityMatrix:
         nothing is ever dropped and every singleton counts as a cluster, so a curve
         read at 1 and a cut made at 10 disagree — usually by a lot, since it is the
         singletons that the count is mostly made of.
+
+        Parameters
+        ----------
+        distance_range : numpy.ndarray, optional
+            Candidate thresholds. Defaults to an evenly spaced linkage range.
+        n_points : int, default 25
+            Number of default thresholds.
+        min_cluster_size : int, default 1
+            Size floor applied at every cut.
+
+        Returns
+        -------
+        polars.DataFrame
+            Per-threshold cluster, assignment, and size statistics.
         """
         if distance_range is None:
             distance_range = np.linspace(0.0, float(self.linkage[:, 2].max()), n_points)
@@ -1591,6 +2201,51 @@ class SimilarityMatrix:
             )
         return pl.DataFrame(rows)
 
+    def plateaus(
+        self,
+        distance_range: np.ndarray | None = None,
+        *,
+        n_points: int = 60,
+        min_cluster_size: int = 1,
+    ) -> pl.DataFrame:
+        """Runs of thresholds giving the same cluster count, widest first.
+
+        The decision :meth:`threshold_scan` supports, taken out of the table. A
+        plateau is a gap in the dendrogram — a band the structure is indifferent
+        to — so its *midpoint* is the defensible place to cut and its edges are
+        not. Scanning by eye for where a count stops changing is exactly the
+        step that is tedious by hand and trivial to get subtly wrong.
+
+        One row per plateau: ``lo`` / ``hi`` / ``width`` / ``midpoint``, the
+        ``n_clusters`` it holds, and the worst ``max_unassigned`` and
+        ``largest_cluster`` anywhere inside it — because a plateau that is
+        stable in count while bleeding cells, or while one cluster swallows the
+        cohort, is not the stable structure it looks like.
+
+        Single-cluster plateaus are dropped: the tree collapsing is not a grain.
+        **An empty frame is the informative result** — it says the count changes
+        at every threshold, so this cohort has no scale the ensemble agrees on
+        and no cut here is defensible.
+
+        Parameters
+        ----------
+        distance_range : numpy.ndarray, optional
+            Candidate thresholds passed to :meth:`threshold_scan`.
+        n_points : int, default 60
+            Number of default thresholds.
+        min_cluster_size : int, default 1
+            Size floor applied at every cut.
+
+        Returns
+        -------
+        polars.DataFrame
+            Constant-cluster-count threshold bands, widest first.
+        """
+        frame = self.threshold_scan(
+            distance_range, n_points=n_points, min_cluster_size=min_cluster_size
+        )
+        return _plateau_frame(frame)
+
     def cluster_count_curve(
         self,
         distance_range: np.ndarray | None = None,
@@ -1604,6 +2259,22 @@ class SimilarityMatrix:
         singleton counts. Pass the same ``min_cluster_size`` you will cut at, or the
         curve will promise far more clusters than ``label`` gives back. See
         :meth:`threshold_scan` for the fuller picture, cell counts included.
+
+        Parameters
+        ----------
+        distance_range : numpy.ndarray, optional
+            Candidate thresholds. Defaults to an evenly spaced linkage range.
+        n_points : int, default 100
+            Number of default thresholds.
+        min_cluster_size : int, default 1
+            Size floor applied at every cut.
+
+        Returns
+        -------
+        distance_range : numpy.ndarray
+            Evaluated thresholds.
+        n_clusters : numpy.ndarray
+            Cluster count at each threshold.
         """
         if distance_range is None:
             distance_range = np.linspace(0.0, float(self.linkage[:, 2].max()), n_points)
@@ -1641,6 +2312,11 @@ class SimilarityMatrix:
         types; merges at low frequency only appeared in the runs fine enough to make
         them, and are subtypes or noise. :meth:`Clustering.merge_support` splits that
         apart by resolution when the runs are still around.
+
+        Returns
+        -------
+        polars.DataFrame
+            Linkage merges with sizes, heights, and support frequency.
         """
         link = self.linkage
         n = self.shape[0]
@@ -1842,6 +2518,11 @@ class SimilarityMatrix:
         along continuous streaks between clusters, so a UMAP coloured by this is the
         companion to one coloured by hard labels, and the two together say which
         boundaries the labels are actually confident about.
+
+        Returns
+        -------
+        numpy.ndarray
+            Per-cell maximum consensus similarity.
         """
         return self.consensus_strength()
 
@@ -1863,6 +2544,37 @@ class Clustering(SimilarityMatrix):
     ...                   order_by="soma_depth_um")        # doctest: +SKIP
     >>> labels = clus.label(distance_threshold=0.6)        # already depth-ordered
     >>> ft.attach(labels)                                  # doctest: +SKIP
+
+    Parameters
+    ----------
+    matrix : numpy.ndarray or scipy.sparse.csr_matrix, optional
+        Consensus matrix, or ``None`` when it should be derived from partitions.
+    cell_ids : numpy.ndarray
+        Cell identifiers in matrix-row order.
+    mask : str
+        Source mask name.
+    columns : tuple of str, optional
+        Features used to construct the representation.
+    space : str, optional
+        Human-readable representation label.
+    similarity : bool, default True
+        Whether ``matrix`` already contains similarities.
+    normalized : bool, default False
+        Whether similarities are already normalized to ``[0, 1]``.
+    method : {'average', 'single', 'complete'}, default 'average'
+        Hierarchical linkage method.
+    order_by : str, optional
+        Column used to order cluster identifiers.
+    order_values : numpy.ndarray, optional
+        Values of ``order_by`` in matrix-row order.
+    order_agg : {'mean', 'median'}, default 'mean'
+        Per-cluster aggregation used for ordering.
+    order_ascending : bool, default True
+        Sort direction for cluster ordering.
+    partitions : Partitions, optional
+        Individual ensemble runs.
+    params : dict, optional
+        JSON-safe provenance for the originating call.
     """
 
     def __init__(
@@ -2127,6 +2839,11 @@ class Clustering(SimilarityMatrix):
         The companion to a UMAP coloured by hard labels. See :meth:`cell_stability` for
         what the number is, and :class:`ConsensusHierarchy` for the version that also
         carries the label at every level.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cell identifiers and consensus stability.
         """
         return pl.DataFrame(
             {
@@ -2160,11 +2877,23 @@ class Clustering(SimilarityMatrix):
         score high against its nearest cluster. Requires a normalized matrix
         for the fraction-of-runs reading; on an unnormalized one the values
         are scaled by ``max_value`` instead.
+
+        Parameters
+        ----------
+        labels : LabelSet or numpy.ndarray, optional
+            Cluster definition, aligned by id when possible.
+        distance_threshold : float, optional
+            Cut height used when ``labels`` is omitted.
+        min_cluster_size : int, default 1
+            Size floor for a newly computed cut.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cell identifiers and one ``p_<cluster>`` support column per cluster.
         """
         codes = self._row_codes(labels, distance_threshold, min_cluster_size)
-        matrix = self.similarity_matrix.tolil(copy=True)
-        matrix.setdiag(0)
-        matrix = matrix.tocsr()
+        matrix = self.similarity_matrix
         names: dict[int, str] = {}
         if labels is not None and hasattr(labels, "ids"):
             names = {
@@ -2174,12 +2903,38 @@ class Clustering(SimilarityMatrix):
             }
         columns: dict[str, Any] = {"cell_id": np.asarray(self._cell_ids)}
         n = self.shape[0]
-        for value in sorted({int(v) for v in np.unique(codes) if int(v) != -1}):
+        values = sorted({int(v) for v in np.unique(codes) if int(v) != -1})
+
+        # Every cluster's column sums in one pass: right-multiplying by the
+        # one-hot cluster indicator sums each cell's row within each cluster.
+        # Keep the indicator sparse and in the matrix's own dtype -- it has one
+        # entry per assigned cell, so the product costs O(nnz) regardless of how
+        # many clusters there are, and neither operand gets copied or upcast.
+        # The obvious versions are both traps at consensus-matrix scale: a
+        # per-cluster `matrix[:, members]` slice is O(nnz) *per cluster*, and
+        # zeroing the diagonal via `tolil(copy=True)` costs ~80 bytes a nonzero
+        # against CSR's 8 -- a 10x blow-up of a matrix that is already the
+        # largest thing in the session. Subtract the diagonal afterwards instead.
+        column_of = {value: i for i, value in enumerate(values)}
+        assigned = np.flatnonzero(codes != -1)
+        indicator = csr_matrix(
+            (
+                np.ones(assigned.size, dtype=matrix.dtype),
+                (assigned, [column_of[int(v)] for v in codes[assigned]]),
+            ),
+            shape=(n, len(values)),
+        )
+        sums = np.asarray((matrix @ indicator).todense(), dtype=float)
+        diagonal = matrix.diagonal()
+
+        for value in values:
             members = np.flatnonzero(codes == value)
-            sums = np.asarray(matrix[:, members].sum(axis=1), dtype=float).ravel()
+            # A member doesn't vouch for itself: drop it from both sum and count.
+            own = sums[:, column_of[value]].copy()
+            own[members] -= diagonal[members]
             counts = np.full(n, float(members.size))
-            counts[members] -= 1.0  # a member's own row doesn't vouch for it
-            mean = sums / np.maximum(counts, 1.0) / self.max_value
+            counts[members] -= 1.0
+            mean = own / np.maximum(counts, 1.0) / self.max_value
             columns[f"p_{names.get(value, value)}"] = mean
         return pl.DataFrame(columns)
 
@@ -2327,6 +3082,237 @@ class Clustering(SimilarityMatrix):
         """The ``order_by`` values in matrix-row order. A copy."""
         return None if self._order_values is None else self._order_values.copy()
 
+    def merge_verdicts(self, *, n_bands: int = 4, **kwargs: Any) -> pl.DataFrame:
+        """:meth:`merge_support` with the reading attached, coarsest first.
+
+        Adds ``verdict`` to the per-band support table so the three cases can be
+        filtered rather than eyeballed across ``n_bands`` float columns:
+
+        ``all-band``
+            every resolution band kept the two groups together — a type.
+        ``fine-only``
+            some band did, not all — a subtype split that exists only because
+            the fine runs could make it.
+        ``unsupported``
+            no band did. A threshold above this merge is joining groups nothing
+            in the ensemble ever put together.
+
+        The supports are sampled estimates (``max_block`` cells per group), so
+        0.48 against 0.52 is a tie and the boundaries between these three
+        categories are soft.
+
+        Parameters
+        ----------
+        n_bands : int, default 4
+            Number of resolution bands used to assess support.
+        **kwargs
+            Additional arguments forwarded to :meth:`merge_support`.
+
+        Returns
+        -------
+        polars.DataFrame
+            Merge-support table with a categorical ``verdict`` column.
+        """
+        frame = self.merge_support(n_bands=n_bands, **kwargs)
+        bands = [c for c in frame.columns if c.startswith("support_band_")]
+        if not bands:
+            return frame.with_columns(pl.lit("unknown").alias("verdict"))
+        return frame.with_columns(
+            pl.when(pl.max_horizontal(bands) <= 0.5)
+            .then(pl.lit("unsupported"))
+            .when(pl.min_horizontal(bands) > 0.5)
+            .then(pl.lit("all-band"))
+            .otherwise(pl.lit("fine-only"))
+            .alias("verdict")
+        ).sort("height", descending=True)
+
+    def support_ceiling(self, *, n_bands: int = 4, **kwargs: Any) -> float | None:
+        """The lowest merge height no resolution band supports, or ``None``.
+
+        The one number to read off :meth:`merge_verdicts`: cut above it and you
+        have accepted a merge the ensemble never made. ``None`` means every
+        annotated merge is backed by at least one band, which is the all-clear.
+
+        Expect it to sit near the top of the tree in the healthy case — the root
+        merge joins everything, and no run puts every cell in one community, so
+        it is essentially always unsupported. A ceiling *well below* the tallest
+        merge is the informative case.
+
+        Parameters
+        ----------
+        n_bands : int, default 4
+            Number of resolution bands used to assess support.
+        **kwargs
+            Additional arguments forwarded to :meth:`merge_verdicts`.
+
+        Returns
+        -------
+        float or None
+            Lowest unsupported merge height, or ``None`` when all are supported.
+        """
+        frame = self.merge_verdicts(n_bands=n_bands, **kwargs)
+        unsupported = frame.filter(pl.col("verdict") == "unsupported")
+        if unsupported.height == 0:
+            return None
+        return float(unsupported.select(pl.col("height").min()).item())
+
+    def grain_coverage(self, **window: Any) -> pl.DataFrame:
+        """Which runs a ``restrict`` window would keep, and whether that is enough.
+
+        The check people skip before trusting a restriction. Seeds at one
+        setting reproduce each other, so realised cluster counts arrive in
+        knots; a window can fall between two of them, or catch only one graph
+        type — in which case the pool has stopped marginalising over graph
+        construction whatever the sweep nominally covered.
+
+        One row, with a ``verdict`` string that says which of those happened.
+
+        Parameters
+        ----------
+        **window
+            Run filters accepted by :meth:`Partitions.filter`.
+
+        Returns
+        -------
+        polars.DataFrame
+            One-row summary of retained runs and graph-setting coverage.
+
+        Raises
+        ------
+        ValueError
+            If the individual partitions were not retained.
+        """
+        if self._partitions is None:
+            raise ValueError("grain coverage needs the individual runs")
+        summary = self._partitions.summary()
+        inside = self._partitions.filter(**window).summary() if window else summary
+
+        def axes(frame: pl.DataFrame) -> int:
+            if frame.height == 0:
+                return 0
+            return int(
+                frame.select(pl.struct("graph_type", "n_neighbors").n_unique()).item()
+            )
+
+        n_in, n_axes_in, n_axes_all = inside.height, axes(inside), axes(summary)
+        return pl.DataFrame(
+            {
+                "n_runs_total": [summary.height],
+                "n_runs_in_window": [n_in],
+                "n_axes_total": [n_axes_all],
+                "n_axes_in_window": [n_axes_in],
+                "verdict": [_coverage_verdict(n_in, n_axes_in, n_axes_all)],
+            }
+        )
+
+    def suggest_cut(
+        self,
+        *,
+        min_cluster_size: int = 1,
+        n_points: int = 60,
+        n_bands: int = 4,
+        max_unassigned: float | None = None,
+        check_support: bool = True,
+    ) -> CutSuggestion:
+        """The widest plateau that survives the checks, with its evidence.
+
+        A convenience over :meth:`plateaus` and :meth:`support_ceiling`, not a
+        replacement for reading them: it applies the rule you would apply by
+        hand — widest plateau, at the size floor you intend, below the support
+        ceiling — and hands back the runner-up so the margin is visible.
+
+        ``max_unassigned`` rejects plateaus that hold their cluster count while
+        discarding more than that fraction of cells; a count that is stable only
+        because the size floor is eating the cohort is not stable structure.
+
+        Returns a :class:`CutSuggestion` whose ``threshold`` is ``None`` when
+        nothing qualifies. That is a real answer about the data, not a failure:
+        a cohort with no plateau has no scale the ensemble agrees on.
+
+        Parameters
+        ----------
+        min_cluster_size : int, default 1
+            Size floor used at every candidate cut.
+        n_points : int, default 60
+            Number of thresholds used to find plateaus.
+        n_bands : int, default 4
+            Resolution bands used for merge support.
+        max_unassigned : float, optional
+            Reject candidates dropping more than this fraction of cells.
+        check_support : bool, default True
+            Require the chosen plateau to respect the support ceiling.
+
+        Returns
+        -------
+        CutSuggestion
+            Best qualifying plateau and its visible alternatives.
+        """
+        table = self.plateaus(n_points=n_points, min_cluster_size=min_cluster_size)
+        empty = table.clear()
+        if table.height == 0:
+            return CutSuggestion(
+                None,
+                None,
+                None,
+                min_cluster_size,
+                None,
+                None,
+                None,
+                None,
+                "no plateau: the cluster count changes at every threshold, so no "
+                "cut here is defensible — revisit the grain window or the space",
+                empty,
+            )
+
+        n_cells = self.shape[0]
+        kept = table
+        if max_unassigned is not None:
+            kept = table.filter(pl.col("max_unassigned") <= max_unassigned * n_cells)
+            if kept.height == 0:
+                return CutSuggestion(
+                    None,
+                    None,
+                    None,
+                    min_cluster_size,
+                    None,
+                    None,
+                    None,
+                    None,
+                    f"every plateau discards more than {max_unassigned:.0%} of cells "
+                    f"at min_cluster_size={min_cluster_size}",
+                    table,
+                )
+
+        ceiling = self.support_ceiling(n_bands=n_bands) if check_support else None
+        if ceiling is not None:
+            below = kept.filter(pl.col("midpoint") <= ceiling)
+            if below.height:
+                kept = below
+
+        best = kept.row(0, named=True)
+        above = None if ceiling is None else bool(best["midpoint"] > ceiling)
+        reason = (
+            f"widest plateau at min_cluster_size={min_cluster_size}: "
+            f"{best['n_clusters']} clusters across {best['width']:.3f} of threshold"
+        )
+        if above:
+            reason += (
+                f" — but it sits above the support ceiling ({ceiling:.3f}), so the "
+                f"merges it accepts are ones no resolution band backs"
+            )
+        return CutSuggestion(
+            threshold=float(best["midpoint"]),
+            n_clusters=int(best["n_clusters"]),
+            width=float(best["width"]),
+            min_cluster_size=min_cluster_size,
+            n_unassigned=int(best["max_unassigned"]),
+            largest_cluster=int(best["largest_cluster"]),
+            support_ceiling=ceiling,
+            above_ceiling=above,
+            reason=reason,
+            alternatives=kept.head(6),
+        )
+
     def label(
         self,
         *,
@@ -2334,7 +3320,7 @@ class Clustering(SimilarityMatrix):
         min_cluster_size: int = 1,
         name: str = "label",
         order: bool = True,
-    ) -> Any:
+    ) -> "LabelSet":
         """Cut the dendrogram at ``distance_threshold`` into a ``LabelSet``.
 
         The mask-safe counterpart of ``FeatureTable.label``: cell ids and mask come
@@ -2346,6 +3332,22 @@ class Clustering(SimilarityMatrix):
         column's per-cluster aggregate — cluster 0 is the shallowest, and every cut of
         this clustering numbers its clusters the same way, so two thresholds stay
         comparable. Pass ``order=False`` for the raw dendrogram order.
+
+        Parameters
+        ----------
+        distance_threshold : float
+            Maximum linkage distance within a cluster.
+        min_cluster_size : int, default 1
+            Leave smaller clusters unassigned.
+        name : str, default 'label'
+            Name of the returned label set.
+        order : bool, default True
+            Apply the recorded ``order_by`` ordering when available.
+
+        Returns
+        -------
+        LabelSet
+            Cluster labels aligned to this clustering's cell identifiers.
         """
         from cellpax.labels import LabelSet
 
@@ -2400,6 +3402,20 @@ def neighborhood_self_predictions(
     leave-one-out view of local label agreement.
 
     Returns an ``(n_rows, n_neighbors)`` array of neighbor label values.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_rows, n_features)`` coordinate matrix.
+    labels : numpy.ndarray
+        Label value for each row.
+    n_neighbors : int, default 20
+        Number of self-excluded neighbours to query.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_rows, n_neighbors)`` neighbour-label matrix.
     """
     _, indices = _neighbor_arrays(features, n_neighbors, "minkowski")
     return np.asarray(labels)[indices]
@@ -2416,6 +3432,20 @@ def neighborhood_purity(
     for how well a clustering's labels respect local structure in feature
     space — 1.0 means every one of a cell's ``n_neighbors`` nearest other
     cells carries the same label, 0.0 means none do.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_rows, n_features)`` coordinate matrix.
+    labels : numpy.ndarray
+        Label value for each row.
+    n_neighbors : int, default 20
+        Number of self-excluded neighbours to compare.
+
+    Returns
+    -------
+    numpy.ndarray
+        Per-row fraction of neighbours sharing its label.
     """
     labels = np.asarray(labels)
     neighbor_labels = neighborhood_self_predictions(

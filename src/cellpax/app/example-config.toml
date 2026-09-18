@@ -1,0 +1,72 @@
+# Example config for the cellpax labeling app.
+#
+#   poe app path/to/this-file.toml
+#
+# Copy it, fill in your own paths, and keep it outside the repo. Every field is
+# optional except folio + table_name; an unset field disables the feature that
+# needs it rather than failing when you click something.
+
+# -- the analysis ------------------------------------------------------------
+
+folio = "~/data/my-folio"          # relative paths resolve against this file
+table_name = "v1_features"         # the saved FeatureTable inside the folio
+
+columns = "analysis"               # feature collection every level clusters on
+order_by = "soma_depth_um"         # keeps cluster ids comparable across cuts
+root_mask = "exc_v1_core"          # where the descent starts
+
+# Where decisions are appended. Defaults to <folio>/<table_name>.ledger.jsonl.
+# This file is the source of truth: replaying it rebuilds the FeatureTable, and
+# /api/ledger/script renders it as a standalone cellpax script.
+# ledger_path = "~/data/v1-descent.ledger.jsonl"
+
+host = "127.0.0.1"
+port = 8765
+
+# Cells above which a sweep asks before allocating. The condensed distance
+# vector is n(n-1)/2 float64 and scipy works on a copy, so 25_000 is roughly the
+# 5 GB peak line: 25k -> 2.5 GB + 2.5 GB. At 34.6k it is 4.8 + 4.8.
+linkage_warn_cells = 25000
+
+# -- the sweep the UI offers by default --------------------------------------
+#
+# Deliberately dense in resolution and thin in seeds. The kNN graph is built once
+# per (graph_type, n_neighbors) and every resolution x seed reruns Leiden on that
+# cached graph, so grid points are nearly free while each graph type or
+# neighbourhood size costs a graph build. Seeds at one setting largely reproduce
+# each other, so they add runs without adding coverage of *realised* cluster
+# count — which is exactly what restrict(n_clusters_min=..., max=...) slices on.
+
+[sweep]
+n_neighbors = [15, 30, 60]
+graph_type = ["knn", "snn_jaccard", "umap_fuzzy"]
+resolution_min = 0.02              # geomspaced: linear undersamples the low end,
+resolution_max = 2.0               # where the coarse plateau lives
+resolution_points = 30
+n_times = 3
+
+# -- neuroglancer ------------------------------------------------------------
+#
+# Links open in a new tab. Without segmentation_source the button is hidden
+# rather than broken.
+
+[neuroglancer]
+viewer_url = "https://neuroglancer-demo.appspot.com"
+image_source = "precomputed://gs://your-bucket/em"
+segmentation_source = "graphene://https://your-cave/segmentation/table/your_table"
+voxel_size = [4.0, 4.0, 40.0]
+root_id_column = "root_id"         # distinct from the table's own cell_id
+# position_columns = ["soma_x", "soma_y", "soma_z"]   # centres the view
+max_segments = 200                 # a state with 30k segments will not load
+
+# -- anatomy -----------------------------------------------------------------
+#
+# Local disk is checked first because it is instant; CAVE is the fallback, and
+# anything fetched is written back into skeleton_dir when that is writable.
+
+[anatomy]
+skeleton_dir = "~/data/skeletons"
+skeleton_pattern = "{root_id}.npz"  # ".swc" files are read too
+datastack = "minnie65_public"       # unset disables on-demand fetch
+# server_address = "https://global.daf-apis.com"
+max_thumbnails = 24

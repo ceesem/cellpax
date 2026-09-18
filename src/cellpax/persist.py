@@ -17,6 +17,7 @@ description (cell/feature counts, mask, linkage method, …) so a folio browsed 
     <name>/partitions/<c>        the individual Leiden runs behind a consensus
     <name>/settings/<c>          which setting each of those runs came from
     <name>/space/<key>           a frozen scaling + PCA, as explicit parameters
+    <name>/dataset_scaler/<i>    a joined table's per-dataset scaler, as parameters
     <name>/clustering/<c>        consensus matrix as (row, col, value) triplets (v1)
 
 Version 2 stores the *runs* rather than the consensus matrix they imply. The matrix is
@@ -37,9 +38,12 @@ import warnings
 import zlib
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from cellpax.featuretable import FeatureTable
 import polars as pl
 from datafolio import DataFolio
 from scipy.sparse import coo_matrix, csr_matrix
@@ -102,6 +106,17 @@ def _factory_from_tag(tag: str | dict[str, Any]) -> Any:
     from cellpax.featuretable import _default_scaler_factory
 
     if isinstance(tag, dict):
+        if tag.get("kind") == "quantile":
+            from cellpax.clustering import quantile_scaler_factory
+
+            clip = tag.get("clip")
+            return quantile_scaler_factory(
+                clip=None if clip is None else (float(clip[0]), float(clip[1])),
+                output_distribution=tag.get("output_distribution", "normal"),
+                n_quantiles=int(tag.get("n_quantiles", 1000)),
+                subsample=int(tag.get("subsample", 100_000)),
+                random_state=int(tag.get("random_state", 0)),
+            )
         if tag.get("kind") != "clipped":
             raise ValueError(
                 f"unknown scaler configuration {tag!r} in the manifest; this analysis "
@@ -287,9 +302,35 @@ def _frame_arrays(frame: pl.DataFrame) -> dict[str, np.ndarray]:
 
 
 def save_feature_table(
-    table: Any, folio: DataFolio | str | Path, name: str, *, overwrite: bool = True
+    table: "FeatureTable",
+    folio: DataFolio | str | Path,
+    name: str,
+    *,
+    overwrite: bool = True,
 ) -> None:
-    """Persist a FeatureTable under the ``name`` namespace of a folio."""
+    """Persist a FeatureTable under the ``name`` namespace of a folio.
+
+    Parameters
+    ----------
+    table : FeatureTable
+        Analysis to persist.
+    folio : DataFolio or path-like
+        Destination folio object or directory.
+    name : str
+        Namespace used for every stored analysis item.
+    overwrite : bool, default True
+        Replace an existing analysis with the same name.
+
+    Returns
+    -------
+    None
+        The analysis is written in place.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` contains ``/``.
+    """
     folio = _folio(folio)
     if "/" in name:
         raise ValueError("analysis name cannot contain '/'")
@@ -297,9 +338,48 @@ def save_feature_table(
         _save_feature_table(table, folio, name, overwrite=overwrite)
 
 
+def _dataset_records(table: Any) -> tuple[dict[str, Any] | None, list[pl.DataFrame]]:
+    """A joined table's per-dataset scalers as manifest records plus array frames.
+
+    Built before anything is written, so a scaler that cannot be recorded fails the save
+    up front instead of leaving a half-written analysis behind.
+    """
+    from cellpax.space import _scaler_records
+
+    join = getattr(table, "_join", None)
+    if join is None:
+        return None, []
+    scalers: list[dict[str, Any]] = []
+    frames: list[pl.DataFrame] = []
+    for index, ((dataset, stratum), fitted) in enumerate(join.scalers.items()):
+        try:
+            meta, arrays = _scaler_records(fitted)
+        except TypeError as error:
+            where = "" if stratum is None else f", stratum {stratum!r}"
+            raise TypeError(
+                f"cannot save the per-dataset scaler of dataset {dataset!r}{where}: "
+                f"{error}. Nothing was written."
+            ) from error
+        scalers.append(
+            {"dataset": dataset, "stratum": stratum, "item": index, "scaler": meta}
+        )
+        frames.append(_arrays_frame(arrays))
+    record = {
+        "column": join.column,
+        "source_id_column": join.source_id_column,
+        "stratum_column": join.stratum_column,
+        "reference": join.reference,
+        "features": list(join.features),
+        "entries": [dict(entry) for entry in join.entries],
+        "scalers": scalers,
+    }
+    return record, frames
+
+
 def _save_feature_table(
     table: Any, folio: DataFolio, name: str, *, overwrite: bool
 ) -> None:
+    datasets, dataset_frames = _dataset_records(table)
     n_masks = sum(1 for c in table._df.columns if c.startswith("_mask_"))
     folio.add(
         f"{name}/table",
@@ -407,6 +487,20 @@ def _save_feature_table(
         space_meta["weight_key"] = weight_key
         spaces[slug] = space_meta
 
+    for record, frame in zip(datasets["scalers"] if datasets else [], dataset_frames):
+        stratum = (
+            "" if record["stratum"] is None else f", stratum {record['stratum']!r}"
+        )
+        folio.add(
+            f"{name}/dataset_scaler/{record['item']}",
+            frame,
+            description=(
+                f"{name!r} per-dataset scaler for dataset {record['dataset']!r}"
+                f"{stratum}: the fit join_datasets harmonized with"
+            ),
+            overwrite=overwrite,
+        )
+
     manifest = {
         "kind": _KIND,
         "version": _VERSION,
@@ -438,6 +532,8 @@ def _save_feature_table(
         "spaces": spaces,
         "labels": _labels_manifest(table),
     }
+    if datasets is not None:
+        manifest["datasets"] = datasets
     folio.add(
         f"{name}/manifest",
         manifest,
@@ -452,7 +548,7 @@ def _save_feature_table(
 
 def load_feature_table(
     folio: DataFolio | str | Path, name: str, *, scaler_factory: Any = None
-) -> Any:
+) -> "FeatureTable":
     """Load a FeatureTable previously saved under ``name``.
 
     ``scaler_factory`` overrides the saved scaler rule at load time — the way
@@ -462,6 +558,20 @@ def load_feature_table(
     (restored embeddings and clusterings) are dropped with a warning rather
     than served against geometry that no longer exists; the folio itself is
     untouched until you save over it.
+
+    Parameters
+    ----------
+    folio : DataFolio or path-like
+        Source folio object or directory.
+    name : str
+        Stored analysis namespace.
+    scaler_factory : callable, optional
+        Replacement zero-argument scaler factory.
+
+    Returns
+    -------
+    FeatureTable
+        Reconstructed analysis, including persisted labels and fitted spaces.
     """
     folio = _folio(folio)
     with _pinned(folio):
@@ -492,6 +602,11 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
         for mask, ename in manifest.get("embeddings", [])
     ]
     frame_paths += [f"{name}/space/{slug}" for slug in manifest.get("spaces", {})]
+    datasets = manifest.get("datasets")
+    if datasets is not None:
+        frame_paths += [
+            f"{name}/dataset_scaler/{record['item']}" for record in datasets["scalers"]
+        ]
     for cname, meta in manifest.get("clusterings", {}).items():
         if meta.get("cell_ids_stored"):
             frame_paths.append(f"{name}/cellids/{cname}")
@@ -556,6 +671,26 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
             space_meta.get("weight_key"),
         )
         ft._space_cache[key] = space
+
+    if datasets is not None:
+        from cellpax.featuretable import _DatasetJoin
+        from cellpax.space import _scaler_from_records
+
+        ft._join = _DatasetJoin(
+            column=datasets["column"],
+            source_id_column=datasets["source_id_column"],
+            stratum_column=datasets.get("stratum_column"),
+            reference=datasets["reference"],
+            features=list(datasets["features"]),
+            entries=[dict(entry) for entry in datasets["entries"]],
+            scalers={
+                (record["dataset"], record["stratum"]): _scaler_from_records(
+                    record["scaler"],
+                    _frame_arrays(frames[f"{name}/dataset_scaler/{record['item']}"]),
+                )
+                for record in datasets["scalers"]
+            },
+        )
 
     for cname, meta in manifest["clusterings"].items():
         partitions = None
@@ -626,7 +761,18 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
 
 
 def list_analyses(folio: DataFolio | str | Path) -> list[str]:
-    """List CellPax analysis names stored in a folio (ignoring user content)."""
+    """List CellPax analysis names stored in a folio, ignoring user content.
+
+    Parameters
+    ----------
+    folio : DataFolio or path-like
+        Folio object or directory to inspect.
+
+    Returns
+    -------
+    list of str
+        CellPax analysis namespaces in storage order.
+    """
     folio = _folio(folio)
     with _pinned(folio):
         return _list_analyses(folio)

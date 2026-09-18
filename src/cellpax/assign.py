@@ -48,12 +48,20 @@ verdicts are summaries.
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import polars as pl
 
-__all__ = ["Assignment", "conditional_prediction_set", "weighted_p_values"]
+if TYPE_CHECKING:
+    from cellpax.labels import LabelSet
+
+__all__ = [
+    "Assignment",
+    "conditional_prediction_set",
+    "crossfit_assessment",
+    "weighted_p_values",
+]
 
 
 def density_ratio_weights(
@@ -124,6 +132,27 @@ def weighted_p_values(
     ``test_scores`` is ``(n_test, n_classes)`` (each cell scored against every
     candidate class). Composes Mondrian-by-class with the shift weighting, as
     in group-weighted conformal prediction.
+
+    Parameters
+    ----------
+    calibration_scores : numpy.ndarray
+        One nonconformity score per calibration cell, evaluated against its
+        observed class.
+    calibration_codes : numpy.ndarray
+        Integer class code for each calibration cell.
+    test_scores : numpy.ndarray
+        ``(n_test, n_classes)`` candidate-class nonconformity scores.
+    class_ids : numpy.ndarray
+        Class identifiers in ``test_scores`` column order.
+    calibration_weights : numpy.ndarray
+        Likelihood-ratio weight for each calibration cell.
+    test_weights : numpy.ndarray
+        Likelihood-ratio weight for each test cell.
+
+    Returns
+    -------
+    numpy.ndarray
+        Weighted conformal p-values with the same shape as ``test_scores``.
     """
     calibration_scores = np.asarray(calibration_scores, dtype=float)
     test_scores = np.asarray(test_scores, dtype=float)
@@ -139,6 +168,163 @@ def weighted_p_values(
         numerator = (at_least * weights_k[None, :]).sum(axis=1) + test_weights
         out[:, j] = numerator / (total_k + test_weights)
     return out
+
+
+def crossfit_assessment(
+    data: np.ndarray,
+    codes: np.ndarray,
+    *,
+    classifier: Any,
+    folds: int = 5,
+    mondrian: bool = True,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray, dict[int, int]]:
+    """Out-of-fold conformal p-values: the survey mode behind ``assess_labels``.
+
+    ``assign`` splits the reference once, so the ~75% of reference cells the
+    classifier trained on are scored by a model that memorised them — their
+    p-values read flatteringly high. Invisible when mapping outward; fatal
+    when the question is the reference itself. Here the reference is split
+    into ``folds`` stratified folds and each reference cell is scored by the
+    classifier that never saw it, then ranked against the *pooled*
+    out-of-fold scores of the candidate class, itself excluded
+    (cross-conformal: Vovk 2015). Non-reference cells are ranked fold by
+    fold against the same pool (CV+: Barber, Candès, Ramdas & Tibshirani
+    2021) — every model gets a vote, so the split-choice variance of a
+    single calibration draw is averaged away too.
+
+    The price is stated up front: pooling scores across folds trades split
+    conformal's exact ``1 - alpha`` for a worst-case ``1 - 2*alpha``. With a
+    learner that treats folds symmetrically the gap is invisible in
+    practice, and because every reference cell's set is now out-of-fold,
+    ``Assignment.coverage()`` becomes a genuine cross-validated check of it
+    rather than a partial resubstitution.
+
+    ``codes`` carries the reference labels with ``-1`` for cells to score
+    but not calibrate on. Classes with fewer than ``folds`` members cannot
+    put a cell in every fold and are excluded with a warning. Returns
+    ``(p_values, probabilities, class_ids, calibration_counts)`` —
+    probabilities are the sigmoid-calibrated extras ``assign`` also carries
+    (out-of-fold for reference cells, fold-averaged elsewhere), or ``None``
+    when calibration fails.
+    """
+    from sklearn.base import clone
+
+    data = np.asarray(data, dtype=float)
+    codes = np.asarray(codes).copy()
+    n = data.shape[0]
+    if codes.shape[0] != n:
+        raise ValueError("codes must have one entry per row of data")
+    if folds < 2:
+        raise ValueError(f"folds must be at least 2, got {folds}")
+
+    kept: list[int] = []
+    for class_id in np.unique(codes[codes != -1]):
+        members = np.flatnonzero(codes == class_id)
+        if members.size < folds:
+            warnings.warn(
+                f"class id {int(class_id)} has {members.size} reference "
+                f"cell(s); crossfit assessment needs one per fold "
+                f"(folds={folds}) and it is excluded"
+            )
+            codes[members] = -1
+            continue
+        kept.append(int(class_id))
+    if len(kept) < 2:
+        raise ValueError(
+            "crossfit assessment needs at least two classes with one "
+            "reference cell per fold; lower folds= or coarsen the labels"
+        )
+    class_ids = np.asarray(sorted(kept), dtype=np.int64)
+    column_of = {int(k): j for j, k in enumerate(class_ids)}
+
+    is_reference = codes != -1
+    rng = np.random.default_rng(seed)
+    fold_of = np.full(n, -1, dtype=np.int64)
+    for class_id in class_ids:
+        members = rng.permutation(np.flatnonzero(codes == class_id))
+        fold_of[members] = np.arange(members.size) % folds
+
+    # one model per fold, trained on the other folds' reference cells; every
+    # cell is scored by every model, and which scores are legitimate for a
+    # given cell is decided below (a reference cell's only untainted model is
+    # the one that held its fold out)
+    scores = np.empty((folds, n, class_ids.size), dtype=float)
+    models: list[Any] = []
+    for j in range(folds):
+        train = is_reference & (fold_of != j)
+        model = clone(classifier)
+        model.fit(data[train], codes[train])
+        order = [int(np.flatnonzero(model.classes_ == k)[0]) for k in class_ids]
+        scores[j] = 1.0 - model.predict_proba(data)[:, order]
+        models.append(model)
+
+    ref = np.flatnonzero(is_reference)
+    nonref = np.flatnonzero(~is_reference)
+    oof = scores[fold_of[ref], ref, :]  # each reference cell under its held-out model
+    ref_class = codes[ref]
+    own_column = np.array([column_of[int(c)] for c in ref_class])
+    calibration_scores = oof[np.arange(ref.size), own_column]
+
+    p_values = np.empty((n, class_ids.size), dtype=float)
+    ref_folds = fold_of[ref]
+    for j_col, class_id in enumerate(class_ids):
+        in_group = ref_class == class_id if mondrian else np.ones(ref.size, dtype=bool)
+        group_scores = calibration_scores[in_group]
+        group_folds = ref_folds[in_group]
+        m = group_scores.size
+        sorted_group = np.sort(group_scores)
+
+        # reference cells: one legitimate score, ranked against the pooled
+        # group minus themselves (a cell must never calibrate against itself)
+        t_ref = oof[:, j_col]
+        count = m - np.searchsorted(sorted_group, t_ref, side="left")
+        self_counted = in_group & (calibration_scores >= t_ref)
+        count = count - self_counted.astype(np.int64)
+        denominator = m - in_group.astype(np.int64) + 1
+        p_values[ref, j_col] = (count + 1) / denominator
+
+        # non-reference cells: fold-wise — each fold's model scores the cell
+        # and that fold's calibration cells judge the score
+        if nonref.size:
+            total = np.zeros(nonref.size, dtype=np.int64)
+            for j in range(folds):
+                members = group_scores[group_folds == j]
+                if members.size == 0:
+                    continue
+                sorted_members = np.sort(members)
+                t = scores[j, nonref, j_col]
+                total += members.size - np.searchsorted(sorted_members, t, side="left")
+            p_values[nonref, j_col] = (total + 1) / (m + 1)
+
+    probabilities: np.ndarray | None = None
+    try:
+        from sklearn.calibration import CalibratedClassifierCV
+        from sklearn.frozen import FrozenEstimator
+
+        probabilities = np.zeros((n, class_ids.size), dtype=float)
+        for j in range(folds):
+            held_out = is_reference & (fold_of == j)
+            calibrated = CalibratedClassifierCV(
+                FrozenEstimator(models[j]), method="sigmoid"
+            )
+            calibrated.fit(data[held_out], codes[held_out])
+            order = [
+                int(np.flatnonzero(calibrated.classes_ == k)[0]) for k in class_ids
+            ]
+            proba = calibrated.predict_proba(data)[:, order]
+            probabilities[held_out] = proba[held_out]
+            if nonref.size:
+                probabilities[nonref] += proba[nonref] / folds
+    except Exception as error:  # noqa: BLE001 — probabilities are optional
+        warnings.warn(
+            f"probability calibration failed ({error}); the Assignment "
+            f"carries conformal p-values only"
+        )
+        probabilities = None
+
+    counts = {int(k): int((codes == k).sum()) for k in class_ids}
+    return p_values, probabilities, class_ids, counts
 
 
 def conditional_prediction_set(
@@ -166,6 +352,36 @@ def conditional_prediction_set(
     p-value matrix), and the runtime is minutes rather than milliseconds at
     tens of thousands of cells. Returns a boolean ``(n_test, n_classes)`` set
     matrix over the classifier's classes.
+
+    Parameters
+    ----------
+    classifier : object
+        Fitted classifier exposing ``classes_``, ``predict``, and
+        ``predict_proba``.
+    data_calibration : numpy.ndarray
+        Calibration feature matrix.
+    codes_calibration : numpy.ndarray
+        Observed calibration class codes.
+    data_test : numpy.ndarray
+        Test feature matrix.
+    covariates_calibration : numpy.ndarray
+        Calibration covariates used by the conditional feature map.
+    covariates_test : numpy.ndarray
+        Test covariates, row-aligned with ``data_test``.
+    alpha : float, default 0.1
+        Miscoverage level solved for each test cell.
+    seed : int, default 0
+        Random seed passed to MAPIE.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean ``(n_test, n_classes)`` prediction-set matrix.
+
+    Raises
+    ------
+    ImportError
+        If the optional ``conditional`` dependencies are not installed.
     """
     try:
         from mapie.conditional_conformal_prediction import (
@@ -223,6 +439,27 @@ class Assignment:
     Built by ``FeatureTable.assign``. The p-value matrix is the evidence;
     sets, hard labels, and coverage claims are derived from it at whatever
     ``alpha`` the reading calls for.
+
+    Parameters
+    ----------
+    cell_ids : numpy.ndarray
+        Target cell identifiers in matrix-row order.
+    p_values : numpy.ndarray
+        ``(n_cells, n_classes)`` conformal p-value matrix.
+    probabilities : numpy.ndarray, optional
+        Calibrated class probabilities aligned with ``p_values``.
+    class_ids : numpy.ndarray
+        Reference class identifiers in matrix-column order.
+    reference : LabelSet
+        Curated labels used for training and calibration.
+    calibration_counts : dict of int to int
+        Calibration-cell count for each class.
+    name : str, default 'assign'
+        Result name used in generated columns.
+    mask : str, optional
+        Target mask name.
+    params : dict, optional
+        Provenance for the originating call.
     """
 
     def __init__(
@@ -232,7 +469,7 @@ class Assignment:
         probabilities: np.ndarray | None,
         *,
         class_ids: np.ndarray,
-        reference: Any,
+        reference: "LabelSet",
         calibration_counts: dict[int, int],
         name: str = "assign",
         mask: str | None = None,
@@ -260,6 +497,7 @@ class Assignment:
 
     @property
     def cell_ids(self) -> np.ndarray:
+        """Target cell identifiers in p-value row order. A copy."""
         return self._cell_ids.copy()
 
     @property
@@ -291,7 +529,7 @@ class Assignment:
         return dict(self._calibration_counts)
 
     @property
-    def reference(self) -> Any:
+    def reference(self) -> "LabelSet":
         """The curated ``LabelSet`` the assignment was calibrated against."""
         return self._reference
 
@@ -308,6 +546,11 @@ class Assignment:
         guarantee behind these numbers assumes exchangeability, which is
         precisely what a truncated or foreign cell violates. Cross-check with
         ``score_cells`` before reading low plausibility as novelty.
+
+        Returns
+        -------
+        numpy.ndarray
+            Maximum p-value for each cell.
         """
         return self._p_values.max(axis=1)
 
@@ -339,21 +582,54 @@ class Assignment:
         Under exchangeability, each cell's true label is inside its set with
         probability at least ``1 - alpha``, per class (Mondrian). Row sums are
         the uncertainty readout; see ``set_sizes``.
+
+        Parameters
+        ----------
+        alpha : float, default 0.1
+            Miscoverage level in the open interval ``(0, 1)``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean ``(n_cells, n_classes)`` membership matrix.
         """
         self._check_alpha(alpha)
         return self._p_values > alpha
 
     def set_sizes(self, alpha: float = 0.1) -> np.ndarray:
-        """Per-cell prediction-set size at ``alpha`` — the uncertainty readout."""
+        """Compute the per-cell prediction-set size.
+
+        Parameters
+        ----------
+        alpha : float, default 0.1
+            Miscoverage level passed to :meth:`prediction_set`.
+
+        Returns
+        -------
+        numpy.ndarray
+            Number of plausible classes for each cell.
+        """
         return self.prediction_set(alpha).sum(axis=1)
 
-    def to_labelset(self, alpha: float = 0.1, *, name: str | None = None) -> Any:
+    def to_labelset(self, alpha: float = 0.1, *, name: str | None = None) -> "LabelSet":
         """The conformal-honest hard labelling at ``alpha``.
 
         Singleton sets keep their label (names and colors from the
         reference); multi-label and empty sets stay unassigned — ambiguity
         and no-fit are both reasons to abstain, not to guess. The trade is
         explicit: a lower ``alpha`` covers more but abstains more.
+
+        Parameters
+        ----------
+        alpha : float, default 0.1
+            Miscoverage level used to form prediction sets.
+        name : str, optional
+            Name for the returned labels.
+
+        Returns
+        -------
+        LabelSet
+            Singleton assignments with ambiguous or empty sets unassigned.
         """
         sets = self.prediction_set(alpha)
         sizes = sets.sum(axis=1)
@@ -374,6 +650,18 @@ class Assignment:
 
         With ``alpha``, adds ``set_size`` and ``assigned`` (the singleton's
         name, null otherwise) — the read-time verdict alongside the evidence.
+
+        Parameters
+        ----------
+        alpha : float, optional
+            Include prediction-set verdict columns at this level.
+        id_column : str, default 'cell_id'
+            Name of the identifier column.
+
+        Returns
+        -------
+        polars.DataFrame
+            One row per cell with evidence and optional verdict columns.
         """
         names = self.class_names
         data: dict[str, Any] = {id_column: self._cell_ids}
@@ -405,6 +693,16 @@ class Assignment:
         does the prediction set contain it? Read against ``1 - alpha`` and
         ``calibration_counts`` — a small class's empirical coverage is noisy
         in exactly the way its guarantee is weak.
+
+        Parameters
+        ----------
+        alpha : float, default 0.1
+            Miscoverage level used to form prediction sets.
+
+        Returns
+        -------
+        polars.DataFrame
+            Per-class reference and calibration counts plus empirical coverage.
         """
         truth = self._reference.codes_for(self._cell_ids)
         sets = self.prediction_set(alpha)

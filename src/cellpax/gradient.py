@@ -35,29 +35,62 @@ Two guards are built in rather than documented as advice:
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import polars as pl
 
-__all__ = ["Gradient", "fit_principal_curve", "twonn_dimension"]
+if TYPE_CHECKING:
+    from cellpax.labels import LabelSet
+
+__all__ = ["Gradient", "fit_principal_curve", "twonn_dimension", "twonn_profile"]
 
 
-def twonn_dimension(features: np.ndarray, *, decimation_levels: int = 4) -> float:
-    """TwoNN intrinsic-dimension estimate (Facco et al. 2017), decimated.
+def twonn_profile(
+    features: np.ndarray, *, decimation_levels: int = 4
+) -> list[dict[str, float]]:
+    """TwoNN intrinsic dimension at each decimation scale, not just the minimum.
 
-    Uses only each point's two nearest-neighbour distances: under a locally
-    uniform density the ratios ``mu = r2/r1`` are Pareto with shape equal to
-    the intrinsic dimension, so ``d = n / sum(log(mu))``. At full sampling the
-    nearest-neighbour scale sits *inside the noise*, where a noisy curve is
-    genuinely ambient-dimensional — so the estimate is repeated on random
-    decimations (n, n/2, n/4, …), which probe progressively larger scales,
-    and the **minimum** across levels is returned: the cleanest-manifold
-    reading, which is the right side to err on for a gate (a true ball stays
-    high at every scale, a noisy curve drops toward 1 once the scale clears
-    the noise). For real scale-dependent analysis (GRIDE) use the optional
-    ``dadapy`` package; this exists to gate ``parametrize``, not to settle
-    dimensionality questions.
+    The estimate every level computes on the way to :func:`twonn_dimension`'s
+    single number, kept instead of discarded. It is the more informative
+    object: dimension *as a function of scale* is what actually distinguishes a
+    manifold from noise, and the scalar collapses exactly that.
+
+    Read the shape, not any one value:
+
+    * **flat and low (≈1)** — a curve at every scale, and ``parametrize`` is
+      the right tool.
+    * **flat and high** — genuinely that many dimensions. A ball stays a ball
+      however far out you look; a 1-D coordinate through it is an artifact.
+    * **falling with scale** — noise-dominated at small separations. The
+      nearest-neighbour distance at full sampling sits *inside* the noise,
+      where even a clean curve reads as ambient-dimensional; once the
+      subsample thins enough for the scale to clear it, the estimate drops
+      toward the real dimension.
+    * **rising with scale** — curvature. The structure is locally 1-D but
+      folds, so a longer ruler sees more dimensions than a short one.
+
+    Each row is one decimation level: ``n`` cells sampled, the mean ``dimension``
+    over the draws at that level, and ``spread`` (the standard deviation across
+    draws, ``0.0`` at full sampling where there is only one). A wide spread is
+    its own finding — it means the estimate is not determined by the data at
+    that scale.
+
+    This is a decimation proxy, not a scale-dependent estimator. For the real
+    thing (GRIDE) use the optional ``dadapy`` package.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)`` coordinate matrix.
+    decimation_levels : int, default 4
+        Number of successively halved sample sizes to evaluate.
+
+    Returns
+    -------
+    list of dict
+        One record per scale containing ``n``, ``dimension``, ``spread``, and
+        ``draws``.
     """
     from sklearn.neighbors import NearestNeighbors
 
@@ -73,7 +106,7 @@ def twonn_dimension(features: np.ndarray, *, decimation_levels: int = 4) -> floa
         keep = np.isfinite(ratios)
         return float(keep.sum() / np.log(ratios[keep]).sum())
 
-    estimates = []
+    profile: list[dict[str, float]] = []
     n = features.shape[0]
     for level in range(decimation_levels):
         size = n // (2**level)
@@ -86,8 +119,54 @@ def twonn_dimension(features: np.ndarray, *, decimation_levels: int = 4) -> floa
                 np.arange(n) if size == n else rng.choice(n, size=size, replace=False)
             )
             level_values.append(_estimate(features[rows]))
-        estimates.append(float(np.mean(level_values)))
-    return min(estimates)
+        profile.append(
+            {
+                "n": float(size),
+                "dimension": float(np.mean(level_values)),
+                "spread": float(np.std(level_values)) if draws > 1 else 0.0,
+                "draws": float(draws),
+            }
+        )
+    return profile
+
+
+def twonn_dimension(features: np.ndarray, *, decimation_levels: int = 4) -> float:
+    """TwoNN intrinsic-dimension estimate (Facco et al. 2017), decimated.
+
+    Uses only each point's two nearest-neighbour distances: under a locally
+    uniform density the ratios ``mu = r2/r1`` are Pareto with shape equal to
+    the intrinsic dimension, so ``d = n / sum(log(mu))``. At full sampling the
+    nearest-neighbour scale sits *inside the noise*, where a noisy curve is
+    genuinely ambient-dimensional — so the estimate is repeated on random
+    decimations (n, n/2, n/4, …), which probe progressively larger scales,
+    and the **minimum** across levels is returned: the cleanest-manifold
+    reading, which is the right side to err on for a gate (a true ball stays
+    high at every scale, a noisy curve drops toward 1 once the scale clears
+    the noise).
+
+    Because it takes the minimum it under-reports, so a gate built on it fires
+    rarely — and when it does fire that is strong evidence rather than a
+    borderline call. See :func:`twonn_profile` for the per-scale estimates this
+    collapses, which are the more informative read.
+
+    For real scale-dependent analysis (GRIDE) use the optional ``dadapy``
+    package; this exists to gate ``parametrize``, not to settle dimensionality
+    questions.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)`` coordinate matrix.
+    decimation_levels : int, default 4
+        Number of scales considered by :func:`twonn_profile`.
+
+    Returns
+    -------
+    float
+        Minimum TwoNN dimension estimate across the evaluated scales.
+    """
+    profile = twonn_profile(features, decimation_levels=decimation_levels)
+    return min(level["dimension"] for level in profile)
 
 
 def _binned_smoother(
@@ -129,6 +208,31 @@ def fit_principal_curve(
     window as a fraction of the coordinate range — the bias/variance knob:
     small spans follow wiggles (and noise), large spans straighten the curve
     back toward the principal component.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_dimensions)`` feature-space coordinates.
+    span : float, default 0.1
+        Smoothing-window width as a fraction of the coordinate range.
+    n_samples : int, default 200
+        Number of points in the fitted curve polyline.
+    max_iter : int, default 30
+        Maximum smooth-and-project iterations.
+    tol : float, default 1e-4
+        Relative convergence tolerance for projection error.
+
+    Returns
+    -------
+    arc_lengths : numpy.ndarray
+        Per-cell normalized position in ``[0, 1]``.
+    curve_samples : numpy.ndarray
+        ``(n_samples, n_dimensions)`` fitted polyline.
+
+    Raises
+    ------
+    ValueError
+        If fewer than ten rows are supplied or ``features`` is not two-dimensional.
     """
     features = np.asarray(features, dtype=float)
     if features.ndim != 2 or features.shape[0] < 10:
@@ -171,6 +275,27 @@ class Gradient:
     intervals of it back into a ``LabelSet`` whose names are declared cuts of
     a persisted coordinate — revisable and honest — rather than modes the
     data never had. ``ft.attach(gradient)`` writes it as a float column.
+
+    Parameters
+    ----------
+    cell_ids : numpy.ndarray
+        Cell identifiers in coordinate order.
+    coordinate : numpy.ndarray
+        Normalized arc length for each cell.
+    name : str, default 'gradient'
+        Column name used when attaching the result.
+    mask : str, optional
+        Source mask name.
+    method : str, default 'principal_curve'
+        Fitting method recorded for provenance.
+    params : dict, optional
+        Parameters of the originating call.
+    loadings : polars.DataFrame, optional
+        Per-feature association with the coordinate.
+    intrinsic_dimension : float, optional
+        Scalar TwoNN dimensionality summary.
+    dimension_profile : list of dict, optional
+        TwoNN estimate at each decimation scale.
     """
 
     def __init__(
@@ -184,6 +309,7 @@ class Gradient:
         params: dict[str, Any] | None = None,
         loadings: pl.DataFrame | None = None,
         intrinsic_dimension: float | None = None,
+        dimension_profile: list[dict[str, float]] | None = None,
     ) -> None:
         cell_ids = np.asarray(cell_ids)
         coordinate = np.asarray(coordinate, dtype=float)
@@ -197,6 +323,10 @@ class Gradient:
         self._params = dict(params) if params else None
         self._loadings = loadings
         self.intrinsic_dimension = intrinsic_dimension
+        #: TwoNN estimate per decimation scale — see :func:`twonn_profile`.
+        #: The shape of this is what says whether a curve was the right model;
+        #: ``intrinsic_dimension`` is only its minimum.
+        self.dimension_profile = list(dimension_profile or [])
 
     @property
     def cell_ids(self) -> np.ndarray:
@@ -219,6 +349,11 @@ class Gradient:
         Which features vary along the axis (|rho| high), which are flat, and —
         read together with a nuisance check — which are carrying artifact.
         Computed at fit time on the features the curve was fit through.
+
+        Returns
+        -------
+        polars.DataFrame
+            Features and Spearman correlations, strongest absolute values first.
         """
         if self._loadings is None:
             raise ValueError("this Gradient was built without loadings")
@@ -228,11 +363,33 @@ class Gradient:
         return int(self._cell_ids.shape[0])
 
     def to_frame(self, *, id_column: str = "cell_id") -> pl.DataFrame:
-        """``[id, coordinate]`` under this gradient's name."""
+        """Return identifiers and coordinates as a tidy frame.
+
+        Parameters
+        ----------
+        id_column : str, default 'cell_id'
+            Name of the identifier column.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``[id_column, name]`` with one row per covered cell.
+        """
         return pl.DataFrame({id_column: self._cell_ids, self.name: self._coordinate})
 
     def coordinate_for(self, cell_ids: np.ndarray) -> np.ndarray:
-        """Coordinates aligned to an arbitrary id order; ``nan`` when uncovered."""
+        """Align coordinates to an arbitrary identifier order.
+
+        Parameters
+        ----------
+        cell_ids : numpy.ndarray
+            Identifiers to look up, in desired output order.
+
+        Returns
+        -------
+        numpy.ndarray
+            Coordinate per requested identifier; ``nan`` when uncovered.
+        """
         by_cell = dict(zip(self._cell_ids, self._coordinate))
         return np.array(
             [by_cell.get(c, np.nan) for c in np.asarray(cell_ids).reshape(-1)],
@@ -245,7 +402,7 @@ class Gradient:
         *,
         names: list[str] | None = None,
         name: str | None = None,
-    ) -> Any:
+    ) -> "LabelSet":
         """Cut the coordinate into a ``LabelSet`` — named intervals, not modes.
 
         ``edges`` is an integer (that many equal-*quantile* bins, so sizes are
@@ -255,6 +412,25 @@ class Gradient:
         back to labels this way: the labels stay honest, because the
         coordinate they cut persists alongside them and the cuts are declared
         numbers anyone can revise.
+
+        Parameters
+        ----------
+        edges : int or list of float
+            Number of equal-quantile bins or ascending interior cut points.
+        names : list of str, optional
+            Bin names in ascending coordinate order.
+        name : str, optional
+            Name of the returned label set.
+
+        Returns
+        -------
+        LabelSet
+            Interval codes aligned to the gradient's cells.
+
+        Raises
+        ------
+        ValueError
+            If the bin count, cut ordering, or number of names is invalid.
         """
         from cellpax.labels import LabelSet
 

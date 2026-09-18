@@ -53,6 +53,14 @@ conditional = [
     "mapie>=1.5",
     "cvxpy>=1.7",
 ]
+# The local labeling app (cellpax.app). Nothing in cellpax imports these — the
+# library stays headless and frame-emitting; the app is a separate layer that
+# consumes those frames, and it is where the decision ledger lives (an explicit
+# non-goal of the library, DESIGN_PROPOSAL.md).
+app = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+]
 # Density-valley significance, information imbalance, and intrinsic dimension.
 # Pinned to a commit: the 0.3.4 PyPI wheel still declares numpy<2.0 and an
 # exact jax pin, while the repo has since unpinned both — switch to
@@ -144,7 +152,7 @@ cmd = "uv run bump-my-version bump"
 help = "Bump the version number in the project. Use with 'patch', 'minor', or 'major' to specify the version change."
 
 [tool.poe.tasks.test]
-cmd = "uv run pytest --cov=cellpax --cov-branch tests"
+cmd = "uv run pytest --cov=cellpax --cov=cellpax_loky_compat --cov-branch tests"
 help = "Run pytest with code coverage."
 
 [tool.poe.tasks.doc-preview]
@@ -155,6 +163,15 @@ help = "Preview documentation locally, optionally on a different port"
     default = "8000"
     help = "Local port for the documentation server"
     options = ["-p", "--port"]
+
+[tool.poe.tasks.app]
+cmd = "uv run --extra app python -m cellpax.app $config"
+help = "Launch the local labeling app. Pass a config TOML, or omit for the demo fixture."
+    [[tool.poe.tasks.app.args]]
+    name = "config"
+    default = ""
+    help = "Path to an app config TOML (see cellpax/app/config.py)"
+    positional = true
 
 [tool.poe.tasks.profile-all]
 cmd = "uv run scalene"
@@ -171,3 +188,9 @@ help = "Start Jupyter Lab"
 cwd = "scratch"
 cmd = "uv run --with jupyterlab --with jupyterlab-vim --with jupyterlab-code-formatter --with jupyter-resource-usage --with jupyterlab-execute-time --with catppuccin-jupyterlab --with ipywidgets jupyter lab --no-browser"
 help = "Start Jupyter Lab"
+
+# `cellpax_loky_compat` ships alongside the package rather than inside it: the
+# loky resource-tracker server imports it, and importing `cellpax` in that
+# process would pull numpy/scipy/sklearn into a daemon that should stay tiny.
+[tool.uv.build-backend]
+module-name = ["cellpax", "cellpax_loky_compat"]

@@ -2,6 +2,57 @@
 
 ## Unreleased — conformal assignment
 
+- **`join_datasets(tables, scaler_factory=..., strata=...)`** (also
+  `FeatureTable.join_datasets`) puts tables from separate datasets into one space.
+  - Each dataset, or each `(dataset, stratum)`, gets its own fit, and every other
+    dataset is mapped onto the reference's distribution through the reference's
+    `inverse_transform`. Joined values are in the reference's raw units, differences
+    between subclasses survive, and the reference's cells are unchanged.
+  - Metadata, masks, collections, validity domains and attached labels carry over.
+    Ids are freshly minted, and the original ids stay first-class: `source_ids`,
+    `cell_ids_for`, and `labels_by_dataset` for writing joint labels back to each source.
+  - `harmonize(rows, dataset)` brings new cells into the joined units, ready for
+    `project`/`project_labels`.
+  - The per-dataset scalers are saved and reloaded.
+- **`quantile_scaler_factory(clip=(1, 99))`**: a percentile clip followed by a
+  `QuantileTransformer`, the per-dataset harmonizer that aligned 85 of 87 features across
+  Minnie and V1dd. Quantile scalers, with or without the clip, now also freeze into
+  `FittedSpace` and persist.
+- **`dataset_mixing` / `ft.dataset_mixing`**: how much more often a cell's neighbours
+  share its dataset than its stratum's composition predicts, overall and per
+  `(dataset, stratum)`, in scaled features, PCA or an embedding.
+- **`cross_dataset_classification` / `ft.cross_dataset_classification`**: train on one
+  dataset's labels and score another's. It returns a `TransferScore` with
+  `accuracy_shared` (only labels both datasets have), `confusion()` and `by_label()`.
+- **`FittedScaler.inverse_transform`**, and identity inverses on `PercentileClipper` /
+  `SigmaClipper`, so clipped pipelines can be inverted. `PercentileClipper` now fits
+  NaN-aware bounds: a feature with missing values used to get NaN bounds, which turned
+  every clipped value into NaN.
+
+- **`ft.collections.names`** lists the defined feature collections, with
+  `len()`, a `catalog()` frame (name / n_features / columns) and a `__repr__`
+  that shows the names. The accessor was already iterable, but nothing said so —
+  printing it gave `<_CollectionAccessor object at 0x…>`.
+- **`ft.project_labels(data, labels)`** — `propagate_labels` for cells that
+  aren't in the table. Reference and incoming rows both go through the mask's
+  frozen scaler and PCA (`ft.space`), so the reference is judged in the space it
+  was clustered in, nothing is re-fit, no mask is widened and no clustering is
+  invalidated. Ids come from the frame's id column or `cell_ids=`; the result is
+  a `Propagation` over just the new cells, with the reference's cluster ids,
+  names and colors. `method="spread"` still abstains on rows near nothing.
+- **`LabelSet.assign(cell_ids, to)`** — move individual cells between clusters,
+  the per-cell counterpart to the cluster-level relabeling verbs. `to` is a
+  cluster id or name, or `None` to unassign; an unheld *name* creates the
+  cluster, an unknown *id* raises. Cells the set doesn't cover raise rather than
+  being skipped, which is what catches root_ids handed to a cell_id-keyed set —
+  previously this took a `codes` / `np.isin` / `with_codes` round trip whose
+  failure mode was a silent no-op.
+- **`add_column` and `add_mask` squeeze a one-column DataFrame.**
+  `ft.add_column(ft.dataframe().select(expr), ...)` used to land as an
+  `Array(Boolean, shape=(1,))` column — one length-1 row per cell — and only
+  showed up much later, wherever the values were finally read (a `tag_bool_cols`
+  segment property, say). A width-1 frame (polars, pandas) or an `(n, 1)` array
+  now squeezes to its column; anything wider raises.
 - **Save/load/list now run under `folio.pinned()`** (when datafolio provides
   it; a no-op otherwise): one staleness check per batch instead of two cloud
   round trips per item. Together with lazy consensus derivation this is the

@@ -2,8 +2,9 @@
 
 Step 4 of the redesign (see DESIGN_PROPOSAL.md). A ``LabelSet`` gives clusters
 identity — ``id -> (name, color, description)`` plus per-cell membership — and
-clean relabeling verbs (``rename`` / ``merge`` / ``reorder`` / ``reorder_by`` /
-``compact`` / ``set_colors`` / ``combine``), replacing dfc's scattered ``add_label`` /
+clean relabeling verbs (``rename`` / ``merge`` / ``assign`` / ``reorder`` /
+``reorder_by`` / ``compact`` / ``set_colors`` / ``combine``), replacing dfc's
+scattered ``add_label`` /
 ``add_label_names`` / ``combine_labels`` column juggling. Un-versioned and
 mutable-in-place (verbs return ``self`` for chaining); no decision ledger.
 
@@ -35,7 +36,19 @@ def _enum_member(name: str) -> str:
 
 @dataclass(frozen=True)
 class Label:
-    """Identity and display metadata for one cluster."""
+    """Identity and display metadata for one cluster.
+
+    Attributes
+    ----------
+    id : int
+        Stable integer code used in arrays and ``*_id`` columns.
+    name : str
+        Human-readable cluster name.
+    color : str, optional
+        Display color understood by the caller's plotting library.
+    description : str, optional
+        Free-text description of the cluster.
+    """
 
     id: int
     name: str
@@ -48,21 +61,21 @@ class LabelSet:
 
     Parameters
     ----------
-    cell_ids:
+    cell_ids : sequence of int or numpy.ndarray
         Cell ids this label set covers (one per label).
-    labels:
+    labels : sequence of int or numpy.ndarray
         Integer cluster id per cell; ``-1`` means unassigned.
-    names:
+    names : sequence of str or mapping of int to str, optional
         Cluster names, as a list in cluster-id order or a ``{id: name}`` mapping.
         Without them clusters are named after their ids (``"0"``, ``"1"``, …) and
         can be named later with ``rename``.
-    meta:
+    meta : mapping of int to Label, optional
         Full :class:`Label` records per cluster id, for colors and descriptions
         too; ``names`` wins over a name given here. Mostly for round-tripping
         rather than hand-written — see also ``set_colors`` / ``set_descriptions``.
-    name:
+    name : str, default 'label'
         Column name used when attaching to a table. Default ``"label"``.
-    mask:
+    mask : str, optional
         Name of the mask this label set was computed on, for provenance/display
         only (e.g. shown in ``repr``) — not used for alignment or validation.
     """
@@ -116,6 +129,26 @@ class LabelSet:
 
         Cluster ids are renumbered to contiguous ``0..k-1`` (in ascending order of
         the cut's raw labels); unassigned cells stay ``-1``.
+
+        Parameters
+        ----------
+        similarity : SimilarityMatrix
+            Matrix wrapper providing ``cluster_labels``.
+        cell_ids : sequence of int or numpy.ndarray
+            Identifiers in matrix-row order.
+        distance_threshold : float
+            Maximum linkage distance within a cluster.
+        min_cluster_size : int, default 1
+            Leave smaller clusters unassigned.
+        name : str, default 'label'
+            Label-set name.
+        mask : str, optional
+            Source mask name.
+
+        Returns
+        -------
+        LabelSet
+            Contiguous labels aligned with ``cell_ids``.
         """
         raw = similarity.cluster_labels(  # type: ignore[attr-defined]
             distance_threshold, min_cluster_size=min_cluster_size
@@ -147,6 +180,24 @@ class LabelSet:
         cluster's initial name, so no separate ``.rename()`` pass is needed.
         ``None``/NaN entries (and any value equal to ``unassigned``, if given)
         map to id ``-1``.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int or numpy.ndarray
+            Cell identifiers in ``values`` order.
+        values : sequence or numpy.ndarray
+            Human-readable, hashable labels.
+        unassigned : object, optional
+            Additional value treated as unassigned.
+        name : str, default 'label'
+            Label-set name.
+        mask : str, optional
+            Source mask name.
+
+        Returns
+        -------
+        LabelSet
+            Factorized integer labels with value-derived names.
         """
 
         def is_unassigned(v: Any) -> bool:
@@ -201,6 +252,7 @@ class LabelSet:
 
     @property
     def cell_ids(self) -> np.ndarray:
+        """Cell identifiers in the same order as :attr:`codes`."""
         return self._cell_ids
 
     def __len__(self) -> int:
@@ -213,11 +265,27 @@ class LabelSet:
         ``key`` is either the cluster id or its current name; this is how you
         read a color or description back out. ``catalog`` is the same thing for
         every cluster at once, as a dataframe.
+
+        Parameters
+        ----------
+        key : int or str
+            Cluster id or unambiguous current name.
+
+        Returns
+        -------
+        Label
+            Identity and display metadata for the cluster.
         """
         return self._meta[self._resolve(key)]
 
     def counts(self) -> dict[str, int]:
-        """Cell count per cluster name (clusters sharing a name are summed)."""
+        """Count cells per cluster name.
+
+        Returns
+        -------
+        dict of str to int
+            Counts with clusters sharing a name combined.
+        """
         values, counts = np.unique(self._labels, return_counts=True)
         out: dict[str, int] = {}
         for value, count in zip(values, counts):
@@ -232,6 +300,11 @@ class LabelSet:
 
         The per-cluster counterpart of ``to_frame``'s per-cell view — a legend
         table, and unlike ``counts`` it keeps clusters that share a name apart.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cluster ids, metadata, and cell counts.
         """
         values, counts = np.unique(self._labels, return_counts=True)
         sizes = {int(v): int(c) for v, c in zip(values, counts)}
@@ -257,7 +330,13 @@ class LabelSet:
         )
 
     def color_map(self) -> dict[str, str]:
-        """``{name: color}`` for clusters with a color, e.g. seaborn's ``palette=``."""
+        """Return colors keyed by cluster name.
+
+        Returns
+        -------
+        dict of str to str
+            Named colors for clusters that define one.
+        """
         return {
             self._meta[i].name: color
             for i in self.ids
@@ -265,7 +344,18 @@ class LabelSet:
         }
 
     def to_frame(self, *, id_column: str = "cell_id") -> pl.DataFrame:
-        """Return ``cell_id`` + name + id columns (unassigned → null name)."""
+        """Return identifiers, names, and integer codes as a tidy frame.
+
+        Parameters
+        ----------
+        id_column : str, default 'cell_id'
+            Name of the identifier column.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``[id_column, name, {name}_id]``; unassigned names are null.
+        """
         return pl.DataFrame(
             {
                 id_column: self._cell_ids,
@@ -281,6 +371,11 @@ class LabelSet:
         lined up and only want the names — e.g. straight into ``ft.add_column``
         or a plotting call, without a join on ``cell_id``. Unassigned cells are
         null, like the column ``attach`` writes.
+
+        Returns
+        -------
+        polars.Series
+            Names in :attr:`cell_ids` order, with nulls for unassigned cells.
         """
         return pl.Series(self.name, self.to_names(), dtype=pl.String)
 
@@ -306,13 +401,29 @@ class LabelSet:
         return int((~self.assigned).sum())
 
     def to_names(self) -> list[str | None]:
-        """Per-cell cluster names in ``cell_ids`` order (unassigned → ``None``)."""
+        """Return per-cell cluster names.
+
+        Returns
+        -------
+        list of str or None
+            Names in :attr:`cell_ids` order; unassigned cells are ``None``.
+        """
         return self.decode(self._labels)
 
     def decode(self, codes: Sequence[int] | np.ndarray) -> list[str | None]:
         """Map integer cluster ids back to names — e.g. a classifier's output.
 
         ``-1`` becomes ``None``; any other id without a cluster raises.
+
+        Parameters
+        ----------
+        codes : sequence of int or numpy.ndarray
+            Cluster ids to decode.
+
+        Returns
+        -------
+        list of str or None
+            Human-readable names in input order.
         """
         arr = np.asarray(codes, dtype=np.int64).reshape(-1)
         self._check_codes(arr)
@@ -329,6 +440,18 @@ class LabelSet:
         Use this to line a ``y`` vector up with feature rows you got elsewhere
         (e.g. ``ft.features(mask)``) instead of trusting that both are in the
         same order. Cells this label set doesn't cover get ``missing``.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int or numpy.ndarray
+            Identifiers in desired output order.
+        missing : int, default -1
+            Code used for identifiers not covered by this set.
+
+        Returns
+        -------
+        numpy.ndarray
+            Integer codes aligned to ``cell_ids``.
         """
         # cell ids stay whatever type they are — string ids are as valid a key
         # as integers, and numpy scalars hash equal to their Python counterparts
@@ -352,7 +475,18 @@ class LabelSet:
     # -- derived label sets (new objects, not in-place) -------------------------
 
     def copy(self, *, name: str | None = None) -> "LabelSet":
-        """An independent copy — relabeling verbs mutate in place, so branch here."""
+        """Create an independent copy before mutating labels.
+
+        Parameters
+        ----------
+        name : str, optional
+            Replacement label-set name.
+
+        Returns
+        -------
+        LabelSet
+            Copy with independent arrays and metadata.
+        """
         return LabelSet(
             self._cell_ids.copy(),
             self._labels.copy(),
@@ -368,6 +502,23 @@ class LabelSet:
 
         Cluster ids, names and colors are preserved (so codes stay comparable
         with the parent's) — handy for train/test splits.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int or numpy.ndarray
+            Covered identifiers to retain, in output order.
+        name : str, optional
+            Replacement label-set name.
+
+        Returns
+        -------
+        LabelSet
+            Subset preserving cluster identities.
+
+        Raises
+        ------
+        KeyError
+            If any requested identifier is not covered.
         """
         index = {c: i for i, c in enumerate(self._cell_ids)}
         wanted = list(np.asarray(cell_ids).reshape(-1))
@@ -405,6 +556,22 @@ class LabelSet:
         ``fill`` reuses an existing cluster of that name rather than adding a
         second one, so ``fill="unassigned"`` over a set that already has an
         ``unassigned`` cluster stays one cluster.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int or numpy.ndarray
+            Exact output identifiers and order.
+        fill : str, optional
+            Cluster name assigned to otherwise uncovered cells.
+        name : str, optional
+            Replacement label-set name.
+        mask : str, optional
+            Replacement source mask.
+
+        Returns
+        -------
+        LabelSet
+            Reindexed labels, with uncovered cells unassigned or filled.
         """
         codes = self.codes_for(cell_ids)
         meta = dict(self._meta)
@@ -423,7 +590,18 @@ class LabelSet:
         )
 
     def drop_unassigned(self, *, name: str | None = None) -> "LabelSet":
-        """A new LabelSet without the unassigned (``-1``) cells, for fitting."""
+        """Return a label set without unassigned cells.
+
+        Parameters
+        ----------
+        name : str, optional
+            Replacement label-set name.
+
+        Returns
+        -------
+        LabelSet
+            Assigned cells only, preserving cluster identities.
+        """
         return self.subset(self._cell_ids[self.assigned], name=name)
 
     def with_codes(
@@ -440,6 +618,22 @@ class LabelSet:
         ids and get a LabelSet whose names and colors match the one the model was
         trained on, ready for ``ft.attach``. Ids with no cluster here raise, which
         catches an off-by-one ``num_class`` before it becomes a mislabeled column.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int or numpy.ndarray
+            Identifiers in ``codes`` order.
+        codes : sequence of int or numpy.ndarray
+            Predicted cluster ids.
+        name : str, optional
+            Replacement label-set name.
+        mask : str, optional
+            Source mask for the new population.
+
+        Returns
+        -------
+        LabelSet
+            New memberships reusing this set's identities.
         """
         arr = np.asarray(codes, dtype=np.int64).reshape(-1)
         self._check_codes(arr)
@@ -480,20 +674,53 @@ class LabelSet:
         return dict(zip(ids, ordered))
 
     def rename(self, names: Mapping[int | str, str] | Sequence[str]) -> "LabelSet":
-        """Rename clusters, by ``{id_or_name: new_name}`` or a list in id order."""
+        """Rename clusters in place.
+
+        Parameters
+        ----------
+        names : mapping or sequence of str
+            ``{id_or_name: new_name}`` or names in current id order.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
+        """
         for i, new_name in self._name_mapping(names).items():
             self._meta[i] = replace(self._meta[i], name=new_name)
         return self
 
     def set_colors(self, mapping: Mapping[int | str, str]) -> "LabelSet":
-        """Set cluster colors: ``{id_or_name: color}``."""
+        """Set cluster display colors in place.
+
+        Parameters
+        ----------
+        mapping : mapping
+            Cluster id or name to color string.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
+        """
         for key, color in mapping.items():
             i = self._resolve(key)
             self._meta[i] = replace(self._meta[i], color=color)
         return self
 
     def set_descriptions(self, mapping: Mapping[int | str, str]) -> "LabelSet":
-        """Set cluster descriptions: ``{id_or_name: description}``."""
+        """Set cluster descriptions in place.
+
+        Parameters
+        ----------
+        mapping : mapping
+            Cluster id or name to description.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
+        """
         for key, description in mapping.items():
             i = self._resolve(key)
             self._meta[i] = replace(self._meta[i], description=description)
@@ -507,6 +734,18 @@ class LabelSet:
         may reuse a member's own name, but a name held by a cluster *outside*
         the merge is refused — it would leave two clusters sharing a name, which
         every name-based verb would then reject as ambiguous.
+
+        Parameters
+        ----------
+        members : iterable of int or str
+            Cluster ids or names to merge.
+        into : str
+            Name assigned to the surviving cluster.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
         """
         ids = [self._resolve(m) for m in members]
         if len(ids) < 2:
@@ -530,6 +769,71 @@ class LabelSet:
         self._meta[target] = replace(self._meta[target], name=into)
         return self
 
+    def assign(
+        self, cell_ids: Any | Sequence[Any] | np.ndarray, to: int | str | None
+    ) -> "LabelSet":
+        """Move individual *cells* into a cluster — the curation escape hatch.
+
+        Every other relabeling verb works on whole clusters; this one is for the
+        handful of cells you have looked at and disagree with, the six somas that
+        came out excitatory and plainly are not. ``cell_ids`` is one id or an
+        iterable of them, and ``to`` is a cluster id or name — or ``None`` to send
+        them back to unassigned, the per-cell counterpart of ``unassign``.
+
+        A *name* no cluster holds yet creates one, so promoting a few cells to a
+        type this labelling has not seen takes no setup (``set_colors`` after, if
+        it needs a color). An unknown *id* raises instead: a stray integer is an
+        off-by-one, not a new cluster.
+
+        Cells this set does not cover raise rather than being skipped — a silent
+        no-op here is a mislabeled figure later, and handing root_ids to a set
+        keyed on cell_ids is the easy way to get one. A cluster you empty this way
+        drops out of ``ids`` and ``catalog`` like any other, but keeps its identity
+        in ``meta``, so moving a cell back restores it with its color rather than
+        as a bare id; ``unassign`` is how you retire a cluster for good.
+
+        Note this edits a labelling in place rather than layering over it, so
+        ``flatten_labels``' provenance won't show the change — keep genuinely
+        curated calls as their own LabelSet and combine if you need that trail.
+
+        Parameters
+        ----------
+        cell_ids : scalar or sequence
+            Covered cell identifiers to move.
+        to : int, str, or None
+            Destination cluster; ``None`` means unassigned. An unknown string
+            creates a cluster.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
+
+        Raises
+        ------
+        KeyError
+            If a cell identifier or integer cluster id is unknown.
+        """
+        wanted = np.asarray(cell_ids).reshape(-1)
+        known = set(self._cell_ids.tolist())
+        missing = [c for c in wanted.tolist() if c not in known]
+        if missing:
+            shown = ", ".join(repr(c) for c in missing[:5])
+            more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
+            raise KeyError(
+                f"{len(missing)} of {wanted.size} cell_ids are not in label set "
+                f"{self.name!r}: {shown}{more}"
+            )
+        if to is None:
+            target = _UNASSIGNED
+        elif isinstance(to, str) and not any(m.name == to for m in self._meta.values()):
+            target = max(self._meta, default=-1) + 1
+            self._meta[target] = Label(id=target, name=to)
+        else:
+            target = self._resolve(to)
+        self._labels[np.isin(self._cell_ids, wanted)] = target
+        return self
+
     def unassign(self, members: int | str | Iterable[int | str]) -> "LabelSet":
         """Send one or more clusters' cells back to unassigned (``-1``).
 
@@ -537,6 +841,16 @@ class LabelSet:
         cluster, so a following ``propagate_labels`` refills them from their
         neighbors instead of leaving a hole. Ids are left with gaps; ``compact``
         closes them.
+
+        Parameters
+        ----------
+        members : int, str, or iterable
+            Cluster ids or names to retire.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
         """
         keys = [members] if isinstance(members, (int, str)) else list(members)
         for i in [self._resolve(key) for key in keys]:
@@ -551,6 +865,16 @@ class LabelSet:
         through metadata — emptied by ``subset``, say — may be listed too, and
         keep their ``Label`` (name, color, description) under the new
         numbering; metadata for ids left off the list is dropped.
+
+        Parameters
+        ----------
+        order : sequence of int or str
+            Every populated cluster exactly once, in desired id order.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set with contiguous ids.
         """
         resolved = [self._resolve(k) for k in order]
         if len(set(resolved)) != len(resolved) or not set(resolved) >= set(self.ids):
@@ -575,6 +899,11 @@ class LabelSet:
         known only through metadata — emptied by ``subset``, say — keep their
         identity, renumbered past the populated ones so the codes cells
         actually use stay contiguous from 0.
+
+        Returns
+        -------
+        LabelSet
+            Copy with contiguous cluster ids.
         """
         populated = self.ids
         empty = [i for i in sorted(self._meta) if i not in set(populated)]
@@ -599,6 +928,22 @@ class LabelSet:
 
         Nulls/NaNs are ignored in the aggregate rather than poisoning it; a cluster
         with no value at all sorts to the end in both directions.
+
+        Parameters
+        ----------
+        values : mapping or sequence of float or numpy.ndarray
+            Per-cell values, either keyed by identifier or row-aligned.
+        cell_ids : sequence of int or numpy.ndarray, optional
+            Identifier order for unkeyed ``values``.
+        agg : {'mean', 'median'}, default 'mean'
+            Per-cluster aggregation.
+        ascending : bool, default True
+            Put the smallest aggregate first.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set with reordered ids.
         """
         if isinstance(values, Mapping):
             by_cell = {
@@ -656,6 +1001,25 @@ class LabelSet:
         The mask is kept only if every set agrees on it, since a union over
         several masks isn't any one of them; ``reindex`` is how you pin the result
         to a mask of your own.
+
+        Parameters
+        ----------
+        *others : LabelSet
+            Additional sets, in decreasing priority.
+        mode : {'disjoint', 'priority'}, default 'disjoint'
+            Require separate cell populations or layer overlapping labels.
+        name : str, optional
+            Name of the combined label set.
+
+        Returns
+        -------
+        LabelSet
+            New union with reconciled identities.
+
+        Raises
+        ------
+        ValueError
+            If ``mode`` is unknown or disjoint inputs overlap.
         """
         if mode not in ("disjoint", "priority"):
             raise ValueError(f"unknown mode {mode!r}; use 'disjoint' or 'priority'")
@@ -718,6 +1082,16 @@ class LabelSet:
         Lets you filter and compare without remembering numbers or exact strings,
         with editor autocomplete — e.g. ``df.filter(pl.col("label_id") == L.L5IT)``
         (IntEnum members compare equal to their integer id).
+
+        Parameters
+        ----------
+        class_name : str, default 'Labels'
+            Generated enumeration class name.
+
+        Returns
+        -------
+        type of enum.IntEnum
+            Enumeration mapping normalized names to cluster ids.
         """
         members: dict[str, int] = {}
         for i in self.ids:
@@ -733,6 +1107,16 @@ class LabelSet:
         Define e.g. ``class ITLabels(IntEnum): L5IT = 0; L23IT = 1`` and call
         ``labels.apply_enum(ITLabels)`` to name cluster 0 ``"L5IT"``, 1 ``"L23IT"``.
         Members without a matching cluster id are ignored.
+
+        Parameters
+        ----------
+        enum : type of enum.IntEnum
+            User-defined member-name to cluster-id mapping.
+
+        Returns
+        -------
+        LabelSet
+            This mutated label set.
         """
         for member in enum:
             if int(member) in self._meta:

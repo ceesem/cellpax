@@ -55,36 +55,38 @@ class FittedSpace:
 
     Parameters
     ----------
-    scaler
+    scaler : object, optional
         The fitted scaler applied before PCA — a :class:`~cellpax.FittedScaler`, or
         anything with a ``transform``. ``None`` means rows arrive already scaled.
-    columns
+    columns : tuple of str
         Feature names, in the column order the fit saw. ``transform`` assumes this order
         and cannot check it, which is why ``FeatureTable.space`` keeps the bookkeeping.
-    mean_
+    mean_ : numpy.ndarray
         Per-feature mean of the scaled data, subtracted before projection.
-    components_
+    components_ : numpy.ndarray
         ``(n_total_components, n_features)`` rotation, rows ordered by descending
         eigenvalue.
-    eigenvalues_
+    eigenvalues_ : numpy.ndarray
         Variance along each component (scikit-learn's ``explained_variance_``).
-    explained_variance_ratio_
+    explained_variance_ratio_ : numpy.ndarray
         The same, as a fraction of the total.
-    n_components
+    n_components : int
         How many leading components :meth:`transform` keeps.
-    alpha
+    alpha : float, default 0.0
         PC weighting exponent. ``0.0`` leaves component scales untouched, ``1.0`` gives
         every retained component unit variance. Intermediate values partially equalise.
-    eigenvalue_floor
+    eigenvalue_floor : float, default 0.0
         Added to each eigenvalue before the ``alpha`` scaling. Guards the sharp edge in
         whitening: the *smallest retained* component is amplified most, so a truncation
         chosen by cumulative variance turns into a discontinuity — the last kept
         component gets full weight and the first dropped one gets none. A floor of
         :attr:`noise_floor` keeps near-degenerate directions from being inflated into
         the metric. ``0.0`` is exact whitening.
-    explained_variance
+    explained_variance : float, optional
         The cumulative-variance target ``n_components`` came from, kept for provenance.
         ``None`` when the count was set directly.
+    feature_weights : numpy.ndarray, optional
+        Per-feature multipliers applied before PCA, in ``columns`` order.
     """
 
     scaler: Any
@@ -255,7 +257,23 @@ class FittedSpace:
         )
 
     def with_components(self, n_components: int) -> "FittedSpace":
-        """This space truncated at a different component count, sharing the same fit."""
+        """Return this fitted space at a different component count.
+
+        Parameters
+        ----------
+        n_components : int
+            Number of leading components to retain.
+
+        Returns
+        -------
+        FittedSpace
+            A view sharing the same fitted arrays.
+
+        Raises
+        ------
+        ValueError
+            If the count is outside the fitted component range.
+        """
         n = int(n_components)
         if not 1 <= n <= self.n_total_components:
             raise ValueError(
@@ -268,6 +286,16 @@ class FittedSpace:
 
         Matches scikit-learn's float ``n_components`` rule, so switching a
         ``PCA(n_components=0.95)`` call over to this space keeps the same width.
+
+        Parameters
+        ----------
+        explained_variance : float, default 0.95
+            Cumulative explained-variance target in ``(0, 1]``.
+
+        Returns
+        -------
+        int
+            Smallest leading-component count reaching the target.
         """
         if not 0.0 < explained_variance <= 1.0:
             raise ValueError(
@@ -292,6 +320,7 @@ class FittedSpace:
 
     @property
     def n_features(self) -> int:
+        """Number of input features in the fitted space."""
         return int(self.components_.shape[1])
 
     @property
@@ -394,13 +423,34 @@ class FittedSpace:
 
         Runs the frozen scaler, then centres, projects onto the retained components,
         and applies the ``alpha`` weighting.
+
+        Parameters
+        ----------
+        raw : numpy.ndarray
+            ``(n_rows, n_features)`` raw feature matrix in :attr:`columns` order.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n_rows, n_components)`` fitted-space coordinates.
         """
         raw = np.asarray(raw, dtype=float)
         scaled = raw if self.scaler is None else self.scaler.transform(raw)
         return self.transform_scaled(scaled)
 
     def transform_scaled(self, scaled: np.ndarray) -> np.ndarray:
-        """Coordinates for rows that are already scaled — the PCA half only."""
+        """Project rows that are already scaled.
+
+        Parameters
+        ----------
+        scaled : numpy.ndarray
+            ``(n_rows, n_features)`` scaled matrix in :attr:`columns` order.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n_rows, n_components)`` fitted-space coordinates.
+        """
         scaled = self._weighted(scaled)
         coords = (scaled - self.mean_) @ self.components_[: self.n_components].T
         scale = self._alpha_scale()
@@ -513,6 +563,13 @@ class FittedSpace:
         freezing a space is to reapply it *unchanged* to a future dataset, possibly
         under a different scikit-learn; a pickle couples that to a library version, and
         an opaque blob cannot be inspected to see what the frozen scaling actually was.
+
+        Returns
+        -------
+        metadata : dict
+            JSON-safe space description.
+        arrays : dict of str to numpy.ndarray
+            Named numeric arrays required to restore the fit.
         """
         meta: dict[str, Any] = {
             "columns": list(self.columns),
@@ -538,7 +595,20 @@ class FittedSpace:
     def from_records(
         cls, meta: dict[str, Any], arrays: dict[str, np.ndarray]
     ) -> "FittedSpace":
-        """Rebuild a space from :meth:`to_records` output."""
+        """Rebuild a space from serialized records.
+
+        Parameters
+        ----------
+        meta : dict
+            JSON-safe metadata returned by :meth:`to_records`.
+        arrays : dict of str to numpy.ndarray
+            Named arrays returned by :meth:`to_records`.
+
+        Returns
+        -------
+        FittedSpace
+            Reconstructed frozen space.
+        """
         return cls(
             scaler=_scaler_from_records(meta.get("scaler"), arrays),
             columns=tuple(meta["columns"]),
@@ -603,6 +673,50 @@ _STANDARD = "standard"
 _ROBUST = "robust"
 _ROBUST_PERCENTILE = "robust_percentile"
 _ROBUST_SIGMA = "robust_sigma"
+_QUANTILE = "quantile"
+_PERCENTILE_QUANTILE = "percentile_quantile"
+
+
+def _quantile_records(
+    transformer: Any, meta: dict[str, Any], arrays: dict[str, np.ndarray]
+) -> None:
+    """Record a fitted ``QuantileTransformer``'s landmarks and configuration."""
+    meta["output_distribution"] = str(transformer.output_distribution)
+    meta["n_quantiles"] = int(transformer.n_quantiles_)
+    meta["subsample"] = (
+        None if transformer.subsample is None else int(transformer.subsample)
+    )
+    meta["random_state"] = (
+        transformer.random_state
+        if transformer.random_state is None or isinstance(transformer.random_state, int)
+        else None
+    )
+    meta["ignore_implicit_zeros"] = bool(transformer.ignore_implicit_zeros)
+    arrays["scaler__quantiles_"] = np.asarray(transformer.quantiles_, dtype=float)
+    arrays["scaler__references_"] = np.asarray(transformer.references_, dtype=float)
+
+
+def _quantile_from_records(meta: dict[str, Any], arrays: dict[str, np.ndarray]) -> Any:
+    """Rebuild a fitted ``QuantileTransformer`` from :func:`_quantile_records`."""
+    from sklearn.preprocessing import QuantileTransformer
+
+    quantiles = np.atleast_2d(np.asarray(arrays["scaler__quantiles_"], dtype=float))
+    references = np.asarray(arrays["scaler__references_"], dtype=float).ravel()
+    if quantiles.shape[0] != references.size:
+        # a single-feature fit round-trips as one row; landmarks are the rows
+        quantiles = quantiles.T
+    transformer = QuantileTransformer(
+        n_quantiles=int(meta["n_quantiles"]),
+        output_distribution=meta["output_distribution"],
+        subsample=meta.get("subsample"),
+        random_state=meta.get("random_state"),
+        ignore_implicit_zeros=bool(meta.get("ignore_implicit_zeros", False)),
+    )
+    transformer.quantiles_ = quantiles
+    transformer.references_ = references
+    transformer.n_quantiles_ = int(meta["n_quantiles"])
+    transformer.n_features_in_ = quantiles.shape[1]
+    return transformer
 
 
 def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.ndarray]]:
@@ -627,10 +741,28 @@ def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.nd
     steps = getattr(inner, "named_steps", None)
     if steps is not None:
         scaler, clipper = steps.get("scaler"), steps.get("clipper")
-        if type(scaler).__name__ != "RobustScaler" or clipper is None:
+        order = list(steps)
+        if (
+            order == ["clipper", "scaler"]
+            and type(clipper).__name__ == "PercentileClipper"
+            and type(scaler).__name__ == "QuantileTransformer"
+        ):
+            meta["kind"] = _PERCENTILE_QUANTILE
+            meta["lower"] = float(clipper.lower)
+            meta["upper"] = float(clipper.upper)
+            arrays["clipper__lower_bounds_"] = np.asarray(
+                clipper.lower_bounds_, dtype=float
+            )
+            arrays["clipper__upper_bounds_"] = np.asarray(
+                clipper.upper_bounds_, dtype=float
+            )
+            _quantile_records(scaler, meta, arrays)
+            return meta, arrays
+        if order != ["scaler", "clipper"] or type(scaler).__name__ != "RobustScaler":
             raise TypeError(
-                "only Pipeline([('scaler', RobustScaler()), ('clipper', ...)]) "
-                f"pipelines can be frozen, got steps {list(steps)}"
+                "only Pipeline([('scaler', RobustScaler()), ('clipper', ...)]) and "
+                "Pipeline([('clipper', PercentileClipper()), ('scaler', "
+                f"QuantileTransformer())]) pipelines can be frozen, got steps {order}"
             )
         arrays["scaler__center_"] = np.asarray(scaler.center_, dtype=float)
         arrays["scaler__scale_"] = np.asarray(scaler.scale_, dtype=float)
@@ -663,10 +795,15 @@ def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.nd
         meta["kind"] = _ROBUST
         arrays["scaler__center_"] = np.asarray(inner.center_, dtype=float)
         arrays["scaler__scale_"] = np.asarray(inner.scale_, dtype=float)
+    elif name == "QuantileTransformer":
+        meta["kind"] = _QUANTILE
+        _quantile_records(inner, meta, arrays)
     else:
         raise TypeError(
             f"cannot freeze a scaler of type {name}; supported: StandardScaler, "
-            "RobustScaler, and RobustScaler + PercentileClipper/SigmaClipper pipelines"
+            "RobustScaler, QuantileTransformer, RobustScaler + "
+            "PercentileClipper/SigmaClipper pipelines, and PercentileClipper + "
+            "QuantileTransformer pipelines"
         )
     return meta, arrays
 
@@ -684,8 +821,25 @@ def _scaler_from_records(
     from cellpax.featuretable import FittedScaler
 
     kind = meta["kind"]
-    if kind == _STANDARD:
-        inner: Any = StandardScaler()
+    inner: Any
+    if kind == _QUANTILE:
+        inner = _quantile_from_records(meta, arrays)
+    elif kind == _PERCENTILE_QUANTILE:
+        quantile_clipper = PercentileClipper(meta["lower"], meta["upper"])
+        quantile_clipper.lower_bounds_ = np.asarray(
+            arrays["clipper__lower_bounds_"], dtype=float
+        )
+        quantile_clipper.upper_bounds_ = np.asarray(
+            arrays["clipper__upper_bounds_"], dtype=float
+        )
+        inner = Pipeline(
+            [
+                ("clipper", quantile_clipper),
+                ("scaler", _quantile_from_records(meta, arrays)),
+            ]
+        )
+    elif kind == _STANDARD:
+        inner = StandardScaler()
         inner.mean_ = np.asarray(arrays["scaler__mean_"], dtype=float)
         inner.scale_ = np.asarray(arrays["scaler__scale_"], dtype=float)
         inner.var_ = inner.scale_**2

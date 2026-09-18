@@ -1,9 +1,5 @@
 # Function Reference
 
-Top-level exports:
-
-::: cellpax
-
 ## FeatureTable
 
 The container and its methods (construction, masks, collections, preprocessing,
@@ -33,6 +29,23 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.clustering.clipped_scaler_factory
 
+::: cellpax.clustering.quantile_scaler_factory
+
+## Joining datasets
+
+Tables from separate datasets, harmonized into one space (see the guide's
+[Joining datasets](../guide.md#joining-datasets)). The per-dataset lookups —
+`harmonize`, `source_ids`, `cell_ids_for`, `labels_by_dataset`, `dataset_mixing`,
+`cross_dataset_classification` — are methods on `FeatureTable`.
+
+::: cellpax.datasets.join_datasets
+
+::: cellpax.diagnostics.dataset_mixing
+
+::: cellpax.validate.cross_dataset_classification
+
+::: cellpax.validate.TransferScore
+
 ## Labels
 
 ::: cellpax.labels.LabelSet
@@ -51,11 +64,15 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.clustering.SortedMatrix
 
+::: cellpax.clustering.CutSuggestion
+
 ::: cellpax.clustering.fauxnograph_coclustering
 
 ::: cellpax.clustering.kneighbor_graph
 
 ::: cellpax.clustering.axis_stability
+
+::: cellpax.clustering.consensus_density
 
 ::: cellpax.clustering.neighborhood_purity
 
@@ -82,6 +99,8 @@ clustering, labeling, embedding, comparison, and persistence).
 ::: cellpax.diagnostics.information_imbalance
 
 ::: cellpax.diagnostics.feature_relevance
+
+::: cellpax.diagnostics.discriminative_features
 
 ## Validation
 
@@ -113,6 +132,8 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.gradient.twonn_dimension
 
+::: cellpax.gradient.twonn_profile
+
 ## AnnData bridge
 
 ::: cellpax.interop.to_anndata
@@ -122,6 +143,10 @@ clustering, labeling, embedding, comparison, and persistence).
 ## Conformal assignment
 
 ::: cellpax.assign.Assignment
+
+::: cellpax.assign.weighted_p_values
+
+::: cellpax.assign.conditional_prediction_set
 
 ## Label propagation
 

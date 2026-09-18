@@ -1,6 +1,6 @@
 """What the feature matrix looks like before any clustering runs on it.
 
-Eight questions that decide whether a clustering result is even interpretable, each
+Nine questions that decide whether a clustering result is even interpretable, each
 answered as a frame rather than as advice:
 
 :func:`feature_correlation`
@@ -27,6 +27,10 @@ answered as a frame rather than as advice:
     versions. A feature that moves when the stratum changes is measuring the dataset
     rather than the cells, and does not travel: it wants a per-stratum validity domain
     or a seat outside the portable collection.
+:func:`dataset_mixing`
+    Whether datasets that were meant to share one space actually do: how much more often
+    a cell's neighbours come from its own dataset than the composition of its stratum
+    predicts. The acceptance test for :func:`~cellpax.datasets.join_datasets`.
 :func:`information_imbalance`
     Whether one coordinate space predicts another's neighbourhoods — and, because the
     statistic is directional, whether the prediction runs both ways. A raw feature set
@@ -675,6 +679,140 @@ def stratum_shift(
     return frame.sort("ks_statistic", descending=True, nulls_last=True)
 
 
+def dataset_mixing(
+    features: np.ndarray,
+    datasets: Any,
+    *,
+    strata: Any = None,
+    n_neighbors: int = 50,
+) -> pl.DataFrame:
+    """How much more often cells neighbour their own dataset than composition predicts.
+
+    For every cell, ``observed`` is the fraction of its ``n_neighbors`` nearest other
+    cells that come from its own dataset, and ``expected`` is the fraction a perfectly
+    mixed space would give: its dataset's share of the *other* cells in its stratum.
+    ``gap = observed - expected`` is 0 for datasets that are indistinguishable in this
+    space and approaches ``1 - expected`` for datasets that separate completely.
+
+    The stratum adjustment is what makes the gap comparable across cell types. Two
+    datasets with different subclass proportions — one volume richer in L6, say — have
+    a same-dataset neighbour fraction above the global share even when every subclass
+    is perfectly mixed, simply because a cell's neighbours come from its own subclass.
+    Measuring expectation within the stratum removes that composition effect. Neighbours
+    are still searched in the whole space, so cells that sit in the wrong subclass
+    region still count against the gap.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_dims)`` coordinates: scaled features, a PCA space, an embedding.
+    datasets : array-like
+        ``(n_cells,)`` dataset of each cell.
+    strata : array-like, optional
+        ``(n_cells,)`` stratum of each cell for the composition adjustment. ``None``
+        uses the whole population's composition.
+    n_neighbors : int, default 50
+        Neighbours per cell.
+
+    Returns
+    -------
+    polars.DataFrame
+        ``dataset, stratum, n_cells, observed, expected, gap``: one overall row (both
+        keys null), one row per dataset (stratum null) and, with ``strata``, one row per
+        ``(dataset, stratum)``. Values are means over the row's cells.
+
+    Raises
+    ------
+    ValueError
+        On mismatched lengths, non-finite coordinates, or too few cells.
+    """
+    from cellpax.clustering import _neighbor_arrays
+
+    matrix = np.asarray(features, dtype=float)
+    if matrix.ndim != 2:
+        raise ValueError(f"features must be 2-dimensional, got {matrix.ndim}d")
+    n_cells = matrix.shape[0]
+    dataset_values = np.asarray([str(d) for d in np.asarray(datasets).tolist()])
+    if dataset_values.shape[0] != n_cells:
+        raise ValueError(
+            f"datasets has {dataset_values.shape[0]} values for {n_cells} cells"
+        )
+    if strata is None:
+        stratum_values = np.full(n_cells, "", dtype=object)
+    else:
+        raw = np.asarray(strata, dtype=object).tolist()
+        stratum_values = np.asarray(
+            [None if s is None else str(s) for s in raw], dtype=object
+        )
+        if stratum_values.shape[0] != n_cells:
+            raise ValueError(
+                f"strata has {stratum_values.shape[0]} values for {n_cells} cells"
+            )
+        if any(s is None for s in stratum_values):
+            raise ValueError("strata contains nulls; every cell needs a stratum")
+    if not np.isfinite(matrix).all():
+        raise ValueError(
+            "features contain non-finite values; drop or impute those cells first"
+        )
+    if not 1 <= n_neighbors < n_cells:
+        raise ValueError(
+            f"n_neighbors must be between 1 and n_cells - 1 ({n_cells - 1}), got "
+            f"{n_neighbors}"
+        )
+
+    _, indices = _neighbor_arrays(matrix, n_neighbors, "minkowski")
+    observed = (dataset_values[indices] == dataset_values[:, None]).mean(axis=1)
+
+    expected = np.full(n_cells, np.nan)
+    for stratum in dict.fromkeys(stratum_values.tolist()):
+        rows = stratum_values == stratum
+        size = int(rows.sum())
+        if size < 2:
+            continue
+        members = dataset_values[rows]
+        names, counts = np.unique(members, return_counts=True)
+        share = dict(zip(names.tolist(), ((counts - 1) / (size - 1)).tolist()))
+        expected[rows] = [share[d] for d in members.tolist()]
+    gap = observed - expected
+
+    def summary(rows: np.ndarray, dataset: str | None, stratum: str | None) -> dict:
+        return {
+            "dataset": dataset,
+            "stratum": stratum,
+            "n_cells": int(rows.sum()),
+            "observed": float(np.mean(observed[rows])),
+            "expected": float(np.nanmean(expected[rows]))
+            if np.isfinite(expected[rows]).any()
+            else float("nan"),
+            "gap": float(np.nanmean(gap[rows]))
+            if np.isfinite(gap[rows]).any()
+            else float("nan"),
+        }
+
+    all_rows = np.ones(n_cells, dtype=bool)
+    records = [summary(all_rows, None, None)]
+    dataset_names = sorted(set(dataset_values.tolist()))
+    for dataset in dataset_names:
+        records.append(summary(dataset_values == dataset, dataset, None))
+    if strata is not None:
+        for dataset in dataset_names:
+            for stratum in sorted(set(stratum_values.tolist())):
+                rows = (dataset_values == dataset) & (stratum_values == stratum)
+                if rows.any():
+                    records.append(summary(rows, dataset, stratum))
+    return pl.DataFrame(
+        records,
+        schema={
+            "dataset": pl.String,
+            "stratum": pl.String,
+            "n_cells": pl.Int64,
+            "observed": pl.Float64,
+            "expected": pl.Float64,
+            "gap": pl.Float64,
+        },
+    )
+
+
 def information_imbalance(
     a: np.ndarray,
     b: np.ndarray,
@@ -937,3 +1075,139 @@ def _rankdata(values: np.ndarray) -> np.ndarray:
         np.add.at(sums, inverse, ranks)
         ranks = (sums / counts)[inverse]
     return ranks
+
+
+def discriminative_features(
+    features: np.ndarray,
+    codes: Any,
+    columns: Any,
+    *,
+    blocks: Any = None,
+    top: int = 20,
+    per_block: int | None = 1,
+    block_threshold: float = 0.5,
+    cluster_names: Any = None,
+) -> pl.DataFrame:
+    """Which features separate the clusters — one per redundant block by default.
+
+    Ranking every feature by a one-way F and printing the top twenty is a trap
+    when the features come in correlated blocks: forty arbor metrics that all
+    track the same thing take all twenty slots, and the answer looks decisive
+    while telling you about one measurement. What you wanted to know is *which
+    kinds of measurement* separate these clusters, and that is a question about
+    blocks, not columns.
+
+    So the blocks come first. Features are grouped by correlation (the same
+    blocking :func:`feature_correlation` and :func:`block_weights` use, so all
+    three agree), each block is scored by its best member, and the frame returns
+    that member — the block's representative — with the blocks ordered by how
+    well they separate. Twenty rows then means twenty distinct measurements.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)``, scaled. Row-aligned to ``codes``.
+    codes : array-like
+        Per-row integer cluster codes; ``-1`` is ignored. A ``LabelSet``'s codes
+        work directly, provided they are in the same row order as ``features``.
+    columns : sequence of str
+        Feature names, in the column order of ``features``.
+    blocks : SortedMatrix, optional
+        A precomputed :func:`feature_correlation`. Pass the one you already have
+        rather than paying for it twice; omitted, it is computed here.
+    top : int, default 20
+        How many rows to return.
+    per_block : int or None, default 1
+        Representatives per block. ``None`` returns every feature ranked, with
+        the block annotation kept so the redundancy is at least visible rather
+        than silently structuring the list.
+    block_threshold : float, default 0.5
+        Correlation cut defining a block, in ``1 - |r|`` units. Only used when
+        ``blocks`` is not supplied.
+    cluster_names : mapping, optional
+        ``{code: name}`` for the ``high``/``low`` columns.
+
+    Returns
+    -------
+    pl.DataFrame
+        ``feature``, ``block``, ``block_size``, ``f_stat``, ``block_rank``,
+        and the direction — ``high`` / ``low`` name the clusters with the
+        largest and smallest standardised means, with ``high_z`` / ``low_z`` in
+        standard deviations from the cohort mean. An F says a feature differs;
+        the direction says how, which is what a name has to be built from.
+
+    Notes
+    -----
+    The F statistic is descriptive here, not a test: no p-value is reported and
+    none should be inferred. The clusters were *derived from these features*, so
+    any null hypothesis about them was violated before the statistic was
+    computed. It is a ranking of separation, and that is all.
+    """
+    features = np.asarray(features, dtype=float)
+    codes = np.asarray(getattr(codes, "codes", codes)).reshape(-1)
+    names = [str(c) for c in columns]
+    if features.shape[0] != codes.shape[0]:
+        raise ValueError(
+            f"features has {features.shape[0]} rows but codes has {codes.shape[0]}; "
+            "they must be row-aligned"
+        )
+    if features.shape[1] != len(names):
+        raise ValueError(
+            f"features has {features.shape[1]} columns but {len(names)} names"
+        )
+
+    present = sorted({int(c) for c in np.unique(codes) if int(c) >= 0})
+    if len(present) < 2:
+        raise ValueError("need at least two clusters to say what separates them")
+
+    # z-score over the cohort so `high_z` is readable without a legend lookup
+    mean, sd = features.mean(axis=0), features.std(axis=0)
+    sd = np.where(sd == 0, 1.0, sd)
+    z = (features - mean) / sd
+
+    members = [z[codes == c] for c in present]
+    sizes = np.array([m.shape[0] for m in members], dtype=float)
+    means = np.vstack([m.mean(axis=0) for m in members])
+    grand = z.mean(axis=0)
+    between = (sizes[:, None] * (means - grand) ** 2).sum(axis=0) / max(
+        len(present) - 1, 1
+    )
+    within = np.vstack(
+        [((m - mu) ** 2).sum(axis=0) for m, mu in zip(members, means)]
+    ).sum(axis=0) / max(z.shape[0] - len(present), 1)
+    f_stat = between / np.maximum(within, np.finfo(float).eps)
+
+    if blocks is None:
+        blocks = feature_correlation(features, names, block_threshold=block_threshold)
+    # SortedMatrix orders features; map its per-feature block back to input order
+    ordered = [str(v) for v in np.asarray(blocks.cell_ids)]
+    block_of = dict(zip(ordered, np.asarray(blocks.codes).tolist()))
+    block = np.array([int(block_of.get(n, -1)) for n in names], dtype=np.int64)
+    block_size = np.array(
+        [int((block == b).sum()) if b >= 0 else 1 for b in block], dtype=np.int64
+    )
+
+    label_for = {int(c): str((cluster_names or {}).get(int(c), c)) for c in present}
+    high_idx, low_idx = means.argmax(axis=0), means.argmin(axis=0)
+
+    frame = pl.DataFrame(
+        {
+            "feature": names,
+            "block": block,
+            "block_size": block_size,
+            "f_stat": f_stat,
+            "high": [label_for[present[i]] for i in high_idx],
+            "high_z": means[high_idx, np.arange(means.shape[1])],
+            "low": [label_for[present[i]] for i in low_idx],
+            "low_z": means[low_idx, np.arange(means.shape[1])],
+        }
+    ).with_columns(
+        pl.col("f_stat")
+        .rank("ordinal", descending=True)
+        .over("block")
+        .alias("block_rank")
+    )
+
+    if per_block is not None:
+        frame = frame.filter(pl.col("block_rank") <= per_block)
+    return frame.sort("f_stat", descending=True).head(top)

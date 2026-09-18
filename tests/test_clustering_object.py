@@ -453,6 +453,26 @@ def test_consensus_strength_finds_cells_that_can_never_join() -> None:
         assert (labels[lonely] == -1).all()
 
 
+def test_consensus_strength_excludes_the_diagonal_without_touching_it() -> None:
+    """Each cell's best co-clustering with some *other* cell, matrix left intact."""
+    ft, _ = _depth_table()
+    clus = ft.cluster("core", **_PARAMS)
+
+    matrix = clus.similarity_matrix
+    before_diagonal = matrix.diagonal().copy()
+    before_nnz = matrix.nnz
+
+    strength = clus.consensus_strength()
+
+    dense = matrix.toarray().astype(float)
+    np.fill_diagonal(dense, 0.0)
+    np.testing.assert_allclose(strength, dense.max(axis=1), atol=1e-6)
+
+    assert clus.similarity_matrix is matrix
+    assert matrix.nnz == before_nnz
+    np.testing.assert_array_equal(matrix.diagonal(), before_diagonal)
+
+
 # -- partitions: the runs behind the consensus ---------------------------------
 
 
@@ -954,6 +974,64 @@ def test_soft_labels_read_high_for_own_cluster_members() -> None:
         own = soft[column].to_numpy()[codes == i]
         other = soft[column].to_numpy()[(codes != i) & (codes != -1)]
         assert own.mean() > other.mean()
+
+
+def test_soft_labels_match_a_brute_force_mean_over_members() -> None:
+    """The definition, computed the slow obvious way, against the sparse one.
+
+    Guards the indicator-matmul rewrite: entry (i, k) is the mean of row i over
+    cluster k's members, with cell i itself left out of both sum and count.
+    """
+    ft = _table()
+    clus = ft.cluster("core", **_PARAMS, name="run")
+    labels = clus.label(distance_threshold=0.5, name="kind")
+    soft = clus.soft_labels(labels)
+
+    dense = clus.similarity_matrix.toarray().astype(float) / clus.max_value
+    codes = labels.codes
+    for k, column in enumerate(c for c in soft.columns if c.startswith("p_")):
+        members = np.flatnonzero(codes == k)
+        expected = np.array(
+            [
+                np.sum(dense[i, members[members != i]])
+                / max(members[members != i].size, 1)
+                for i in range(clus.shape[0])
+            ]
+        )
+        np.testing.assert_allclose(soft[column].to_numpy(), expected, atol=1e-6)
+
+
+def test_soft_labels_leaves_the_consensus_matrix_untouched() -> None:
+    """It reads the matrix; it must never edit (or copy) the session's largest object."""
+    ft = _table()
+    clus = ft.cluster("core", **_PARAMS, name="run")
+    labels = clus.label(distance_threshold=0.5, name="kind")
+
+    matrix = clus.similarity_matrix
+    before_diagonal = matrix.diagonal().copy()
+    before_nnz, before_sum = matrix.nnz, float(matrix.sum())
+
+    clus.soft_labels(labels)
+
+    assert clus.similarity_matrix is matrix
+    assert matrix.nnz == before_nnz
+    assert float(matrix.sum()) == pytest.approx(before_sum)
+    np.testing.assert_array_equal(matrix.diagonal(), before_diagonal)
+
+
+def test_soft_labels_gives_no_column_to_unassigned_cells() -> None:
+    ft = _table()
+    clus = ft.cluster("core", **_PARAMS, name="run")
+    codes = clus.cluster_labels(0.5)
+    codes[:3] = -1
+
+    soft = clus.soft_labels(codes)
+    p_columns = [c for c in soft.columns if c.startswith("p_")]
+    assert len(p_columns) == len({int(v) for v in codes if v != -1})
+    assert "p_-1" not in soft.columns
+    # Unassigned cells still get scored against every cluster.
+    assert soft.height == clus.shape[0]
+    assert soft.select(p_columns).head(3).to_numpy().shape == (3, len(p_columns))
 
 
 def test_attaching_a_propagation_carries_confidence_alongside() -> None:

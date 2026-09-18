@@ -22,15 +22,26 @@ from __future__ import annotations
 import hashlib
 import warnings
 import zlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import polars as pl
 
 from cellpax.space import FittedSpace
+
+if TYPE_CHECKING:
+    from anndata import AnnData
+
+    from cellpax.assign import Assignment
+    from cellpax.clustering import Clustering, SimilarityMatrix
+    from cellpax.compare import Comparison
+    from cellpax.gradient import Gradient
+    from cellpax.labels import LabelSet
+    from cellpax.propagate import Propagation
+    from cellpax.validate import TransferScore
 
 _DEFAULT_MASK = "all"
 _MASK_PREFIX = "_mask_"
@@ -51,6 +62,15 @@ class FittedScaler:
 
     In step 1 ``transforms`` is all ``None`` (identity); the unified ``preprocess``
     layer will populate it with ``"ihs"`` / ``"log"`` / ``"sqrt"`` per feature.
+
+    Attributes
+    ----------
+    scaler : object
+        Scikit-learn-compatible transformer providing ``fit`` and ``transform``.
+    transforms : list of str or None
+        Per-feature transform names in matrix-column order.
+    shifts : list of float, optional
+        Fitted additive shifts for logarithmic transforms. ``None`` before fit.
     """
 
     scaler: Any
@@ -65,7 +85,18 @@ class FittedScaler:
     """
 
     def fit(self, features: np.ndarray) -> "FittedScaler":
-        """Decide the per-feature shifts on ``features``, then fit the scaler."""
+        """Decide per-feature shifts and fit the scaler.
+
+        Parameters
+        ----------
+        features : numpy.ndarray
+            ``(n_cells, n_features)`` raw matrix.
+
+        Returns
+        -------
+        FittedScaler
+            This fitted transform/scaler pair.
+        """
         features = np.asarray(features, dtype=float)
         self.shifts = [
             0.0
@@ -73,10 +104,33 @@ class FittedScaler:
             else float(1e-9 - features[:, index].min())
             for index, transform in enumerate(self.transforms)
         ]
-        self.scaler.fit(self.apply_transforms(features))
+        with warnings.catch_warnings():
+            # a rank transform caps its landmarks at the fit population's size; that is
+            # the documented behaviour, not a problem, and a small mask hits it every fit
+            warnings.filterwarnings("ignore", message=r"n_quantiles \(\d+\) is greater")
+            self.scaler.fit(self.apply_transforms(features))
         return self
 
     def apply_transforms(self, features: np.ndarray) -> np.ndarray:
+        """Apply the fitted per-feature nonlinear transforms.
+
+        Parameters
+        ----------
+        features : numpy.ndarray
+            ``(n_cells, n_features)`` raw feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Transformed features with the same shape. When every transform is
+            identity, the input array is returned unchanged.
+
+        Raises
+        ------
+        ValueError
+            If logarithmic shifts have not been fit, values fall outside a
+            fitted transform's domain, or a transform name is unknown.
+        """
         if all(transform is None for transform in self.transforms):
             return features
         if self.shifts is None and "log" in self.transforms:
@@ -114,7 +168,115 @@ class FittedScaler:
         return features
 
     def transform(self, features: np.ndarray) -> np.ndarray:
+        """Apply the nonlinear transforms and fitted scaler.
+
+        Parameters
+        ----------
+        features : numpy.ndarray
+            ``(n_cells, n_features)`` raw feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Scaled matrix with one row per input cell.
+        """
         return self.scaler.transform(self.apply_transforms(features))
+
+    def invert_transforms(self, features: np.ndarray) -> np.ndarray:
+        """Undo the per-feature nonlinear transforms: ``sinh``, square, ``exp`` - shift.
+
+        Parameters
+        ----------
+        features : numpy.ndarray
+            ``(n_cells, n_features)`` matrix in transformed units.
+
+        Returns
+        -------
+        numpy.ndarray
+            Matrix in raw feature units. When every transform is identity, the input
+            array is returned unchanged.
+
+        Raises
+        ------
+        ValueError
+            If logarithmic shifts have not been fit or a transform name is unknown.
+        """
+        if all(transform is None for transform in self.transforms):
+            return features
+        if self.shifts is None and "log" in self.transforms:
+            raise ValueError(
+                "this scaler carries a 'log' transform but no fitted shifts, so the "
+                "transform cannot be inverted; call fit() first"
+            )
+        features = np.asarray(features, dtype=float).copy()
+        for index, transform in enumerate(self.transforms):
+            if transform is None:
+                continue
+            column = features[:, index]
+            if transform == "ihs":
+                features[:, index] = np.sinh(column)
+            elif transform == "sqrt":
+                features[:, index] = np.square(np.clip(column, 0.0, None))
+            elif transform == "log":
+                features[:, index] = np.exp(column) - self.shifts[index]
+            else:
+                raise ValueError(f"Unknown per-feature transform {transform!r}")
+        return features
+
+    def inverse_transform(self, features: np.ndarray) -> np.ndarray:
+        """Map scaled values back to raw feature units — the inverse of ``transform``.
+
+        Runs the scaler's own ``inverse_transform`` and then undoes the per-feature
+        transforms. Exact wherever the forward map is invertible; values a clipping
+        step moved stay at their bound, and a rank transform returns landmark-
+        interpolated values.
+
+        Parameters
+        ----------
+        features : numpy.ndarray
+            ``(n_cells, n_features)`` matrix in scaled units.
+
+        Returns
+        -------
+        numpy.ndarray
+            Matrix in raw feature units.
+
+        Raises
+        ------
+        TypeError
+            If the underlying scaler has no ``inverse_transform``.
+        """
+        inverse = getattr(self.scaler, "inverse_transform", None)
+        if inverse is None:
+            raise TypeError(
+                f"{type(self.scaler).__name__} has no inverse_transform, so values "
+                f"cannot be mapped back into raw units"
+            )
+        return self.invert_transforms(inverse(np.asarray(features, dtype=float)))
+
+
+@dataclass
+class _DatasetJoin:
+    """How a table was assembled by :func:`~cellpax.datasets.join_datasets`.
+
+    ``scalers`` holds one fitted scaler per ``(dataset, stratum)`` that took part in a
+    mapping — the reference's as well as each other dataset's — keyed with a ``None``
+    stratum when the join was unstratified. ``entries`` is one record per dataset in
+    join order: its original id column name, fit mask, strata column, cell count, id
+    block offset, and the factory tag.
+    """
+
+    column: str
+    source_id_column: str
+    stratum_column: str | None
+    reference: str
+    features: list[str]
+    entries: list[dict[str, Any]]
+    scalers: dict[tuple[str, str | None], FittedScaler]
+
+    @property
+    def datasets(self) -> list[str]:
+        return [entry["name"] for entry in self.entries]
 
 
 @dataclass
@@ -132,6 +294,25 @@ class FittedEmbedding:
     can be re-derived but a UMAP fit is neither small nor reproducible across
     versions. After a ``load`` you have the coordinates and must re-``embed`` to
     project anything new.
+
+    Attributes
+    ----------
+    model : object
+        Fitted embedding estimator.
+    method : str
+        Backend name, such as ``"pca"`` or ``"umap"``.
+    columns : tuple of str
+        Input features in fitted column order.
+    n_components : int
+        Number of output coordinates.
+    space : str
+        Human-readable label for the fitted input representation.
+    fitted_space : FittedSpace, optional
+        Frozen representation applied before the embedding estimator.
+    internal_reduction : str, optional
+        Additional reduction performed internally by the backend.
+    params : dict, optional
+        JSON-safe parameters describing the fit.
     """
 
     model: Any
@@ -163,6 +344,16 @@ class FittedEmbedding:
         its own frozen scaler, so a space fit on one mask stays coherent when
         the embedding serves another. Without one, ``features`` are the scaled
         rows the model was fit on, exactly as before.
+
+        Parameters
+        ----------
+        features : ndarray
+            New rows in the fitted column order.
+
+        Returns
+        -------
+        ndarray
+            Embedded coordinates with one row per input row.
         """
         if self.fitted_space is not None:
             scaled = self.fitted_space.transform(features)
@@ -435,6 +626,13 @@ class FeatureCollection:
 
     Supports set algebra: ``a | b`` (union), ``a & b`` (intersection), ``a - b``
     (difference), each returning a new ``FeatureCollection``.
+
+    Attributes
+    ----------
+    name : str
+        Collection name used by :class:`FeatureTable` accessors.
+    columns : tuple of str
+        Ordered, deduplicated feature names.
     """
 
     name: str
@@ -464,6 +662,33 @@ class FeatureCollection:
 
     def __len__(self) -> int:
         return len(self.columns)
+
+
+def _is_frame(data: Any) -> bool:
+    """Whether ``data`` is DataFrame-shaped — polars, pandas, or a look-alike."""
+    return isinstance(data, pl.DataFrame) or (
+        hasattr(data, "columns") and getattr(data, "ndim", None) == 2
+    )
+
+
+def _squeeze_frame(data: Any, what: str) -> Any:
+    """Reduce a one-column DataFrame to its column, and refuse a wider one.
+
+    ``df.select(expr)`` is the natural thing to write when the expression is the
+    point, but it hands back a frame, and a frame of width 1 becomes one length-1
+    row per cell — a silent ``Array(Boolean, shape=(1,))`` column that surfaces
+    much later, wherever the values are finally read. Squeeze it here instead;
+    anything wider was never one value per cell.
+    """
+    if not _is_frame(data):
+        return data
+    width = data.shape[1]
+    if width != 1:
+        raise ValueError(
+            f"{what} is a DataFrame with {width} columns; pass one value per "
+            f"cell (a Series, list, or 1-column DataFrame)"
+        )
+    return data.to_series() if isinstance(data, pl.DataFrame) else data[data.columns[0]]
 
 
 def _apply_id_map(
@@ -507,10 +732,40 @@ def _apply_id_map(
 
 
 class _CollectionAccessor:
-    """``ft.collections["axon"]`` access to defined feature collections."""
+    """``ft.collections["axon"]`` access to defined feature collections.
+
+    ``names`` lists what has been defined — the counterpart of ``ft.masks`` and
+    ``ft.labels``, which are plain lists because nothing is indexed off them.
+    Iterating yields the same names, ``len`` counts them, and ``catalog()`` is the
+    dataframe view with each collection's columns alongside.
+    """
 
     def __init__(self, table: "FeatureTable") -> None:
         self._table = table
+
+    @property
+    def names(self) -> list[str]:
+        """Names of every defined collection, in definition order."""
+        return self._table._collection_names
+
+    def catalog(self) -> pl.DataFrame:
+        """One row per collection: ``name`` / ``n_features`` / ``columns``."""
+        return pl.DataFrame(
+            [
+                {
+                    "name": name,
+                    "n_features": len(self[name]),
+                    "columns": list(self[name].columns),
+                }
+                for name in self.names
+            ],
+            schema={
+                "name": pl.String,
+                "n_features": pl.Int64,
+                "columns": pl.List(pl.String),
+            },
+            orient="row",
+        )
 
     def __getitem__(self, name: str) -> FeatureCollection:
         return self._table._collection(name)
@@ -518,8 +773,14 @@ class _CollectionAccessor:
     def __iter__(self):
         return iter(self._table._collection_names)
 
+    def __len__(self) -> int:
+        return len(self._table._collection_names)
+
     def __contains__(self, name: str) -> bool:
         return name in self._table._collection_names
+
+    def __repr__(self) -> str:
+        return f"FeatureCollections({self.names})"
 
 
 class FeatureTable:
@@ -527,20 +788,24 @@ class FeatureTable:
 
     Parameters
     ----------
-    df:
+    df : polars.DataFrame
         The per-cell data (polars ``DataFrame``; a pandas frame is accepted and
         converted). Holds the id column, feature columns, and any metadata.
-    features:
+    features : sequence of str
         The feature column names to cluster/scale on.
-    id_column:
+    id_column : str, default 'cell_id'
         The unique per-cell key. Default ``"cell_id"``.
-    id_map:
+    id_map : polars.DataFrame, optional
         Optional ``[<key>, id_column]`` frame joined in when ``id_column`` is not
         already present (e.g. mapping ``root_id`` → ``cell_id``). See
         ``set_id_column`` to do this after construction.
-    scaler_factory:
+    feature_metadata : polars.DataFrame, optional
+        Per-feature annotations keyed by a ``feature_id`` column.
+    scaler_factory : callable, optional
         Zero-argument callable returning a fresh unfitted scaler. Default
         ``StandardScaler``.
+    seed : int, default 0
+        Table-level seed from which stochastic operations derive stable seeds.
     """
 
     def __init__(
@@ -610,7 +875,7 @@ class FeatureTable:
         ] = {}
         self._collections: dict[str, FeatureCollection] = {}
         self._transforms: dict[str, str | None] = {}
-        self._clusterings: dict[str, Any] = {}
+        self._clusterings: dict[str, Clustering] = {}
         self._embeddings: dict[tuple[str, str], pl.DataFrame] = {}
         # the estimators behind those coordinates, so new cells can be projected in;
         # session-only, unlike the coordinates, which persist
@@ -627,6 +892,8 @@ class FeatureTable:
         # feature -> mask name: the cells this feature is *informative* for.
         # Absent means valid everywhere. See set_validity.
         self._validity: dict[str, str] = {}
+        # set by join_datasets: the per-dataset fits and the source-id bookkeeping
+        self._join: _DatasetJoin | None = None
         self._seed = int(seed)
 
     @property
@@ -653,6 +920,7 @@ class FeatureTable:
 
     @property
     def id_column(self) -> str:
+        """Name of the unique cell-identifier column."""
         return self._id_column
 
     @property
@@ -662,10 +930,12 @@ class FeatureTable:
 
     @property
     def n_cells(self) -> int:
+        """Number of rows in the table."""
         return self._df.height
 
     @property
     def n_features(self) -> int:
+        """Number of columns currently designated as features."""
         return len(self._features)
 
     @property
@@ -706,7 +976,18 @@ class FeatureTable:
         ]
 
     def mask_series(self, mask: str | None = None) -> pl.Series:
-        """The boolean membership Series for a mask."""
+        """Return boolean membership for a mask.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Mask name; ``None`` selects ``"all"``.
+
+        Returns
+        -------
+        polars.Series
+            Full-table boolean membership series.
+        """
         name = mask or _DEFAULT_MASK
         column = _mask_column(name)
         if column not in self._df.columns:
@@ -721,7 +1002,7 @@ class FeatureTable:
 
     def add_column(
         self,
-        data: Sequence[Any] | np.ndarray | pl.Series,
+        data: Sequence[Any] | np.ndarray | pl.Series | pl.DataFrame,
         name: str,
         *,
         mask: str | None = None,
@@ -733,12 +1014,34 @@ class FeatureTable:
         ``data`` must have one value per True entry of ``mask``; the remaining
         rows are filled with ``fill_value``. Dtype is inferred by polars.
 
+        A one-column DataFrame (``df.select(expr)``, a pandas frame) or an
+        ``(n, 1)`` array is squeezed to its column, since that is what the caller
+        meant; a wider frame raises rather than becoming an array-valued column.
+
         Feature columns and the id column cannot be replaced this way: a feature
         write would leave every scaler, space, and model fit on the old values
         serving stale numbers, and an id write would bypass the uniqueness
         invariant. Pass ``overwrite=True`` to replace a *feature* deliberately —
         the fits that saw the old values are dropped. The id column always
         refuses; use ``set_id_column``.
+
+        Parameters
+        ----------
+        data : sequence, numpy.ndarray, polars.Series, or DataFrame
+            One value per selected cell; one-column inputs are squeezed.
+        name : str
+            Destination column name.
+        mask : str, optional
+            Rows receiving ``data``; ``None`` selects all rows.
+        fill_value : object, optional
+            Value written outside ``mask``.
+        overwrite : bool, default False
+            Permit replacement of an existing feature and invalidate its fits.
+
+        Returns
+        -------
+        FeatureTable
+            This mutated table.
         """
         if name.startswith(_MASK_PREFIX):
             raise ValueError(f"Column names cannot start with {_MASK_PREFIX!r}")
@@ -746,15 +1049,25 @@ class FeatureTable:
             raise ValueError(
                 f"{name!r} is the id column; use set_id_column to re-key the table"
             )
+        if self._join is not None and name in self._join_columns():
+            raise ValueError(
+                f"{name!r} records where each cell came from in this joined table; "
+                f"the id lookups and harmonize() read it, so it cannot be replaced"
+            )
         if name in self._features and not overwrite:
             raise ValueError(
                 f"{name!r} is a feature column; pass overwrite=True to replace its "
                 f"values (fits that saw the old values will be dropped)"
             )
         mask_np = self.mask_series(mask).to_numpy()
-        values = list(
-            data.to_list() if isinstance(data, pl.Series) else np.asarray(data)
-        )
+        data = _squeeze_frame(data, f"data for column {name!r}")
+        if isinstance(data, pl.Series):
+            values = data.to_list()
+        else:
+            array = np.asarray(data)
+            if array.ndim == 2 and array.shape[1] == 1:
+                array = array[:, 0]
+            values = list(array)
         positions = np.flatnonzero(mask_np)
         if len(values) != len(positions):
             raise ValueError(
@@ -771,7 +1084,7 @@ class FeatureTable:
     def add_mask(
         self,
         name: str,
-        predicate: pl.Expr | pl.Series | np.ndarray | Sequence[bool],
+        predicate: pl.Expr | pl.Series | pl.DataFrame | np.ndarray | Sequence[bool],
         *,
         based_on: str | None = None,
     ) -> "FeatureTable":
@@ -786,6 +1099,20 @@ class FeatureTable:
         (``pl.col("subclass_nn") == "L23IT"``) even though unassigned cells compare
         null, which is the move that carves the next round of clustering out of a
         propagated label.
+
+        Parameters
+        ----------
+        name : str
+            New mask name.
+        predicate : polars expression or array-like of bool
+            Full-table membership rule.
+        based_on : str, optional
+            Parent mask intersected with the predicate.
+
+        Returns
+        -------
+        FeatureTable
+            This table with the named mask added.
         """
         if not name or name.startswith(_MASK_PREFIX) or name == _DEFAULT_MASK:
             raise ValueError(f"Invalid mask name {name!r}")
@@ -794,6 +1121,7 @@ class FeatureTable:
                 f"Invalid mask name {name!r}: '/' would corrupt the item paths a "
                 f"saved analysis stores embeddings under"
             )
+        predicate = _squeeze_frame(predicate, f"predicate for mask {name!r}")
         if isinstance(predicate, pl.Expr):
             series = self._df.select(predicate.alias("m")).to_series()
         elif isinstance(predicate, pl.Series):
@@ -819,6 +1147,16 @@ class FeatureTable:
         implicit ``"all"`` mask can't be dropped. Masks defined ``based_on``
         this one were already flattened to their own boolean column at
         creation time, so they're unaffected.
+
+        Parameters
+        ----------
+        name : str
+            Mask to remove.
+
+        Returns
+        -------
+        FeatureTable
+            This table without the mask and its derived fits.
         """
         if name == _DEFAULT_MASK:
             raise ValueError(f"Cannot drop the implicit {_DEFAULT_MASK!r} mask")
@@ -908,6 +1246,11 @@ class FeatureTable:
         model is still live or only coordinates survive), attached labels,
         plus the scaler rule, transforms, and the table seed. The companion
         to ``folio.describe()`` on the persistence side.
+
+        Returns
+        -------
+        str
+            Multiline human-readable analysis summary.
         """
         from collections import Counter
 
@@ -920,7 +1263,9 @@ class FeatureTable:
             from cellpax.persist import _scaler_tag
 
             tag = _scaler_tag(self._scaler_factory)
-            if isinstance(tag, dict):
+            if isinstance(tag, dict) and tag.get("kind") == "quantile":
+                scaler = _describe_quantile_tag(tag)
+            elif isinstance(tag, dict):
                 # show only the parameters the mode actually uses
                 mode = tag.get("mode", "percentile")
                 relevant = (
@@ -942,6 +1287,32 @@ class FeatureTable:
             else "not preprocessed"
         )
         lines.append(f"scaler: {scaler} · transforms: {transforms}")
+
+        if self._join is not None:
+            join = self._join
+            factory = join.entries[0].get("factory")
+            if isinstance(factory, dict) and factory.get("kind") == "quantile":
+                factory = _describe_quantile_tag(factory)
+            elif isinstance(factory, dict):
+                factory = ", ".join(f"{k}={v}" for k, v in factory.items())
+            strata = (
+                f"stratified by {join.stratum_column!r}"
+                if join.stratum_column
+                else "unstratified"
+            )
+            lines.append(
+                f"\ndatasets ({len(join.entries)}) — column {join.column!r}, "
+                f"reference {join.reference!r}, {strata}, "
+                f"harmonizer: {factory or 'unrecorded'}"
+            )
+            counts = dict(self._df.group_by(join.column).len().iter_rows())
+            for entry in join.entries:
+                fit = f"  fit on {entry['fit_mask']!r}" if entry.get("fit_mask") else ""
+                marker = "  [reference]" if entry["name"] == join.reference else ""
+                lines.append(
+                    f"  {entry['name']:<24} {counts.get(entry['name'], 0):>9,}"
+                    f"  source ids: {join.source_id_column!r}{fit}{marker}"
+                )
 
         domain_masks = set(self._validity.values())
         lines.append(f"\nmasks ({len(self.masks)})")
@@ -1043,6 +1414,16 @@ class FeatureTable:
         the same thing. There is deliberately no *per-call* factory choice:
         that would key every scaler cache on the factory and resurrect the
         combinatorial fitting the redesign removed.
+
+        Parameters
+        ----------
+        scaler_factory : callable
+            Zero-argument callable returning an unfitted scikit-learn transformer.
+
+        Returns
+        -------
+        FeatureTable
+            This table, after invalidating results fitted in the old scaled space.
         """
         validated = _validate_scaler_factory(scaler_factory)
         if validated is self._scaler_factory:
@@ -1066,6 +1447,25 @@ class FeatureTable:
         ``id_map`` (a ``[<key>, name]`` frame, e.g. ``['root_id', 'cell_id']``); it
         is left-joined on the shared key (or ``on``) to add ``name``. Every cell
         must map and ids must be unique.
+
+        Parameters
+        ----------
+        name : str
+            Existing or incoming column to use as the cell identifier.
+        id_map : dataframe-like, optional
+            Two-column mapping used when ``name`` is not already present.
+        on : str, optional
+            Join key shared by the table and ``id_map``.
+
+        Returns
+        -------
+        FeatureTable
+            This table with its identifier column updated.
+
+        Raises
+        ------
+        ValueError
+            If the identifier cannot be added or is null or non-unique.
         """
         if name not in self._df.columns:
             if id_map is None:
@@ -1123,6 +1523,33 @@ class FeatureTable:
         (``allow_missing=True`` permits nulls, which then can't be scaled). Pass
         ``collection`` to also define a feature collection of exactly these
         features in the same call.
+
+        Parameters
+        ----------
+        source : polars.DataFrame
+            Keyed frame containing the feature columns to add.
+        features : sequence of str, optional
+            Columns to add; by default all columns except the join key.
+        on : str, optional
+            Join key, defaulting to :attr:`id_column`.
+        feature_metadata : polars.DataFrame, optional
+            Metadata keyed by ``feature_id`` for the new features.
+        allow_missing : bool, default=False
+            Whether cells without matching feature values are permitted.
+        collection : str, optional
+            Name of a collection to create from the added features.
+
+        Returns
+        -------
+        FeatureTable
+            This table with the features registered.
+
+        Raises
+        ------
+        ValueError
+            If keys, features, or coverage are invalid.
+        TypeError
+            If a selected feature is not numeric.
         """
         if not isinstance(source, pl.DataFrame):
             source = pl.from_pandas(source)
@@ -1160,6 +1587,12 @@ class FeatureTable:
                     f"source does not cover every cell for: {uncovered} "
                     "(pass allow_missing=True to permit nulls)"
                 )
+        if self._join is not None:
+            warnings.warn(
+                f"{features} were added to a joined table without harmonization; "
+                f"their values are still in each dataset's own units",
+                stacklevel=2,
+            )
         self._df = joined
         self._features = self._features + features
         new_var = pl.DataFrame({"feature_id": features})
@@ -1224,6 +1657,29 @@ class FeatureTable:
         ``valid_where`` names a mask and declares the selected features' validity
         domain in the same call — shorthand for a following ``set_validity``. See
         :meth:`set_validity` for what a validity domain means.
+
+        Parameters
+        ----------
+        name : str
+            Collection name.
+        columns : sequence of str, optional
+            Explicit feature names.
+        family, modality : str or sequence of str, optional
+            Values selected from the corresponding feature-metadata column.
+        predicate : polars.Expr, optional
+            Expression evaluated against feature metadata.
+        valid_where : str, optional
+            Existing mask declaring where the selected features are valid.
+
+        Returns
+        -------
+        FeatureTable
+            This table with the collection registered.
+
+        Raises
+        ------
+        ValueError
+            If the selector is ambiguous or selects invalid or no features.
         """
         selectors = [
             columns is not None,
@@ -1285,6 +1741,23 @@ class FeatureTable:
         provenance, and a named mask is the only form of it that persists,
         composes with ``based_on``, and shows in ``ft.masks``. A mask that
         backs a validity domain can't be dropped while it does.
+
+        Parameters
+        ----------
+        columns : str, FeatureCollection, sequence of str, or None
+            Features whose validity domain is changed.
+        where : str or None
+            Existing mask name, or ``None`` to clear the restriction.
+
+        Returns
+        -------
+        FeatureTable
+            This table with updated validity metadata.
+
+        Raises
+        ------
+        ValueError
+            If a feature or mask is unknown or ``where`` is ``"all"``.
         """
         chosen = self._resolve_columns(columns)
         if where is None:
@@ -1316,6 +1789,18 @@ class FeatureTable:
         Entry ``(i, j)`` is whether column *j* is informative for cell *i* of
         ``mask`` — membership of the cell in the column's validity mask, or
         ``True`` everywhere for a column with no declared domain.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cell mask defining output rows.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features defining output columns.
+
+        Returns
+        -------
+        ndarray of bool
+            Validity matrix with shape ``(n_selected_cells, n_features)``.
         """
         cols = self._resolve_columns(columns)
         member = self.mask_series(mask).to_numpy()
@@ -1336,6 +1821,18 @@ class FeatureTable:
 
         The coverage question a collection answers as a whole — ``mask`` row
         order, ready to combine with ``features(mask)``.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cell mask defining output rows.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features to require.
+
+        Returns
+        -------
+        ndarray of bool
+            One value per selected cell.
         """
         return self.validity(mask, columns=columns).all(axis=1)
 
@@ -1351,6 +1848,18 @@ class FeatureTable:
         ``invalid_features`` (the columns that are *not* valid under it).
         Truncation is positional, so in practice a table collapses to a handful
         of patterns — the shape that makes per-pattern models viable later.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cell mask to summarize.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features defining each pattern.
+
+        Returns
+        -------
+        polars.DataFrame
+            Distinct patterns with counts and invalid feature names.
         """
         cols = self._resolve_columns(columns)
         matrix = self.validity(mask, columns=cols)
@@ -1404,6 +1913,27 @@ class FeatureTable:
         Transforms are recorded per feature and applied whenever features are
         scaled; changing them drops every fit and stored result computed under
         the old transforms.
+
+        Parameters
+        ----------
+        skew_screen : bool, default=True
+            Apply the transform only to sufficiently right-skewed features.
+        method : {"ihs", "log", "sqrt"} or None, default="ihs"
+            Transform to record, or ``None`` to restore identity transforms.
+        threshold : float, default=1.5
+            Skewness threshold used when ``skew_screen`` is true.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features to update.
+
+        Returns
+        -------
+        FeatureTable
+            This table after invalidating feature-dependent fitted results.
+
+        Raises
+        ------
+        ValueError
+            If ``method`` is unsupported or a feature collection is unknown.
         """
         if method is not None and method not in {"ihs", "log", "sqrt"}:
             raise ValueError("method must be 'ihs', 'log', 'sqrt', or None")
@@ -1453,7 +1983,7 @@ class FeatureTable:
         order_by: str | None = None,
         order_agg: Literal["mean", "median"] = "mean",
         order_ascending: bool = True,
-    ) -> Any:
+    ) -> "Clustering":
         """Consensus-cluster a mask's scaled features into a ``Clustering``.
 
         Parameters
@@ -1485,6 +2015,8 @@ class FeatureTable:
             dropped. Ignored by every other weighting. Seurat uses ``1/15``. Raising it
             denoises dense regions but can strand cells in sparse ones, which
             ``kneighbor_graph`` counts as ``n_isolated`` and warns about.
+        metric : str, default="minkowski"
+            Distance metric used to construct nearest-neighbor graphs.
         normalize : bool, default True
             Divide co-clustering counts by the runs that kept both cells, giving
             similarities in ``[0, 1]`` rather than raw counts.
@@ -1501,6 +2033,11 @@ class FeatureTable:
             Added to each eigenvalue before the ``alpha`` scaling, bounding how much a
             near-degenerate component can be amplified. ``ft.space(mask).noise_floor`` is
             the recommended value whenever ``alpha > 0``.
+        space : FittedSpace, optional
+            Pre-fitted representation. It cannot be combined with ``pca``, ``alpha``,
+            ``eigenvalue_floor``, or ``feature_weights`` choices.
+        feature_weights : ndarray, optional
+            Per-feature multipliers frozen into the fitted PCA space.
         seed : int, optional
             Seeds every run reproducibly.
         n_jobs : int, default -1
@@ -1749,7 +2286,7 @@ class FeatureTable:
 
     def neighborhood_purity(
         self,
-        labels: Any,
+        labels: "LabelSet | str",
         *,
         mask: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
@@ -1763,6 +2300,22 @@ class FeatureTable:
         share its label — 1.0 means a cell's whole neighborhood agrees with
         it, 0.0 means none of it does. A quick check of how well a clustering
         respects local structure (ported from dfc's neighborhood purity).
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Labels, or the name of an attached label column.
+        mask : str, optional
+            Cells on which to evaluate purity.
+        columns : str, FeatureCollection, sequence of str, or None
+            Feature space used to find neighbors.
+        n_neighbors : int, default=20
+            Number of self-excluded neighbors per cell.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cell identifiers and per-cell purity values.
         """
         from cellpax.clustering import neighborhood_purity as _neighborhood_purity
 
@@ -1776,12 +2329,12 @@ class FeatureTable:
 
     def propagate_labels(
         self,
-        labels: Any,
+        labels: "LabelSet | str",
         *,
         to: str | None = None,
         method: Literal["vote", "spread"] = "vote",
         columns: str | FeatureCollection | Sequence[str] | None = None,
-        ladder: Sequence[Any] | None = None,
+        ladder: Sequence[str | FeatureCollection] | None = None,
         n_neighbors: int = 30,
         pca: bool | float = 0.95,
         weights: Literal["uniform", "distance"] | None = None,
@@ -1793,7 +2346,7 @@ class FeatureTable:
         on_invalid: Literal["warn", "raise", "ignore"] = "warn",
         name: str | None = None,
         seed: int | None = None,
-    ) -> Any:
+    ) -> "Propagation":
         """Carry a curated subset's labels out to a larger population.
 
         The dfc workflow: cluster a high-quality core, then label everything that
@@ -1859,6 +2412,51 @@ class FeatureTable:
         Note it gates *ambiguity*, not *distance*: under ``"vote"`` a cell far from
         the entire reference still comes back unanimous at ``1.0``, and abstaining
         on those is what ``"spread"`` and ``mutual`` are for.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Reference labels or an attached label-column name.
+        to : str, optional
+            Target mask, defaulting to all cells.
+        method : {"vote", "spread"}, default="vote"
+            Nearest-neighbor voting or graph diffusion.
+        columns : str, FeatureCollection, sequence of str, or None
+            One feature set used for every target cell.
+        ladder : sequence of str or FeatureCollection, optional
+            Richest-to-coarsest feature collections used per cell.
+        n_neighbors : int, default=30
+            Neighborhood size.
+        pca : bool or float, default=0.95
+            PCA switch or explained-variance target.
+        weights : {"uniform", "distance"}, optional
+            Neighbor weighting; defaults depend on ``method``.
+        preserve_labeled : bool, default=True
+            Keep reference-cell labels unchanged.
+        min_confidence : float, optional
+            Unassign propagated cells below this confidence.
+        mutual : bool, default=True
+            Restrict diffusion to mutual-neighbor edges.
+        alpha : float, default=0.8
+            Diffusion clamping strength.
+        agreement_folds : int, optional
+            Cross-validation folds used for reference recovery.
+        on_invalid : {"warn", "raise", "ignore"}, default="warn"
+            Response when chosen features are invalid for target cells.
+        name : str, optional
+            Name for the propagated labels.
+        seed : int, optional
+            Random seed for fitted representations and assessment.
+
+        Returns
+        -------
+        Propagation
+            Propagated labels, confidence, and recovery diagnostics.
+
+        Raises
+        ------
+        ValueError
+            If options conflict or reference cells lie outside the target.
         """
         from cellpax.propagate import Propagation, propagate_knn, propagate_spread
 
@@ -1982,6 +2580,221 @@ class FeatureTable:
             },
         )
 
+    def _incoming_rows(
+        self,
+        data: pl.DataFrame | np.ndarray,
+        cols: list[str],
+        cell_ids: Sequence[Any] | np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Raw feature matrix + cell ids for rows that aren't in the table."""
+        ids = None if cell_ids is None else np.asarray(cell_ids).reshape(-1)
+        if isinstance(data, pl.DataFrame):
+            missing = [c for c in cols if c not in data.columns]
+            if missing:
+                raise ValueError(f"data is missing feature columns: {missing}")
+            matrix = data.select(cols).to_numpy()
+            if ids is None and self._id_column in data.columns:
+                ids = data[self._id_column].to_numpy()
+        else:
+            matrix = np.asarray(data, dtype=float)
+            if matrix.ndim != 2:
+                raise ValueError(f"data must be 2-dimensional, got {matrix.ndim}d")
+            if matrix.shape[1] != len(cols):
+                raise ValueError(
+                    f"data has {matrix.shape[1]} columns but the fit covers "
+                    f"{len(cols)} ({cols}); pass a polars frame to match by name"
+                )
+        if ids is None:
+            raise ValueError(
+                f"the new rows need cell ids: give data a {self._id_column!r} column "
+                f"or pass cell_ids="
+            )
+        if ids.shape[0] != matrix.shape[0]:
+            raise ValueError(
+                f"got {ids.shape[0]} cell ids for {matrix.shape[0]} rows of data"
+            )
+        return matrix, ids
+
+    def project_labels(
+        self,
+        data: pl.DataFrame | np.ndarray,
+        labels: "LabelSet | str",
+        *,
+        mask: str | None = None,
+        cell_ids: Sequence[Any] | np.ndarray | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        method: Literal["vote", "spread"] = "vote",
+        n_neighbors: int = 30,
+        pca: bool | float = 0.95,
+        weights: Literal["uniform", "distance"] | None = None,
+        min_confidence: float | None = None,
+        mutual: bool = True,
+        alpha: float = 0.8,
+        agreement_folds: int | None = None,
+        name: str | None = None,
+        seed: int | None = None,
+    ) -> "Propagation":
+        """Label cells that aren't in this table, in a mask's *existing* space.
+
+        ``propagate_labels`` for rows from elsewhere: ``project`` pushes ``data``
+        through ``mask``'s frozen scaler and PCA, and the reference votes on the
+        result. Nothing is re-fit and nothing is stored, so the space the reference
+        was clustered in is exactly the space the new cells are judged in — and the
+        table is untouched, which is the difference from adding the rows and running
+        ``propagate_labels`` over a widened mask.
+
+        ``data`` is a polars frame carrying the feature columns by name (extra
+        columns ignored, order irrelevant) or a raw ``(n, len(columns))`` array in
+        the resolved column order. Cell ids come from ``data``'s id column or from
+        ``cell_ids``; without either this raises, since a ``LabelSet`` with invented
+        ids would silently collide with real ones. ``mask`` defaults to the
+        reference's own, and the reference must live inside it.
+
+        Returns a :class:`~cellpax.propagate.Propagation` over **just the new
+        cells** — the reference is in the vote, not in the result — carrying the
+        reference's cluster ids, names and colors. Its ``LabelSet`` has no mask,
+        because these cells are in no mask of this table; ``self_agreement()`` still
+        reports how well the reference recovers itself in this space, which is the
+        honest ceiling on what the projected labels can be worth.
+
+        The caveats are ``propagate_labels``', sharpened by distance: ``"vote"``
+        casts exactly ``n_neighbors`` votes and so hands every incoming cell a
+        label however far it sits from the reference, and ``confidence`` measures
+        neighbor *disagreement*, never *distance*. Rows from another dataset are
+        exactly where that bites, so reach for ``method="spread"`` (which abstains
+        when nothing is mutually near) or :meth:`assign` when "none of these" has
+        to be an available answer. Feature validity domains aren't checked here —
+        they're properties of cells in the table, and these rows aren't.
+
+        Parameters
+        ----------
+        data : polars.DataFrame or ndarray
+            New raw feature rows, named or in resolved column order.
+        labels : LabelSet or str
+            Reference labels or an attached label-column name.
+        mask : str, optional
+            Mask whose frozen feature space supplies the reference.
+        cell_ids : sequence, optional
+            Identifiers for array input or frames without the id column.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features used by the frozen space.
+        method : {"vote", "spread"}, default="vote"
+            Nearest-neighbor voting or graph diffusion.
+        n_neighbors : int, default=30
+            Neighborhood size.
+        pca : bool or float, default=0.95
+            PCA switch or explained-variance target.
+        weights : {"uniform", "distance"}, optional
+            Neighbor weighting; defaults depend on ``method``.
+        min_confidence : float, optional
+            Unassign projected cells below this confidence.
+        mutual : bool, default=True
+            Restrict diffusion to mutual-neighbor edges.
+        alpha : float, default=0.8
+            Diffusion clamping strength.
+        agreement_folds : int, optional
+            Cross-validation folds used for reference recovery.
+        name : str, optional
+            Name for the projected labels.
+        seed : int, optional
+            Random seed for fitting and assessment.
+
+        Returns
+        -------
+        Propagation
+            Labels and confidence for the new rows plus reference diagnostics.
+
+        Raises
+        ------
+        ValueError
+            If the input shape, identifiers, options, or reference mask are invalid.
+        """
+        from cellpax.propagate import Propagation, propagate_knn, propagate_spread
+
+        if method not in ("vote", "spread"):
+            raise ValueError(f"method must be 'vote' or 'spread', got {method!r}")
+        labels = self._resolve_labels(labels)
+        source = mask or labels.mask or _DEFAULT_MASK
+        source_ids = self._cell_ids(source)
+        outside = np.setdiff1d(labels.cell_ids[labels.assigned], source_ids)
+        if outside.size:
+            raise ValueError(
+                f"{outside.size} reference cells are outside mask {source!r}; the "
+                f"space is fit on that mask, so the reference must live in it"
+            )
+        cols = self._resolve_columns(columns)
+        matrix, new_ids = self._incoming_rows(data, cols, cell_ids)
+
+        # both populations go through one frozen fit — that is the whole point
+        if pca is False:
+            fitted: Any = self.scaler(source, columns=cols)
+            space = "scaled"
+        else:
+            variance = 0.95 if pca is True else float(pca)
+            fitted = self.space(
+                source, columns=cols, explained_variance=variance, seed=seed
+            )
+            space = f"pca({variance:g})"
+        source_codes = labels.codes_for(source_ids)
+        voting = source_codes != -1
+        reference = fitted.transform(self.features(source, columns=cols))[voting]
+        incoming = fitted.transform(matrix)
+
+        features = np.vstack([reference, incoming])
+        codes = np.concatenate(
+            [source_codes[voting], np.full(incoming.shape[0], -1, dtype=np.int64)]
+        )
+        if method == "vote":
+            out, confidence, recovery = propagate_knn(
+                features,
+                codes,
+                n_neighbors=n_neighbors,
+                weights=weights or "uniform",
+                preserve_labeled=True,
+                min_confidence=min_confidence,
+                agreement_folds=0 if agreement_folds is None else agreement_folds,
+                seed=seed,
+            )
+        else:
+            out, confidence, recovery = propagate_spread(
+                features,
+                codes,
+                n_neighbors=n_neighbors,
+                mutual=mutual,
+                weights=weights or "distance",
+                preserve_labeled=True,
+                alpha=alpha,
+                min_confidence=min_confidence,
+                agreement_folds=5 if agreement_folds is None else agreement_folds,
+                seed=seed,
+            )
+        n_reference = int(voting.sum())
+        projected = labels.with_codes(
+            new_ids, out[n_reference:], name=name or f"{labels.name}_nn", mask=None
+        )
+        return Propagation(
+            projected,
+            labels,
+            confidence[n_reference:],
+            recovery,
+            method=method,
+            n_neighbors=n_neighbors,
+            space=space,
+            params={
+                "method": method,
+                "columns": cols,
+                "mask": source,
+                "n_neighbors": n_neighbors,
+                "pca": pca,
+                "weights": weights or ("uniform" if method == "vote" else "distance"),
+                "min_confidence": min_confidence,
+                "mutual": mutual,
+                "alpha": alpha,
+                "agreement_folds": agreement_folds,
+                "seed": seed,
+            },
+        )
+
     def _propagate_ladder(
         self,
         labels: Any,
@@ -2000,7 +2813,7 @@ class FeatureTable:
         agreement_folds: int | None,
         name: str | None,
         seed: int | None,
-    ) -> Any:
+    ) -> "Clustering":
         """Per-cell fallback propagation: each cell gets the richest valid rung.
 
         A global ``columns=`` choice coarsens every cell to the worst cell's
@@ -2163,7 +2976,7 @@ class FeatureTable:
         space: FittedSpace | None = None,
         seed: int | None = None,
         name: str = "leiden",
-    ) -> Any:
+    ) -> "LabelSet":
         """A single Leiden partition of a mask's scaled features, as a ``LabelSet``.
 
         Parameters
@@ -2254,8 +3067,24 @@ class FeatureTable:
             raise ValueError("over_clustering length must match the mask's cells")
         return values
 
-    def clustering(self, name: str) -> Any:
-        """Return a stored ``SimilarityMatrix`` by name."""
+    def clustering(self, name: str) -> "Clustering":
+        """Return a stored clustering by name.
+
+        Parameters
+        ----------
+        name : str
+            Stored clustering name.
+
+        Returns
+        -------
+        Clustering
+            The stored result; no copy is made.
+
+        Raises
+        ------
+        KeyError
+            If ``name`` is not stored.
+        """
         if name not in self._clusterings:
             raise KeyError(
                 f"Unknown clustering {name!r}; stored: {list(self._clusterings)}"
@@ -2264,13 +3093,13 @@ class FeatureTable:
 
     def label(
         self,
-        similarity: Any,
+        similarity: "SimilarityMatrix | str",
         *,
         mask: str | None = None,
         distance_threshold: float,
         min_cluster_size: int = 1,
         name: str = "label",
-    ) -> Any:
+    ) -> "LabelSet":
         """Cut a clustering into a :class:`~cellpax.labels.LabelSet` for a mask.
 
         ``similarity`` is a ``Clustering``, a bare ``SimilarityMatrix``, or the name
@@ -2282,6 +3111,29 @@ class FeatureTable:
         ``mask`` that disagrees with it raises rather than pairing the matrix with
         the wrong cells — the mistake this whole signature invites, since rows are
         matched to mask members by position, not by id.
+
+        Parameters
+        ----------
+        similarity : SimilarityMatrix or str
+            Similarity object or stored clustering name.
+        mask : str, optional
+            Mask aligned to a bare similarity matrix.
+        distance_threshold : float
+            Hierarchical-cut distance threshold.
+        min_cluster_size : int, default=1
+            Clusters smaller than this are marked unassigned.
+        name : str, default="label"
+            Result name.
+
+        Returns
+        -------
+        LabelSet
+            Cell-aligned labels for the selected cut.
+
+        Raises
+        ------
+        ValueError
+            If an explicit mask conflicts with a stored clustering.
         """
         from cellpax.clustering import Clustering
         from cellpax.labels import LabelSet
@@ -2314,13 +3166,13 @@ class FeatureTable:
 
     def reorder_labels(
         self,
-        labels: Any,
+        labels: "LabelSet | str",
         column: str,
         *,
         mask: str | None = None,
         agg: Literal["mean", "median"] = "mean",
         ascending: bool = True,
-    ) -> Any:
+    ) -> "LabelSet":
         """Reorder a ``LabelSet`` by an aggregate of one of this table's columns.
 
         ``labels`` is a ``LabelSet`` or the name of an (attached) label column
@@ -2328,6 +3180,24 @@ class FeatureTable:
         e.g. ``"soma_depth_um"``) — values are matched to ``labels`` by cell id
         via :meth:`~cellpax.labels.LabelSet.reorder_by`, so row order doesn't
         matter.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Labels or an attached label-column name.
+        column : str
+            Numeric table column used to order clusters.
+        mask : str, optional
+            Mask used when reconstructing labels from a column.
+        agg : {"mean", "median"}, default="mean"
+            Within-cluster summary statistic.
+        ascending : bool, default=True
+            Sort lower summaries first.
+
+        Returns
+        -------
+        LabelSet
+            Reordered copy of the labels.
         """
         labels = self._resolve_labels(labels, mask=mask)
         frame = self._df.filter(self.mask_series(mask))
@@ -2335,7 +3205,11 @@ class FeatureTable:
         return labels.reorder_by(mapping, agg=agg, ascending=ascending)
 
     def attach(
-        self, labels: Any, *, name: str | None = None, overwrite: bool = False
+        self,
+        labels: "LabelSet | Propagation | Gradient",
+        *,
+        name: str | None = None,
+        overwrite: bool = False,
     ) -> "FeatureTable":
         """Attach a ``LabelSet`` as name + id columns, joined on the id column.
 
@@ -2360,6 +3234,25 @@ class FeatureTable:
         ``{name}_confidence``, so the number that says how much to trust each
         label is no longer dropped on the floor at exactly the moment the label
         becomes a column.
+
+        Parameters
+        ----------
+        labels : LabelSet, Propagation, or Gradient
+            Result to join by cell identifier.
+        name : str, optional
+            Destination column name.
+        overwrite : bool, default=False
+            Replace conflicting attached-result columns.
+
+        Returns
+        -------
+        FeatureTable
+            This table with the result attached.
+
+        Raises
+        ------
+        ValueError
+            If columns conflict and ``overwrite`` is false.
         """
         if hasattr(labels, "coordinate") and hasattr(labels, "bin"):  # a Gradient
             gradient = labels
@@ -2419,6 +3312,21 @@ class FeatureTable:
         Drops whichever of the pair is present rather than insisting on both, so a
         half-written pair — the state that made ``attach``'s own advice impossible to
         follow — is still removable. Raises only when neither column exists.
+
+        Parameters
+        ----------
+        name : str
+            Attached result name.
+
+        Returns
+        -------
+        FeatureTable
+            This table after removing the attached columns and metadata.
+
+        Raises
+        ------
+        KeyError
+            If no matching attached columns exist.
         """
         present = [
             c
@@ -2431,7 +3339,7 @@ class FeatureTable:
         self._label_meta.pop(name, None)
         return self
 
-    def labelset(self, column: str, *, mask: str | None = None) -> Any:
+    def labelset(self, column: str, *, mask: str | None = None) -> "LabelSet":
         """Reconstruct a ``LabelSet`` from a column, the reverse of ``attach``.
 
         Lets any method that wants a ``LabelSet`` (``compare``, ``dataframe``,
@@ -2451,6 +3359,18 @@ class FeatureTable:
         ``ft.labelset(...)`` round-trips, here or after a ``save``/``load``. The
         column itself still decides the names, since that's what the table shows.
         An explicit ``mask`` overrides the recorded one.
+
+        Parameters
+        ----------
+        column : str
+            Label-name column.
+        mask : str, optional
+            Cells to include, overriding stored mask metadata.
+
+        Returns
+        -------
+        LabelSet
+            Reconstructed labels in table row order.
         """
         from cellpax.labels import Label, LabelSet
 
@@ -2481,19 +3401,21 @@ class FeatureTable:
             cell_ids, frame[column].to_list(), name=column, mask=mask or _DEFAULT_MASK
         )
 
-    def _resolve_labels(self, labels: Any, *, mask: str | None = None) -> Any:
+    def _resolve_labels(
+        self, labels: "LabelSet | str", *, mask: str | None = None
+    ) -> "LabelSet":
         """Coerce a ``LabelSet`` or column-name string into a ``LabelSet``."""
         return self.labelset(labels, mask=mask) if isinstance(labels, str) else labels
 
     def flatten_labels(
         self,
-        labels: Sequence[Any],
+        labels: Sequence["LabelSet | str"],
         *,
         mask: str | None = None,
         name: str = "label",
         fill: str | None = None,
         source_name: str | None = None,
-    ) -> Any:
+    ) -> "LabelSet | tuple[LabelSet, LabelSet]":
         """Collapse labels built over different masks into one, in priority order.
 
         Each cell takes its label from the **first** entry of ``labels`` that
@@ -2519,6 +3441,31 @@ class FeatureTable:
         alongside, recording which entry won each cell (by the entries' own
         names), for checking how much each mask actually contributed. Neither is
         attached: ``ft.attach(flat)`` when you're happy with it.
+
+        Parameters
+        ----------
+        labels : sequence of LabelSet or str
+            Labels in highest-to-lowest priority order.
+        mask : str, optional
+            Cells covered by the result.
+        name : str, default="label"
+            Flattened-label name.
+        fill : str, optional
+            Cluster name assigned where all inputs are unassigned.
+        source_name : str, optional
+            If given, also return labels identifying the winning input.
+
+        Returns
+        -------
+        LabelSet or tuple of LabelSet
+            Flattened labels, plus source labels when ``source_name`` is given.
+
+        Raises
+        ------
+        ValueError
+            If ``labels`` is empty.
+        KeyError
+            If an attached label name is unknown.
         """
         from cellpax.labels import Label, LabelSet
 
@@ -2767,6 +3714,11 @@ class FeatureTable:
         reports them — but ``space``, ``graph_type`` and ``n_columns`` are null there,
         because the fitted model that knew those is session-only. Null is the honest
         answer; re-run ``embed`` to recover it.
+
+        Returns
+        -------
+        polars.DataFrame
+            One row per stored clustering or embedding.
         """
         rows: list[dict[str, Any]] = []
         for name, clustering in self._clusterings.items():
@@ -2863,7 +3815,7 @@ class FeatureTable:
 
     def triage_labels(
         self,
-        labels: Any,
+        labels: "LabelSet | str",
         *,
         mask: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
@@ -2948,7 +3900,7 @@ class FeatureTable:
 
     def assign(
         self,
-        labels: Any,
+        labels: "LabelSet | str",
         *,
         to: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
@@ -2960,7 +3912,7 @@ class FeatureTable:
         on_invalid: Literal["warn", "raise", "ignore"] = "warn",
         name: str | None = None,
         seed: int | None = None,
-    ) -> Any:
+    ) -> "Assignment":
         """Conformal label assignment: per-cell, per-label p-values with a
         coverage certificate — see :mod:`cellpax.assign`.
 
@@ -2997,6 +3949,47 @@ class FeatureTable:
         guarantee at all where they don't exist. See
         :func:`cellpax.assign.conditional_prediction_set` for the
         conditional-coverage alternative (optional ``conditional`` extra).
+
+        One blind spot by construction: the reference cells the classifier
+        *trained* on are scored by a model that memorised them, so their
+        p-values read flatteringly high. Harmless when mapping outward; when
+        the question is the labelling itself, use ``assess_labels``, which
+        cross-fits so every reference cell is judged out-of-fold.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Curated reference labels or an attached label-column name.
+        to : str, optional
+            Target mask, defaulting to all cells.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features used for classification.
+        pca : bool or float, default=0.95
+            PCA switch or explained-variance target.
+        classifier : classifier, optional
+            Scikit-learn-style estimator implementing ``predict_proba``.
+        calibration_fraction : float, default=0.25
+            Per-class fraction reserved for conformal calibration.
+        mondrian : {"class"} or None, default="class"
+            Whether calibration is class conditional.
+        shift_covariates : sequence of str, optional
+            Metadata columns used for covariate-shift weighting.
+        on_invalid : {"warn", "raise", "ignore"}, default="warn"
+            Response to invalid features in the target population.
+        name : str, optional
+            Assignment name.
+        seed : int, optional
+            Random seed.
+
+        Returns
+        -------
+        Assignment
+            Per-cell class p-values and calibration metadata.
+
+        Raises
+        ------
+        ValueError
+            If the reference, split, or validity configuration is unusable.
         """
         from crepes import WrapClassifier
 
@@ -3167,21 +4160,182 @@ class FeatureTable:
             },
         )
 
+    def assess_labels(
+        self,
+        labels: "LabelSet | str",
+        *,
+        to: str | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        pca: bool | float = 0.95,
+        classifier: Any = None,
+        folds: int = 5,
+        mondrian: Literal["class"] | None = "class",
+        on_invalid: Literal["warn", "raise", "ignore"] = "warn",
+        name: str | None = None,
+        seed: int | None = None,
+    ) -> "Assignment":
+        """Cross-fitted conformal p-values *for the labelling itself* — see
+        :func:`cellpax.assign.crossfit_assessment`.
+
+        ``assign`` answers "which labels can this cell defensibly be given?"
+        with a single reference split, which is the right tool for mapping
+        outward but the wrong one for auditing: the reference cells the
+        classifier trained on get flattering p-values, and those are exactly
+        the cells an audit is about. This is the survey mode: the reference
+        is split into ``folds`` stratified folds, every reference cell is
+        scored by the fold that held it out, and non-reference cells in
+        ``to`` are scored by all folds and pooled — so the returned
+        :class:`~cellpax.assign.Assignment` covers every cell in the mask
+        with no cell judged by a model that saw it.
+
+        Same evidence-first contract as ``assign``: the p-value matrix is
+        the result, ``alpha`` belongs to the readers. Two readings this mode
+        exists for. Each reference cell's *own-label* p-value is its label
+        softness in the global label space — every class competes, no
+        hierarchy conditioning — and screening those p-values for atypical
+        cells is a multiple-testing problem: use Benjamini–Hochberg, which
+        stays valid for conformal p-values despite the shared calibration
+        (Bates, Candès, Lei, Romano & Sesia 2023), and prefer flag
+        *frequency* across seeds to a single flagged list. And
+        ``coverage()`` is now a genuine cross-validated self-check rather
+        than a partial resubstitution.
+
+        The certificate is the cross-conformal one: worst-case ``1 -
+        2*alpha`` rather than split conformal's exact ``1 - alpha``, in
+        practice indistinguishable — read ``coverage()`` for the receipt.
+        Classes need ``folds`` reference cells rather than 2; smaller ones
+        are excluded with a warning. ``shift_covariates`` is deliberately
+        absent: the audience here is the curated core itself, which defines
+        the covariate distribution — for mapping onto a shifted population,
+        use ``assign``.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Labels to assess or an attached label-column name.
+        to : str, optional
+            Mask containing the labeled cells.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features used for classification.
+        pca : bool or float, default=0.95
+            PCA switch or explained-variance target.
+        classifier : classifier, optional
+            Scikit-learn-style estimator implementing ``predict_proba``.
+        folds : int, default=5
+            Number of cross-fitting folds.
+        mondrian : {"class"} or None, default="class"
+            Whether calibration is class conditional.
+        on_invalid : {"warn", "raise", "ignore"}, default="warn"
+            Response to invalid features.
+        name : str, optional
+            Assessment name.
+        seed : int, optional
+            Random seed.
+
+        Returns
+        -------
+        Assignment
+            Out-of-fold conformal assessment for labeled cells.
+
+        Raises
+        ------
+        ValueError
+            If the labels or fold configuration cannot support assessment.
+        """
+        from cellpax.assign import Assignment, crossfit_assessment
+
+        labels = self._resolve_labels(labels)
+        target = to or _DEFAULT_MASK
+        target_ids = self._cell_ids(target)
+        reference_ids = labels.cell_ids[labels.assigned]
+        outside = np.setdiff1d(reference_ids, target_ids)
+        if outside.size:
+            raise ValueError(
+                f"{outside.size} of {reference_ids.size} reference cells are "
+                f"outside mask {target!r}; assessment needs the reference inside "
+                f"the target mask, so one feature space covers both"
+            )
+        invalid = ~self.fully_valid(target, columns=columns)
+        if invalid.any() and on_invalid != "ignore":
+            message = (
+                f"{int(invalid.sum())} of {len(target_ids)} cells in mask "
+                f"{target!r} are outside the validity domain of the assessment "
+                f"columns; the coverage guarantee assumes exchangeability with "
+                f"the calibration cells, which invalid features break. Restrict "
+                f"columns=, or on_invalid='ignore' to accept it"
+            )
+            if on_invalid == "raise":
+                raise ValueError(message)
+            warnings.warn(message)
+
+        resolved_seed = (
+            seed
+            if seed is not None
+            else self._derive_seed("assess", target, name or labels.name)
+        )
+        cols = self._resolve_columns(columns)
+        if pca is False:
+            data = self.features(target, scaled=True, columns=cols)
+            space = "scaled"
+        else:
+            fitted = self.space(
+                target, columns=cols, explained_variance=0.95 if pca is True else pca
+            )
+            data = fitted.transform_scaled(
+                self.features(target, scaled=True, columns=cols)
+            )
+            space = fitted.label
+
+        if classifier is None:
+            from sklearn.ensemble import RandomForestClassifier
+
+            classifier = RandomForestClassifier(random_state=resolved_seed)
+
+        reference_codes = labels.codes_for(target_ids)
+        p_values, probabilities, class_ids, counts = crossfit_assessment(
+            data,
+            reference_codes,
+            classifier=classifier,
+            folds=folds,
+            mondrian=mondrian == "class",
+            seed=resolved_seed,
+        )
+        return Assignment(
+            target_ids,
+            p_values,
+            probabilities,
+            class_ids=class_ids,
+            reference=labels,
+            calibration_counts=counts,
+            name=name or f"{labels.name}_assess",
+            mask=target,
+            params={
+                "columns": list(cols),
+                "pca": pca,
+                "space": space,
+                "classifier": type(classifier).__name__,
+                "folds": folds,
+                "mondrian": mondrian,
+                "seed": resolved_seed,
+            },
+        )
+
     def parametrize(
         self,
         mask: str | None = None,
         *,
-        labels: Any = None,
+        labels: "LabelSet | str | None" = None,
         clusters: Sequence[str] | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         pca: bool | float = 0.95,
         span: float = 0.1,
+        space: FittedSpace | None = None,
         orient_by: str | None = None,
         nuisance: Sequence[str] | None = None,
         dimension_gate: float = 2.5,
         name: str = "gradient",
         seed: int | None = None,
-    ) -> Any:
+    ) -> "Gradient":
         """Fit a 1-D coordinate along a continuum — the follow-through on a
         ``"continuous"`` boundary verdict.
 
@@ -3191,6 +4345,14 @@ class FeatureTable:
         ``[0, 1]``, feature loadings computed at fit time, and ``bin()`` to
         get back to honest named labels. ``ft.attach(gradient)`` writes the
         coordinate as a float column.
+
+        ``space`` fits the curve in a representation you already have, exactly as
+        ``cluster`` and ``embed`` take one. Pass the space the clusters were found
+        in — otherwise this refits a plain PCA, and a curve through a different
+        rotation than the clusters it parametrizes has loadings that describe
+        geometry nothing else in the analysis used. It matters most with block
+        weights: without them a block of correlated features counts once per
+        column, so the axis tracks whichever block is widest.
 
         ``labels`` + ``clusters`` restrict the fit to the cells of specific
         clusters — the usual move after ``boundary_report`` calls their
@@ -3207,10 +4369,47 @@ class FeatureTable:
         fitted coordinate warns — truncation manufactures fake gradients, and
         a coordinate that tracks reconstruction quality is not biology
         acquiring a name.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells to parametrize.
+        labels : LabelSet, str, or None
+            Optional labels defining selected clusters.
+        clusters : sequence of int or str, optional
+            Label identities retained from ``labels``.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features used to fit the curve.
+        pca : bool or float, default=0.95
+            PCA switch or explained-variance target.
+        span : float, default=0.3
+            Principal-curve smoothing span.
+        space : FittedSpace, optional
+            Pre-fitted representation, replacing ``columns`` and ``pca``.
+        orient_by : str, optional
+            Column whose correlation sets coordinate direction.
+        nuisance : sequence of str, optional
+            Columns checked for suspicious coordinate correlation.
+        dimension_gate : float, default=2.5
+            Intrinsic-dimension warning threshold.
+        name : str, default="gradient"
+            Gradient name.
+        seed : int, optional
+            Random seed.
+
+        Returns
+        -------
+        Gradient
+            Cell-aligned coordinate, loadings, and fit diagnostics.
+
+        Raises
+        ------
+        ValueError
+            If selections conflict or leave too few usable cells.
         """
         from scipy.stats import spearmanr
 
-        from cellpax.gradient import Gradient, fit_principal_curve, twonn_dimension
+        from cellpax.gradient import Gradient, fit_principal_curve, twonn_profile
 
         target = mask or _DEFAULT_MASK
         cell_ids = self._cell_ids(target)
@@ -3241,20 +4440,39 @@ class FeatureTable:
             )
         cell_ids = cell_ids[keep]
 
-        cols = self._resolve_columns(columns)
-        scaled = self.features(target, scaled=True, columns=cols)[keep]
-        if pca is False:
-            data = scaled
+        if space is not None:
+            if columns is not None and list(space.columns) != list(
+                self._resolve_columns(columns)
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees with "
+                    "columns=; omit columns= to use the space's own"
+                )
+            cols = list(space.columns)
+            # the space's own frozen scaler, matching cluster()/embed(): the curve
+            # has to be fitted in the geometry the clusters were found in, or the
+            # loadings describe a rotation nothing else used
+            data = space.transform(self.features(target, scaled=False, columns=cols))[
+                keep
+            ]
         else:
-            fitted = self.space(
-                target,
-                columns=cols,
-                explained_variance=0.95 if pca is True else pca,
-                seed=seed,
-            )
-            data = fitted.transform_scaled(scaled)
+            cols = self._resolve_columns(columns)
+            scaled = self.features(target, scaled=True, columns=cols)[keep]
+            if pca is False:
+                data = scaled
+            else:
+                fitted = self.space(
+                    target,
+                    columns=cols,
+                    explained_variance=0.95 if pca is True else pca,
+                    seed=seed,
+                )
+                data = fitted.transform_scaled(scaled)
 
-        dimension = twonn_dimension(data)
+        # the per-scale estimates, not just their minimum: the gate needs one
+        # number but the reader needs the shape
+        profile = twonn_profile(data)
+        dimension = min(level["dimension"] for level in profile)
         if dimension > dimension_gate:
             warnings.warn(
                 f"intrinsic dimension estimate {dimension:.2f} exceeds "
@@ -3318,10 +4536,12 @@ class FeatureTable:
                 "span": span,
                 "orient_by": orient_by,
                 "nuisance": list(nuisance or []),
+                "space": None if space is None else space.label,
                 "seed": seed,
             },
             loadings=loadings,
             intrinsic_dimension=dimension,
+            dimension_profile=profile,
         )
 
     def to_anndata(
@@ -3330,7 +4550,7 @@ class FeatureTable:
         *,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         scaled: bool = False,
-    ) -> Any:
+    ) -> "AnnData":
         """Export to an AnnData for the scanpy/scvi ecosystem — see :mod:`cellpax.interop`.
 
         Masks travel as ``mask_*`` obs columns, embeddings as id-aligned
@@ -3339,6 +4559,25 @@ class FeatureTable:
         round-trip. Requires the optional ``anndata`` extra. The bridge exists
         so the ecosystem's tools are one call away rather than re-implemented
         here.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells to export.
+        columns : str, FeatureCollection, sequence of str, or None
+            Variables to export.
+        scaled : bool, default=False
+            Export scaled rather than raw feature values.
+
+        Returns
+        -------
+        anndata.AnnData
+            Converted object with cellpax provenance.
+
+        Raises
+        ------
+        ImportError
+            If the optional ``anndata`` dependency is unavailable.
         """
         from cellpax.interop import to_anndata as _to_anndata
 
@@ -3347,7 +4586,7 @@ class FeatureTable:
     @classmethod
     def from_anndata(
         cls,
-        adata: Any,
+        adata: "AnnData",
         *,
         features: Sequence[str] | None = None,
         id_column: str | None = None,
@@ -3358,16 +4597,111 @@ class FeatureTable:
         Round-trips cellpax exports (masks, transforms, validity, seed restored
         from ``uns["cellpax"]``) and imports foreign AnnData objects (obs
         becomes metadata, obsm entries become registered embeddings).
+
+        Parameters
+        ----------
+        adata : anndata.AnnData
+            Source object.
+        features : sequence of str, optional
+            Variables to register as features; by default all variables.
+        id_column : str, optional
+            Observation column to use as cell identifiers.
+        seed : int, default=0
+            Table seed.
+
+        Returns
+        -------
+        FeatureTable
+            Imported table.
         """
         from cellpax.interop import from_anndata as _from_anndata
 
         return _from_anndata(adata, features=features, id_column=id_column, seed=seed)
 
+    @classmethod
+    def join_datasets(
+        cls,
+        tables: "Mapping[str, FeatureTable]",
+        *,
+        scaler_factory: Any,
+        reference: str | None = None,
+        strata: "str | Mapping[str, str] | None" = None,
+        stratum_column: str = "stratum",
+        min_cells: int = 50,
+        columns: Sequence[str] | None = None,
+        fit_mask: "str | Mapping[str, str | None] | None" = None,
+        dataset_column: str = "dataset",
+        id_column: str = "cell_id",
+        source_id_column: str | None = None,
+        dataset_masks: bool = True,
+        output_scaler_factory: Any = None,
+        seed: int = 0,
+    ) -> "FeatureTable":
+        """Join tables from different datasets into one harmonized table.
+
+        The classmethod form of :func:`~cellpax.datasets.join_datasets`; see there for
+        how the per-dataset (and per-stratum) mapping onto the reference works.
+
+        Parameters
+        ----------
+        tables : mapping of str to FeatureTable
+            Dataset name → table, at least two.
+        scaler_factory : callable
+            Zero-argument factory for invertible per-dataset scalers.
+        reference : str, optional
+            Dataset whose units the joined table uses; defaults to the first.
+        strata : str or mapping of str to str, optional
+            Column naming each cell's stratum, shared or per dataset.
+        stratum_column : str, default 'stratum'
+            Joined column recording each cell's stratum.
+        min_cells : int, default 50
+            Fewest fit cells a mapped ``(dataset, stratum)`` may use.
+        columns : sequence of str, optional
+            Features to join; by default the (identical) full feature set.
+        fit_mask : str or mapping of str to str or None, optional
+            Mask each scaler is fit on, shared or per dataset.
+        dataset_column : str, default 'dataset'
+            Joined column recording each cell's dataset.
+        id_column : str, default 'cell_id'
+            Id column of the joined table, filled with minted ``Int64`` ids.
+        source_id_column : str, optional
+            Column holding original ids; defaults to ``f"source_{id_column}"``.
+        dataset_masks : bool, default True
+            Add one mask per dataset.
+        output_scaler_factory : callable, optional
+            The joined table's own scaler factory; default ``StandardScaler``.
+        seed : int, default 0
+            Seed of the joined table.
+
+        Returns
+        -------
+        FeatureTable
+            The joined table.
+        """
+        from cellpax.datasets import join_datasets as _join_datasets
+
+        return _join_datasets(
+            tables,
+            scaler_factory=scaler_factory,
+            reference=reference,
+            strata=strata,
+            stratum_column=stratum_column,
+            min_cells=min_cells,
+            columns=columns,
+            fit_mask=fit_mask,
+            dataset_column=dataset_column,
+            id_column=id_column,
+            source_id_column=source_id_column,
+            dataset_masks=dataset_masks,
+            output_scaler_factory=output_scaler_factory,
+            seed=seed,
+        )
+
     def boundary_report(
         self,
-        clustering: Any,
+        clustering: "Clustering | str",
         *,
-        labels: Any = None,
+        labels: "LabelSet | None" = None,
         distance_threshold: float | None = None,
         min_cluster_size: int = 1,
         n_neighbors: int = 15,
@@ -3391,6 +4725,30 @@ class FeatureTable:
         boundaries are examined. Clusterings from before parameters were
         recorded fall back to raw scaled features over the clustering's
         columns, with a warning naming the assumption.
+
+        Parameters
+        ----------
+        clustering : Clustering or str
+            Clustering result or stored name.
+        labels : LabelSet, optional
+            Explicit cut labels.
+        distance_threshold : float, optional
+            Cut threshold used when ``labels`` is absent.
+        min_cluster_size : int, default=1
+            Minimum cluster size for a generated cut.
+        n_neighbors : int, default=15
+            Neighborhood size for connectivity and density evidence.
+        density : str, default="knn"
+            Density estimator used by the boundary analysis.
+        space : FittedSpace, optional
+            Explicit geometry when it cannot be reconstructed.
+        **thresholds : float
+            Evidence thresholds forwarded to the boundary classifier.
+
+        Returns
+        -------
+        polars.DataFrame
+            One row per neighboring cluster pair with evidence and verdict.
         """
         if isinstance(clustering, str):
             clustering = self.clustering(clustering)
@@ -3512,6 +4870,29 @@ class FeatureTable:
         Returns the ``[id, score]`` frame for immediate thresholding; the
         column is already on the table either way (``overwrite`` semantics
         follow ``add_column``: re-scoring under the same name replaces it).
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells used to fit and receive scores.
+        scorer : estimator, optional
+            Detector implementing ``fit`` and a supported scoring protocol.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features supplied to the detector.
+        name : str, default="outlier_score"
+            Stored score-column name.
+        seed : int, optional
+            Seed for the default detector.
+
+        Returns
+        -------
+        polars.DataFrame
+            Selected cell identifiers and scores, with higher values more normal.
+
+        Raises
+        ------
+        TypeError
+            If ``scorer`` exposes no supported per-sample scoring method.
         """
         cols = self._resolve_columns(columns)
         matrix = self.features(mask, scaled=True, columns=cols)
@@ -3821,7 +5202,25 @@ class FeatureTable:
         return sorted(self._embeddings)
 
     def embedding(self, mask: str | None = None, *, name: str = "pca") -> pl.DataFrame:
-        """Return a stored embedding's coordinates."""
+        """Return a stored embedding's coordinates.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Mask on which the embedding was computed.
+        name : str, default="pca"
+            Stored embedding name.
+
+        Returns
+        -------
+        polars.DataFrame
+            Cell identifiers and coordinate columns; no copy is made.
+
+        Raises
+        ------
+        KeyError
+            If the embedding is not stored.
+        """
         key = (mask or _DEFAULT_MASK, name)
         if key not in self._embeddings:
             raise KeyError(
@@ -3916,6 +5315,23 @@ class FeatureTable:
         left to project into a space the stored coordinates no longer share), or the
         table came back from ``load``, which restores coordinates but not fits.
         Re-run ``embed`` in the latter two cases.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Mask on which the model was fitted.
+        name : str, default="pca"
+            Stored embedding name.
+
+        Returns
+        -------
+        FittedEmbedding
+            Session-local fitted model; no copy is made.
+
+        Raises
+        ------
+        KeyError
+            If no live fitted model is available.
         """
         key = (mask or _DEFAULT_MASK, name)
         if key not in self._embedding_models:
@@ -3957,8 +5373,525 @@ class FeatureTable:
         ``columns`` must name the same feature set that was scaled, since each
         ``(mask, columns)`` pair gets its own fit; ``project`` is the higher-level
         way in and keeps that bookkeeping for you.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Mask defining the fit population.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features defining the fit.
+
+        Returns
+        -------
+        FittedScaler
+            Cached fitted transform; no copy is made.
         """
         return self._scaler(mask or _DEFAULT_MASK, self._resolve_columns(columns))
+
+    # -- joined datasets -------------------------------------------------------
+
+    def _require_join(self) -> _DatasetJoin:
+        if self._join is None:
+            raise ValueError(
+                "this table was not built by join_datasets, so it has no datasets, "
+                "source ids, or per-dataset scalers"
+            )
+        return self._join
+
+    def _join_columns(self) -> set[str]:
+        join = self._require_join()
+        columns = {join.column, join.source_id_column}
+        if join.stratum_column is not None:
+            columns.add(join.stratum_column)
+        return columns
+
+    @property
+    def dataset_column(self) -> str | None:
+        """Column recording each cell's dataset, or ``None`` if the table was not joined."""
+        return None if self._join is None else self._join.column
+
+    @property
+    def datasets(self) -> list[str]:
+        """Joined dataset names in join order; empty if the table was not joined."""
+        return [] if self._join is None else self._join.datasets
+
+    @property
+    def reference_dataset(self) -> str | None:
+        """The dataset whose raw units the joined features are in, or ``None``."""
+        return None if self._join is None else self._join.reference
+
+    @property
+    def stratum_column(self) -> str | None:
+        """Column recording each cell's harmonization stratum, or ``None``.
+
+        ``None`` both for tables that were not joined and for unstratified joins.
+        """
+        return None if self._join is None else self._join.stratum_column
+
+    @property
+    def source_id_column(self) -> str | None:
+        """Column holding each cell's id in its source dataset, or ``None``."""
+        return None if self._join is None else self._join.source_id_column
+
+    def dataset_scaler(self, dataset: str, stratum: str | None = None) -> FittedScaler:
+        """The fitted per-dataset scaler behind a joined table's harmonization.
+
+        Parameters
+        ----------
+        dataset : str
+            Joined dataset name.
+        stratum : str, optional
+            Stratum name; required for a stratified join, omitted otherwise.
+
+        Returns
+        -------
+        FittedScaler
+            The fit that ``join_datasets`` used; no copy is made.
+
+        Raises
+        ------
+        ValueError
+            If the table was not joined.
+        KeyError
+            If no scaler exists for that dataset and stratum — including the
+            reference's strata that no other dataset was mapped onto.
+        """
+        join = self._require_join()
+        key = (dataset, stratum)
+        if key not in join.scalers:
+            known = sorted((d, s) for d, s in join.scalers if d == dataset) or sorted(
+                join.scalers, key=str
+            )
+            raise KeyError(
+                f"no per-dataset scaler for dataset {dataset!r}, stratum {stratum!r}; "
+                f"fitted: {known}"
+            )
+        return join.scalers[key]
+
+    def harmonize(
+        self,
+        data: pl.DataFrame | np.ndarray,
+        dataset: str,
+        *,
+        strata: str | Sequence[str] | np.ndarray | pl.Series | None = None,
+    ) -> pl.DataFrame | np.ndarray:
+        """Bring raw cells from one of the joined datasets into the joined feature units.
+
+        Applies exactly the mapping ``join_datasets`` applied to that dataset's cells:
+        its own fitted scaler, then the reference's inverse, per stratum. Cells from the
+        reference pass through unchanged. Nothing is re-fit, so this is how cells that
+        were not in the join — a later proofreading batch, a held-out set — reach the
+        joined space; follow it with :meth:`project` or :meth:`project_labels`::
+
+            ft.project_labels(ft.harmonize(new_cells, "v1dd"), "subclass")
+
+        Parameters
+        ----------
+        data : polars.DataFrame or numpy.ndarray
+            New raw rows. A frame is matched by feature name and keeps its other
+            columns (an id column, say); an array must be in the joined feature order.
+        dataset : str
+            Dataset the rows come from.
+        strata : str, sequence of str, numpy.ndarray, polars.Series, or None
+            Each row's stratum, for a stratified join: a column of ``data``, or the
+            values themselves. By default the dataset's original strata column is
+            used if ``data`` has it, else the joined stratum column.
+
+        Returns
+        -------
+        polars.DataFrame or numpy.ndarray
+            The rows in joined units, in the same form they were passed.
+
+        Raises
+        ------
+        ValueError
+            If the table was not joined, features are missing, strata are needed but
+            absent, or a stratum was never mapped for that dataset.
+        KeyError
+            If ``dataset`` is not one of the joined datasets.
+        """
+        join = self._require_join()
+        if dataset not in join.datasets:
+            raise KeyError(f"unknown dataset {dataset!r}; joined: {join.datasets}")
+        cols = join.features
+        is_frame = isinstance(data, pl.DataFrame)
+        if is_frame:
+            missing = [c for c in cols if c not in data.columns]
+            if missing:
+                raise ValueError(f"data is missing feature columns: {missing}")
+            matrix = data.select(cols).to_numpy().astype(float)
+        else:
+            matrix = np.asarray(data, dtype=float)
+            if matrix.ndim != 2 or matrix.shape[1] != len(cols):
+                raise ValueError(
+                    f"data must be (n, {len(cols)}) in the joined feature order "
+                    f"{cols}; got shape {matrix.shape} — pass a polars frame to match "
+                    f"by name"
+                )
+        if dataset == join.reference:
+            out = matrix
+        else:
+            groups = self._harmonize_strata(join, data, dataset, strata, len(matrix))
+            out = np.empty_like(matrix)
+            for group in dict.fromkeys(groups.tolist()):
+                rows = groups == group
+                own = join.scalers.get((dataset, group))
+                ref = join.scalers.get((join.reference, group))
+                if own is None or ref is None:
+                    raise ValueError(
+                        f"stratum {group!r} was never mapped for dataset {dataset!r}; "
+                        f"mapped strata: "
+                        f"{sorted(str(s) for d, s in join.scalers if d == dataset)}"
+                    )
+                out[rows] = ref.inverse_transform(own.transform(matrix[rows]))
+        if not is_frame:
+            return out
+        return data.with_columns(
+            [
+                pl.Series(c, out[:, j], dtype=pl.Float64, nan_to_null=True)
+                for j, c in enumerate(cols)
+            ]
+        )
+
+    @staticmethod
+    def _harmonize_strata(
+        join: _DatasetJoin,
+        data: Any,
+        dataset: str,
+        strata: Any,
+        n_rows: int,
+    ) -> np.ndarray:
+        """Per-row stratum keys for :meth:`harmonize`."""
+        if join.stratum_column is None:
+            if strata is not None:
+                raise ValueError("this join was unstratified; do not pass strata")
+            return np.full(n_rows, None, dtype=object)
+        if strata is None:
+            entry = next(e for e in join.entries if e["name"] == dataset)
+            candidates = [entry.get("strata"), join.stratum_column]
+            found = [
+                c
+                for c in candidates
+                if c is not None
+                and isinstance(data, pl.DataFrame)
+                and c in data.columns
+            ]
+            if not found:
+                raise ValueError(
+                    f"this join was stratified, so each row needs a stratum: pass "
+                    f"strata=, or include a {candidates[0]!r} or "
+                    f"{join.stratum_column!r} column in a polars frame"
+                )
+            strata = found[0]
+        if isinstance(strata, str):
+            if not isinstance(data, pl.DataFrame) or strata not in data.columns:
+                raise ValueError(f"strata column {strata!r} is not in data")
+            values = data[strata].cast(pl.String).to_list()
+        else:
+            values = [None if v is None else str(v) for v in list(strata)]
+        if len(values) != n_rows:
+            raise ValueError(f"strata has {len(values)} values for {n_rows} rows")
+        if any(v is None for v in values):
+            raise ValueError("every row needs a stratum; strata contains nulls")
+        return np.asarray(values, dtype=object)
+
+    def source_ids(
+        self,
+        cell_ids: Sequence[int] | np.ndarray | pl.Series | None = None,
+    ) -> pl.DataFrame:
+        """Each joined cell's dataset and original id — the lookup back to the sources.
+
+        Parameters
+        ----------
+        cell_ids : sequence of int, numpy.ndarray, polars.Series, or None
+            Joined ids to look up, in the order wanted. ``None`` returns every cell in
+            table order.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``[id_column, dataset_column, source_id_column]``, one row per requested id.
+
+        Raises
+        ------
+        ValueError
+            If the table was not joined or an id is not in it.
+        """
+        join = self._require_join()
+        frame = self._df.select(self._id_column, join.column, join.source_id_column)
+        if cell_ids is None:
+            return frame
+        wanted = pl.Series(self._id_column, np.asarray(cell_ids).tolist())
+        try:
+            wanted = wanted.cast(self._df.schema[self._id_column])
+        except Exception as error:  # noqa: BLE001 — polars raises several types
+            raise ValueError(
+                f"cell_ids cannot be read as table ids: {error}"
+            ) from error
+        looked_up = pl.DataFrame(wanted).join(
+            frame, on=self._id_column, how="left", maintain_order="left"
+        )
+        unknown = looked_up.filter(pl.col(join.column).is_null())[self._id_column]
+        if unknown.len():
+            raise ValueError(
+                f"{unknown.len()} ids are not in the table, e.g. "
+                f"{unknown.head(5).to_list()}"
+            )
+        return looked_up
+
+    def cell_ids_for(
+        self,
+        dataset: str,
+        source_ids: Sequence[Any] | np.ndarray | pl.Series,
+    ) -> np.ndarray:
+        """Joined ids for cells given by their id in a source dataset.
+
+        Parameters
+        ----------
+        dataset : str
+            Dataset the ids belong to.
+        source_ids : sequence, numpy.ndarray, or polars.Series
+            Original ids, in the order wanted.
+
+        Returns
+        -------
+        numpy.ndarray
+            Joined ids aligned to ``source_ids``.
+
+        Raises
+        ------
+        ValueError
+            If the table was not joined, or an id is not a cell of that dataset.
+        KeyError
+            If ``dataset`` is not one of the joined datasets.
+        """
+        join = self._require_join()
+        if dataset not in join.datasets:
+            raise KeyError(f"unknown dataset {dataset!r}; joined: {join.datasets}")
+        source = join.source_id_column
+        frame = self._df.filter(pl.col(join.column) == dataset).select(
+            source, self._id_column
+        )
+        wanted = pl.Series(source, np.asarray(source_ids).tolist())
+        try:
+            wanted = wanted.cast(self._df.schema[source])
+        except Exception as error:  # noqa: BLE001 — polars raises several types
+            raise ValueError(
+                f"source_ids cannot be read as {dataset!r} ids: {error}"
+            ) from error
+        looked_up = pl.DataFrame(wanted).join(
+            frame, on=source, how="left", maintain_order="left"
+        )
+        unknown = looked_up.filter(pl.col(self._id_column).is_null())[source]
+        if unknown.len():
+            raise ValueError(
+                f"{unknown.len()} ids are not cells of dataset {dataset!r}, e.g. "
+                f"{unknown.head(5).to_list()}"
+            )
+        return looked_up[self._id_column].to_numpy()
+
+    def labels_by_dataset(self, labels: "LabelSet | str") -> "dict[str, LabelSet]":
+        """Split labels on the joined table into one ``LabelSet`` per source dataset.
+
+        Each part is keyed by the cells' **original** ids, with the same cluster
+        identities (ids, names, colors), so writing a joint labelling back to a source
+        table is one call: ``v1dd.attach(parts["v1dd"], name="joint_subclass")``.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Labels over joined cells, or the name of an attached label column.
+
+        Returns
+        -------
+        dict of str to LabelSet
+            Dataset name → labels over that dataset's cells, in join order. Datasets the
+            labels do not cover are absent.
+
+        Raises
+        ------
+        ValueError
+            If the table was not joined.
+        """
+        from cellpax.labels import LabelSet
+
+        join = self._require_join()
+        resolved = self._resolve_labels(labels)
+        lookup = self.source_ids(resolved.cell_ids)
+        codes = resolved.codes
+        datasets = lookup[join.column].to_numpy()
+        sources = lookup[join.source_id_column].to_numpy()
+        parts: dict[str, LabelSet] = {}
+        for dataset in join.datasets:
+            rows = datasets == dataset
+            if not rows.any():
+                continue
+            parts[dataset] = LabelSet(
+                sources[rows],
+                codes[rows],
+                meta=resolved.meta,
+                name=resolved.name,
+                mask=None,
+            )
+        return parts
+
+    def dataset_mixing(
+        self,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        pca: bool | float = False,
+        embedding: str | None = None,
+        strata: str | Literal[False] | None = None,
+        dataset_column: str | None = None,
+        n_neighbors: int = 50,
+    ) -> pl.DataFrame:
+        """How much more often a cell's neighbours share its dataset than composition predicts.
+
+        The check that a join actually mixed the datasets. See
+        :func:`~cellpax.diagnostics.dataset_mixing` for the statistic; this picks the
+        representation and the grouping columns from the table.
+
+        Run it in more than one representation. With a few dozen mostly informative
+        features, PCA keeps the directions of largest variance — and a covariance
+        difference between datasets is exactly such a direction — so the gap in a PCA
+        space can be several times the gap in the scaled feature space it came from.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells to evaluate.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features defining the space.
+        pca : bool or float, default False
+            Evaluate in the mask's PCA space instead of scaled features: ``True`` for
+            95% variance, or a variance fraction.
+        embedding : str, optional
+            Evaluate in a stored embedding's coordinates instead.
+        strata : str, False, or None
+            Column grouping cells for the composition adjustment. ``None`` uses the
+            join's stratum column when there is one; ``False`` disables it.
+        dataset_column : str, optional
+            Column naming each cell's dataset; defaults to the join's. Lets a table
+            that was concatenated without ``join_datasets`` be scored too.
+        n_neighbors : int, default 50
+            Neighbours per cell.
+
+        Returns
+        -------
+        polars.DataFrame
+            One row per dataset, per ``(dataset, stratum)`` and overall; see
+            :func:`~cellpax.diagnostics.dataset_mixing`.
+
+        Raises
+        ------
+        ValueError
+            If no dataset column is known or both ``pca`` and ``embedding`` are given.
+        """
+        from cellpax.diagnostics import dataset_mixing as _dataset_mixing
+
+        name = mask or _DEFAULT_MASK
+        dataset_column = dataset_column or self.dataset_column
+        if dataset_column is None:
+            raise ValueError(
+                "no dataset column: this table was not joined, so pass dataset_column="
+            )
+        if pca is not False and embedding is not None:
+            raise ValueError("pass pca= or embedding=, not both")
+        frame = self._df.filter(self.mask_series(name))
+        if embedding is not None:
+            coords = self.embedding(name, name=embedding)
+            frame = frame.join(coords, on=self._id_column, how="inner")
+            coord_cols = [c for c in coords.columns if c != self._id_column]
+            matrix = frame.select(coord_cols).to_numpy()
+        elif pca is not False:
+            variance = 0.95 if pca is True else float(pca)
+            matrix = self.features_pca(
+                name, columns=columns, explained_variance=variance
+            )
+        else:
+            matrix = self.features(name, scaled=True, columns=columns)
+        if strata is None:
+            strata = self.stratum_column or False
+        grouping = None if strata is False else frame[strata].cast(pl.String).to_numpy()
+        return _dataset_mixing(
+            matrix,
+            frame[dataset_column].cast(pl.String).to_numpy(),
+            strata=grouping,
+            n_neighbors=n_neighbors,
+        )
+
+    def cross_dataset_classification(
+        self,
+        labels: "LabelSet | str",
+        *,
+        train: str,
+        test: str,
+        mask: str | None = None,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        classifier: Any = None,
+        dataset_column: str | None = None,
+        seed: int | None = None,
+    ) -> "TransferScore":
+        """Train a classifier on one dataset's labelled cells and score it on another's.
+
+        Wraps :func:`~cellpax.validate.cross_dataset_classification` over the mask's
+        scaled features. Where a join aligned the datasets, labels transfer; where it
+        did not, the confusion concentrates on the types the datasets disagree about.
+
+        Parameters
+        ----------
+        labels : LabelSet or str
+            Labels known in both datasets, or an attached label column.
+        train, test : str
+            Dataset names to train on and to score.
+        mask : str, optional
+            Cells to use.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features to classify on.
+        classifier : scikit-learn classifier, optional
+            Unfitted estimator, cloned before fitting. Default a random forest.
+        dataset_column : str, optional
+            Column naming each cell's dataset; defaults to the join's.
+        seed : int, optional
+            Random state; derived from the table seed when omitted.
+
+        Returns
+        -------
+        TransferScore
+            Per-cell truth and prediction on the test dataset.
+
+        Raises
+        ------
+        ValueError
+            If no dataset column is known.
+        """
+        from cellpax.validate import cross_dataset_classification as _transfer
+
+        name = mask or _DEFAULT_MASK
+        dataset_column = dataset_column or self.dataset_column
+        if dataset_column is None:
+            raise ValueError(
+                "no dataset column: this table was not joined, so pass dataset_column="
+            )
+        resolved = self._resolve_labels(labels)
+        cell_ids = self._cell_ids(name)
+        names = resolved.decode(resolved.codes_for(cell_ids))
+        frame = self._df.filter(self.mask_series(name))
+        if seed is None:
+            seed = self._derive_seed(
+                "cross_dataset_classification", name, f"{train}->{test}"
+            )
+        return _transfer(
+            self.features(name, scaled=True, columns=columns),
+            np.asarray(names, dtype=object),
+            frame[dataset_column].cast(pl.String).to_numpy(),
+            train=train,
+            test=test,
+            classifier=classifier,
+            seed=seed,
+            cell_ids=cell_ids,
+        )
 
     def project(
         self,
@@ -3985,6 +5918,27 @@ class FeatureTable:
         relative to ``mask``" — that's the intended reading for carrying a model or
         an embedding onto new cells, and the reason it isn't the same as adding the
         rows to the table and re-scaling.
+
+        Parameters
+        ----------
+        data : polars.DataFrame or ndarray
+            New raw rows, named or in resolved column order.
+        mask : str, optional
+            Population defining the frozen fit.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features to transform.
+        embedding : str, optional
+            Fitted embedding to apply after scaling.
+
+        Returns
+        -------
+        ndarray
+            Scaled features or embedding coordinates for the new rows.
+
+        Raises
+        ------
+        ValueError
+            If input shape or requested columns conflict with the fit.
         """
         name = mask or _DEFAULT_MASK
         if embedding is not None:
@@ -4029,7 +5983,22 @@ class FeatureTable:
         scaled: bool = False,
         columns: str | FeatureCollection | Sequence[str] | None = None,
     ) -> np.ndarray:
-        """The feature matrix for a mask, raw or scaled, as a NumPy array."""
+        """Return the feature matrix for a mask.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells defining the output rows and optional scaling fit.
+        scaled : bool, default=False
+            Apply the mask-relative fitted scaler.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features defining output columns.
+
+        Returns
+        -------
+        ndarray
+            Matrix with shape ``(n_selected_cells, n_features)``.
+        """
         name = mask or _DEFAULT_MASK
         cols = self._resolve_columns(columns)
         matrix = self._df.filter(self.mask_series(name)).select(cols).to_numpy()
@@ -4066,6 +6035,24 @@ class FeatureTable:
         the view shows the ``LabelSet`` you handed it, shadowing the attached column
         for this frame only. The table itself is unchanged; ``attach`` still refuses
         to overwrite. The same holds for ``embedding``.
+
+        Parameters
+        ----------
+        mask : str, optional
+            Cells to include.
+        scaled : bool, default=False
+            Replace selected feature columns with scaled values.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features affected when ``scaled`` is true.
+        embedding : str, optional
+            Stored coordinates to join.
+        labels : LabelSet or str, optional
+            Labels to join or attached label-column name.
+
+        Returns
+        -------
+        polars.DataFrame
+            Independent masked view with requested joins.
         """
         labels = self._resolve_labels(labels, mask=mask)
         name = mask or (labels.mask if labels is not None else None) or _DEFAULT_MASK
@@ -4128,11 +6115,21 @@ class FeatureTable:
 
     # -- comparison ------------------------------------------------------------
 
-    def compare(self, a: Any, b: Any) -> Any:
+    def compare(self, a: "LabelSet | str", b: "LabelSet | str") -> "Comparison":
         """Compare two label sets over shared cells (see :mod:`cellpax.compare`).
 
         ``a``/``b`` may each be a ``LabelSet`` or the name of an (attached)
         label column (see ``labelset``).
+
+        Parameters
+        ----------
+        a, b : LabelSet or str
+            Labels or attached label-column names.
+
+        Returns
+        -------
+        Comparison
+            Pairwise agreement metrics over shared cells.
         """
         from cellpax.compare import compare
 
@@ -4141,7 +6138,22 @@ class FeatureTable:
     # -- persistence -----------------------------------------------------------
 
     def save(self, folio: Any, name: str, *, overwrite: bool = True) -> "FeatureTable":
-        """Persist this analysis under ``name`` in a DataFolio (see persist)."""
+        """Persist this analysis in a DataFolio.
+
+        Parameters
+        ----------
+        folio : DataFolio
+            Destination store.
+        name : str
+            Analysis name within the store.
+        overwrite : bool, default=True
+            Replace an existing analysis of the same name.
+
+        Returns
+        -------
+        FeatureTable
+            This table, unchanged.
+        """
         from cellpax.persist import save_feature_table
 
         save_feature_table(self, folio, name, overwrite=overwrite)
@@ -4149,7 +6161,20 @@ class FeatureTable:
 
     @classmethod
     def load(cls, folio: Any, name: str) -> "FeatureTable":
-        """Load a FeatureTable saved under ``name`` in a DataFolio."""
+        """Load a table from a DataFolio.
+
+        Parameters
+        ----------
+        folio : DataFolio
+            Source store.
+        name : str
+            Saved analysis name.
+
+        Returns
+        -------
+        FeatureTable
+            Restored analysis.
+        """
         from cellpax.persist import load_feature_table
 
         return load_feature_table(folio, name)
@@ -4159,6 +6184,13 @@ class FeatureTable:
             f"FeatureTable(n_cells={self.n_cells}, n_features={self.n_features}, "
             f"masks={self.masks})"
         )
+
+
+def _describe_quantile_tag(tag: dict[str, Any]) -> str:
+    """A compact display of a ``quantile_scaler_factory`` configuration."""
+    clip = tag.get("clip")
+    clip_note = f"clip={clip[0]:g}-{clip[1]:g}" if clip else "no clip"
+    return f"kind=quantile, {clip_note}, output={tag.get('output_distribution')}"
 
 
 def _mask_column(name: str) -> str:

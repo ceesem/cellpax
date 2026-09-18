@@ -24,6 +24,11 @@ rather than reproducible groups. Two criteria here, plus one tripwire:
     where such straddling is *possible*: cluster a cohort that was pre-split on the audit
     label and purity is 1.0 by construction and says nothing.
 
+:func:`cross_dataset_classification` — **the transfer check.**
+    Train on one dataset's labels, predict another's. For datasets joined into one space
+    (:func:`~cellpax.datasets.join_datasets`), where the errors land says which types the
+    two still disagree about.
+
 :func:`paired_recovery` turns any set of scores into differences with a paired test.
 Absolute accuracies are rarely comparable across datasets — and are meaningless when the
 labelled cells were drawn under a stratified design — while the paired difference between
@@ -78,6 +83,23 @@ class Stability:
     representations scored with identical settings is what carries meaning, which is why
     :func:`subsample_stability` fixes the ensemble rather than letting it follow the
     parameter under test.
+
+    Attributes
+    ----------
+    draw_ari : numpy.ndarray
+        Adjusted Rand index for each subsample draw.
+    cell_stability : numpy.ndarray
+        Per-cell mean retention with its full-data cluster-mates.
+    full_labels : numpy.ndarray
+        Reference labels from clustering the complete dataset.
+    assigned_fractions : numpy.ndarray
+        Assigned fraction for each draw.
+    n_draws : int
+        Number of subsamples.
+    fraction : float
+        Fraction of cells included per draw.
+    settings : dict
+        Clustering settings held fixed across draws.
     """
 
     draw_ari: np.ndarray
@@ -90,18 +112,22 @@ class Stability:
 
     @property
     def mean_ari(self) -> float:
+        """Mean adjusted Rand index across draws."""
         return float(np.mean(self.draw_ari))
 
     @property
     def median_ari(self) -> float:
+        """Median adjusted Rand index across draws."""
         return float(np.median(self.draw_ari))
 
     @property
     def min_ari(self) -> float:
+        """Worst adjusted Rand index across draws."""
         return float(np.min(self.draw_ari))
 
     @property
     def mean_assigned(self) -> float:
+        """Mean assigned-cell fraction across draws."""
         return float(np.mean(self.assigned_fractions))
 
     @property
@@ -110,7 +136,13 @@ class Stability:
         return float(np.min(self.assigned_fractions))
 
     def summary(self) -> pl.DataFrame:
-        """One row: the headline numbers plus the settings they were measured under."""
+        """Summarize headline stability values and settings.
+
+        Returns
+        -------
+        polars.DataFrame
+            One-row summary.
+        """
         return pl.DataFrame(
             {
                 "n_draws": [self.n_draws],
@@ -395,6 +427,23 @@ class RecoveryScore:
     Abstentions are excluded from the accuracy denominators (an unreachable cell says
     nothing about the decision boundary), while ``correct`` holds ``False`` for them,
     which is how :func:`paired_recovery` sees them: abstained is not correct.
+
+    Attributes
+    ----------
+    correct : numpy.ndarray
+        Boolean recovery result for each labelled cell.
+    truth, predicted : numpy.ndarray
+        Aligned true and recovered integer codes.
+    n_neighbors : int
+        Neighbourhood size used for recovery.
+    name : str
+        Representation name used in comparisons.
+    weights : numpy.ndarray, optional
+        Per-cell inverse-probability weights.
+    strata : numpy.ndarray, optional
+        Per-cell audit strata.
+    n_abstained : int
+        Labelled cells for which no prediction was possible.
     """
 
     correct: np.ndarray
@@ -408,6 +457,7 @@ class RecoveryScore:
 
     @property
     def n_labeled(self) -> int:
+        """Number of labelled cells scored."""
         return int(self.correct.shape[0])
 
     @property
@@ -433,6 +483,11 @@ class RecoveryScore:
         A stratified design exists to put labelling effort where the classifiers disagree,
         and those are the cells that distinguish representations. Population weighting
         then shrinks them back down. This shows them at face value.
+
+        Returns
+        -------
+        polars.DataFrame
+            Per-stratum counts and accuracy.
         """
         if self.strata is None:
             return pl.DataFrame(
@@ -871,3 +926,230 @@ def _purity_one(codes: np.ndarray, audit: np.ndarray) -> pl.DataFrame:
             "n_unassigned": pl.Int64,
         },
     ).sort("purity")
+
+
+# --------------------------------------------------------------------------- #
+# 5. transfer between datasets
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class TransferScore:
+    """A classifier trained on one dataset's labels, scored on another dataset's.
+
+    The cross-dataset counterpart of :class:`RecoveryScore`. When two datasets have been
+    put in one space, a classifier fit on either should predict the other's labels; its
+    errors say where they still disagree. Those errors are only informative when they are
+    read per label — a boundary the two taxonomies drew in different places (an L2/L3
+    split, one dataset's ITC being the other's BPC + MPC) looks like a misalignment in a
+    scalar accuracy and is obvious in :meth:`confusion`.
+
+    Attributes
+    ----------
+    truth : numpy.ndarray
+        Test-dataset label names of the scored cells.
+    predicted : numpy.ndarray
+        Predicted label names, aligned to ``truth``.
+    train_classes : tuple of str
+        Labels the classifier saw during training.
+    train : str
+        Dataset the classifier was trained on.
+    test : str
+        Dataset it was scored on.
+    cell_ids : numpy.ndarray, optional
+        Ids of the scored cells, aligned to ``truth``.
+    """
+
+    truth: np.ndarray
+    predicted: np.ndarray
+    train_classes: tuple[str, ...]
+    train: str
+    test: str
+    cell_ids: np.ndarray | None = None
+
+    @property
+    def n_cells(self) -> int:
+        """Number of labelled test cells scored."""
+        return int(self.truth.shape[0])
+
+    @property
+    def shared(self) -> np.ndarray:
+        """Per-cell mask of test cells whose true label exists in the training set."""
+        return np.isin(self.truth, np.asarray(self.train_classes, dtype=object))
+
+    @property
+    def accuracy(self) -> float:
+        """Share of all scored test cells predicted correctly."""
+        if not self.n_cells:
+            return float("nan")
+        return float(np.mean(self.truth == self.predicted))
+
+    @property
+    def accuracy_shared(self) -> float:
+        """Accuracy over test cells whose label the classifier could have predicted.
+
+        A label present only in the test dataset cannot be predicted by construction, so
+        it drags :attr:`accuracy` down without saying anything about alignment.
+        """
+        shared = self.shared
+        if not shared.any():
+            return float("nan")
+        return float(np.mean(self.truth[shared] == self.predicted[shared]))
+
+    def confusion(self) -> pl.DataFrame:
+        """Long-form confusion table, normalized within each true label.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``truth, predicted, n_cells, fraction`` for every observed pair, where
+            ``fraction`` is the share of that true label's cells given that prediction.
+        """
+        frame = pl.DataFrame(
+            {
+                "truth": self.truth.astype(str).tolist(),
+                "predicted": self.predicted.astype(str).tolist(),
+            },
+            schema={"truth": pl.String, "predicted": pl.String},
+        )
+        return (
+            frame.group_by("truth", "predicted")
+            .len("n_cells")
+            .with_columns(
+                (pl.col("n_cells") / pl.col("n_cells").sum().over("truth")).alias(
+                    "fraction"
+                )
+            )
+            .with_columns(pl.col("n_cells").cast(pl.Int64))
+            .sort(["truth", "n_cells"], descending=[False, True])
+        )
+
+    def by_label(self) -> pl.DataFrame:
+        """Recall per true label, with its most common prediction.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``truth, n_cells, in_train, recall, top_prediction, top_fraction``.
+        """
+        confusion = self.confusion()
+        train = set(self.train_classes)
+        rows = []
+        for (label,), part in confusion.group_by(["truth"], maintain_order=True):
+            correct = part.filter(pl.col("predicted") == label)["n_cells"].sum()
+            top = part.sort("n_cells", descending=True).row(0, named=True)
+            total = int(part["n_cells"].sum())
+            rows.append(
+                {
+                    "truth": label,
+                    "n_cells": total,
+                    "in_train": label in train,
+                    "recall": float(correct / total),
+                    "top_prediction": top["predicted"],
+                    "top_fraction": float(top["fraction"]),
+                }
+            )
+        return pl.DataFrame(
+            rows,
+            schema={
+                "truth": pl.String,
+                "n_cells": pl.Int64,
+                "in_train": pl.Boolean,
+                "recall": pl.Float64,
+                "top_prediction": pl.String,
+                "top_fraction": pl.Float64,
+            },
+        ).sort("recall")
+
+    def __repr__(self) -> str:
+        return (
+            f"TransferScore({self.train} → {self.test}: n={self.n_cells}, "
+            f"accuracy={self.accuracy:.3f}, shared={self.accuracy_shared:.3f})"
+        )
+
+
+def cross_dataset_classification(
+    features: np.ndarray,
+    labels: Any,
+    datasets: Any,
+    *,
+    train: str,
+    test: str,
+    classifier: Any = None,
+    seed: int = 0,
+    cell_ids: np.ndarray | None = None,
+) -> TransferScore:
+    """Fit a classifier on one dataset's labelled cells and predict another's.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)`` matrix covering both datasets.
+    labels : array-like
+        ``(n_cells,)`` label names; ``None`` marks unlabelled cells, which are left out
+        of both training and scoring.
+    datasets : array-like
+        ``(n_cells,)`` dataset of each cell.
+    train : str
+        Dataset whose labelled cells train the classifier.
+    test : str
+        Dataset whose labelled cells are scored.
+    classifier : scikit-learn classifier, optional
+        Unfitted estimator; it is cloned, never fitted in place. Defaults to a
+        300-tree ``RandomForestClassifier``.
+    seed : int, default 0
+        ``random_state`` of the default classifier.
+    cell_ids : numpy.ndarray, optional
+        Ids aligned to ``features``, carried onto the score.
+
+    Returns
+    -------
+    TransferScore
+        Truth and prediction for every labelled test cell.
+
+    Raises
+    ------
+    ValueError
+        On mismatched lengths, identical or unknown datasets, or no labelled cells.
+    """
+    from sklearn.base import clone
+    from sklearn.ensemble import RandomForestClassifier
+
+    matrix = np.asarray(features, dtype=float)
+    label_values = np.asarray(
+        [None if v is None else str(v) for v in np.asarray(labels, dtype=object)],
+        dtype=object,
+    )
+    dataset_values = np.asarray([str(d) for d in np.asarray(datasets).tolist()])
+    n_cells = matrix.shape[0]
+    if label_values.shape[0] != n_cells or dataset_values.shape[0] != n_cells:
+        raise ValueError("features, labels and datasets must have the same length")
+    if train == test:
+        raise ValueError(f"train and test must be different datasets, got {train!r}")
+    known = set(dataset_values.tolist())
+    for role, name in (("train", train), ("test", test)):
+        if name not in known:
+            raise ValueError(f"{role} dataset {name!r} not found; have {sorted(known)}")
+    labelled = np.asarray([v is not None for v in label_values])
+    train_rows = labelled & (dataset_values == train)
+    test_rows = labelled & (dataset_values == test)
+    if not train_rows.any() or not test_rows.any():
+        raise ValueError(
+            f"need labelled cells in both datasets; {train!r} has "
+            f"{int(train_rows.sum())}, {test!r} has {int(test_rows.sum())}"
+        )
+    model = (
+        RandomForestClassifier(n_estimators=300, random_state=seed, n_jobs=-1)
+        if classifier is None
+        else clone(classifier)
+    )
+    model.fit(matrix[train_rows], label_values[train_rows].astype(str))
+    predicted = np.asarray(model.predict(matrix[test_rows]), dtype=object)
+    return TransferScore(
+        truth=label_values[test_rows],
+        predicted=predicted,
+        train_classes=tuple(sorted(set(label_values[train_rows].tolist()))),
+        train=train,
+        test=test,
+        cell_ids=None if cell_ids is None else np.asarray(cell_ids)[test_rows],
+    )

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import numpy as np
+import polars as pl
 import pytest
 
 from cellpax.clustering import SortedMatrix
 from cellpax.diagnostics import (
     clip_comparison,
     covariate_sensitivity,
+    discriminative_features,
     duplicate_rows,
     feature_correlation,
     stratum_shift,
@@ -672,3 +674,87 @@ def test_feature_relevance_validates_mode_names_and_width() -> None:
         feature_relevance(data, names[:-1])
     with pytest.raises(ValueError, match="at least two features"):
         feature_relevance(data[:, :1], names[:1])
+
+
+# -- discriminative_features ----------------------------------------------------
+
+
+def _blocked_fixture(seed: int = 0):
+    """30 near-duplicate 'arbor' columns and 3 independent 'soma' ones.
+
+    Both separate the clusters; the arbor block carries one measurement across
+    thirty columns. A flat ranking hands every slot to it.
+    """
+    rng = np.random.default_rng(seed)
+    n = 300
+    codes = np.array([0] * n + [1] * n)
+    signal = np.where(codes == 1, 2.0, 0.0) + rng.normal(0, 1, 2 * n)
+    arbor = signal[:, None] + rng.normal(0, 0.15, (2 * n, 30))
+    soma = np.where(codes == 1, 1.4, 0.0)[:, None] + rng.normal(0, 1, (2 * n, 3))
+    noise = rng.normal(0, 1, (2 * n, 20))
+    features = np.hstack([arbor, soma, noise])
+    names = (
+        [f"arbor_{i}" for i in range(30)]
+        + [f"soma_{i}" for i in range(3)]
+        + [f"n_{i}" for i in range(20)]
+    )
+    return features, codes, names
+
+
+def test_flat_ranking_is_swamped_by_the_correlated_block():
+    """The behaviour the block-aware default exists to avoid."""
+    features, codes, names = _blocked_fixture()
+    flat = discriminative_features(features, codes, names, per_block=None, top=12)
+    assert all(f.startswith("arbor_") for f in flat["feature"])
+    assert flat["block"].n_unique() == 1
+
+
+def test_one_representative_per_block_surfaces_the_other_measurements():
+    features, codes, names = _blocked_fixture()
+    out = discriminative_features(features, codes, names, top=8)
+
+    assert out["feature"].n_unique() == out.height
+    assert out["block"].n_unique() == out.height  # one row per block
+    assert sum(f.startswith("arbor_") for f in out["feature"]) == 1
+    assert sum(f.startswith("soma_") for f in out["feature"]) == 3
+    # the big block is reported as big, so the collapse is visible not hidden
+    arbor = out.filter(pl.col("feature").str.starts_with("arbor_"))
+    assert arbor["block_size"][0] == 30
+    # real signal separates from noise by an order of magnitude
+    assert out["f_stat"][3] > 10 * out["f_stat"][4]
+
+
+def test_direction_columns_say_which_way():
+    features, codes, names = _blocked_fixture()
+    out = discriminative_features(
+        features, codes, names, top=4, cluster_names={0: "A", 1: "B"}
+    )
+    real = out.filter(~pl.col("feature").str.starts_with("n_"))
+    assert set(real["high"]) == {"B"}  # cluster 1 carries the signal
+    assert (real["high_z"] > real["low_z"]).all()
+
+
+def test_a_supplied_blocking_is_reused():
+    features, codes, names = _blocked_fixture()
+    blocks = feature_correlation(features, names, block_threshold=0.5)
+    assert discriminative_features(features, codes, names, blocks=blocks, top=5).equals(
+        discriminative_features(features, codes, names, top=5)
+    )
+
+
+def test_misaligned_inputs_are_refused():
+    features, codes, names = _blocked_fixture()
+    with pytest.raises(ValueError, match="row-aligned"):
+        discriminative_features(features, codes[:10], names)
+    with pytest.raises(ValueError, match="names"):
+        discriminative_features(features, codes, names[:5])
+    with pytest.raises(ValueError, match="at least two clusters"):
+        discriminative_features(features, np.zeros(features.shape[0]), names)
+
+
+def test_unassigned_cells_are_ignored():
+    features, codes, names = _blocked_fixture()
+    dropped = codes.copy()
+    dropped[:50] = -1
+    out = discriminative_features(features, dropped, names, top=3)
+    assert set(out["high"]) <= {"0", "1"}

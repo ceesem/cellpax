@@ -106,3 +106,10 @@ var/
 .vscode
 *.orig
 *.sublime-workspace
+
+# cellpax app: decision ledgers are per-analysis working state, not source
+*.ledger.jsonl
+
+# jsdom for the client render smoke test (tests/js)
+tests/js/node_modules/
+tests/js/package-lock.json

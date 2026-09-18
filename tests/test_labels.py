@@ -276,6 +276,52 @@ def test_copy_subset_and_drop_unassigned() -> None:
     assert fittable.n_unassigned == 0
 
 
+def test_assign_moves_individual_cells_between_clusters() -> None:
+    ls = LabelSet([1, 2, 3, 4, 5, 6], [0, 0, 0, 0, 1, 1], names=["exc", "inh"])
+    ls.set_colors({"exc": "#c62828", "inh": "#1565c0"})
+
+    ls.assign([2, 4], "inh")  # by name
+    assert ls.codes.tolist() == [0, 1, 0, 1, 1, 1]
+    assert ls.counts() == {"exc": 2, "inh": 4}
+    assert ls.color_map() == {"exc": "#c62828", "inh": "#1565c0"}  # identities intact
+
+    ls.assign(1, 0)  # a lone id, by cluster id
+    assert ls.codes.tolist() == [0, 1, 0, 1, 1, 1]
+    ls.assign(np.array([5, 6]), None)  # None is the per-cell unassign
+    assert ls.codes.tolist() == [0, 1, 0, 1, -1, -1]
+
+
+def test_assign_creates_a_new_cluster_for_an_unknown_name_only() -> None:
+    ls = LabelSet([1, 2, 3, 4], [0, 0, 1, 1], names=["exc", "inh"])
+
+    ls.assign([3], "Pvalb")
+    assert ls.names == ["exc", "inh", "Pvalb"]
+    assert ls.cluster("Pvalb").id == 2
+    assert ls.counts() == {"exc": 2, "inh": 1, "Pvalb": 1}
+
+    # an unknown *id* is an off-by-one, not an invitation to invent a cluster
+    with pytest.raises(KeyError, match="Unknown label id"):
+        ls.assign([1], 9)
+
+
+def test_assign_refuses_cells_it_does_not_cover() -> None:
+    """A silent no-op here — root_ids against a cell_id set — is a mislabeled figure."""
+    ls = LabelSet([1, 2, 3], [0, 0, 1], names=["exc", "inh"], name="subclass")
+
+    with pytest.raises(KeyError, match=r"1 of 2 cell_ids are not in label set"):
+        ls.assign([2, 864691135000000000], "inh")
+    assert ls.codes.tolist() == [0, 0, 1]  # and nothing was written
+
+    # emptying a cluster drops it from ids, but its identity survives in meta
+    ls.set_colors({"inh": "#1565c0"})
+    ls.assign([3], "exc")
+    assert ls.names == ["exc"]
+    assert ls.catalog()["name"].to_list() == ["exc"]
+    assert ls.cluster("inh").color == "#1565c0"
+    ls.assign([3], "inh")  # so moving a cell back restores it, color and all
+    assert ls.color_map() == {"inh": "#1565c0"}
+
+
 def test_unassign_sends_a_cluster_back_to_unassigned() -> None:
     ls = LabelSet([1, 2, 3, 4, 5], [0, 0, 1, 2, 2], names=["A", "B", "C"])
 

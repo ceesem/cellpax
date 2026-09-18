@@ -34,7 +34,19 @@ def _display_names(labels: LabelSet) -> dict[int, str]:
 
 
 class Comparison:
-    """A pairwise comparison of two label sets aligned on shared cells."""
+    """A pairwise comparison of two label sets aligned on shared cells.
+
+    Parameters
+    ----------
+    a, b : LabelSet
+        Label sets to align by cell identifier. They need not cover identical
+        populations.
+
+    Raises
+    ------
+    ValueError
+        If the label sets share no cells.
+    """
 
     def __init__(self, a: LabelSet, b: LabelSet) -> None:
         self._a = a
@@ -54,6 +66,17 @@ class Comparison:
         two rows — the name columns show the id alongside where that happens.
         Unassigned cells (``-1``) get their own rows with a null name, sorted
         last. ``normalize`` adds a ``fraction`` column over the shared cells.
+
+        Parameters
+        ----------
+        normalize : bool, default False
+            Add each pair's fraction of all shared cells.
+
+        Returns
+        -------
+        polars.DataFrame
+            Long-form cross-tab with cluster ids, display names, counts, and
+            optional fractions.
         """
         a_names, b_names = _display_names(self._a), _display_names(self._b)
         table = (
@@ -85,6 +108,11 @@ class Comparison:
 
         Keyed on ids like ``contingency``, with names disambiguated the same way,
         so clusters sharing a name stay separate flows in the plot.
+
+        Returns
+        -------
+        polars.DataFrame
+            Source id/name, target id/name, and cell count per flow.
         """
         return self.contingency().rename(
             {
@@ -105,6 +133,11 @@ class Comparison:
         assigned at all, and ``coverage`` is co-assigned over the union of
         assigned — 1.0 exactly when the two sets assign the same cells, so a high
         ARI over a sliver of the cells can't pass for agreement.
+
+        Returns
+        -------
+        dict
+            Agreement scores and assignment-coverage counts.
         """
         from sklearn.metrics import (
             adjusted_rand_score,
@@ -136,7 +169,18 @@ class Comparison:
 
 
 def compare(a: LabelSet, b: LabelSet) -> Comparison:
-    """Compare two label sets over their shared cells."""
+    """Compare two label sets over their shared cells.
+
+    Parameters
+    ----------
+    a, b : LabelSet
+        Label sets to align by cell identifier.
+
+    Returns
+    -------
+    Comparison
+        Lazy comparison exposing contingency, alluvial, and agreement views.
+    """
     return Comparison(a, b)
 
 
@@ -147,6 +191,23 @@ def compare_many(labels: Iterable[LabelSet], *, metric: str = "ari") -> pl.DataF
     label set, indexed by ``LabelSet.name``. The diagonal holds each set's
     self-comparison value: 1.0 for the agreement metrics and ``coverage``, and
     the set's own assigned-cell count for ``metric="n"``.
+
+    Parameters
+    ----------
+    labels : iterable of LabelSet
+        Label sets with distinct names.
+    metric : {'ari', 'nmi', 'fmi', 'jaccard', 'coverage', 'n'}, default 'ari'
+        Symmetric comparison value placed in the matrix.
+
+    Returns
+    -------
+    polars.DataFrame
+        Square comparison matrix with a leading ``label`` column.
+
+    Raises
+    ------
+    ValueError
+        If ``metric`` is unknown or label-set names are not unique.
     """
     if metric not in _MATRIX_METRICS:
         raise ValueError(

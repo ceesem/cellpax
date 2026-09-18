@@ -504,3 +504,91 @@ def test_propagate_labels_accepts_an_attached_column_name() -> None:
     result = ft.propagate_labels("subclass", to="exc", n_neighbors=20)
     assert result.labels.names == labels.names
     assert result.n_reference() == 90  # resolved back to the core mask it came from
+
+
+# -- projecting labels onto rows that were never in the table --------------------
+
+
+def test_project_labels_scores_outside_rows_in_the_masks_frozen_space() -> None:
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+
+    # rows from somewhere else entirely: one per type's core centre, plus a stray
+    outside = pl.DataFrame(
+        {
+            "cell_id": [9001, 9002, 9003, 9004],
+            **{
+                f"m{i}": col
+                for i, col in enumerate(
+                    np.array(
+                        [[0, 0, 0, 0], [6, 6, 0, 0], [0, 0, 6, 6], [60, 60, 60, 60]],
+                        dtype=float,
+                    ).T
+                )
+            },
+            "unrelated": ["a", "b", "c", "d"],  # extra columns are ignored
+        }
+    )
+    result = ft.project_labels(outside, labels, n_neighbors=20)
+
+    assert len(result.labels) == 4  # just the new cells, not the reference
+    assert result.labels.cell_ids.tolist() == [9001, 9002, 9003, 9004]
+    assert result.labels.mask is None  # they are in no mask of this table
+    assert result.labels.names == labels.names
+    assert result.labels.color_map() == {"C0": "#f00"}
+    assert result.n_reference() == 90
+    assert ft.n_cells == 180  # the table is untouched
+
+    # each lands on the core it was placed at; the vote can't reject the stray
+    by_id = dict(zip(result.labels.cell_ids.tolist(), result.labels.to_names()))
+    assert len({by_id[9001], by_id[9002], by_id[9003]}) == 3
+    assert by_id[9004] is not None
+
+
+def test_project_labels_uses_the_existing_fit_not_a_new_one() -> None:
+    """A reference cell's own feature row must come back with its own label."""
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+
+    core = ft.dataframe("exc_core")
+    twins = core.head(20).with_columns(pl.col("cell_id") + 100_000)
+    result = ft.project_labels(twins, labels, n_neighbors=5)
+
+    original = labels.codes_for(core.head(20)["cell_id"].to_numpy())
+    assert result.labels.codes.tolist() == original.tolist()
+    assert (result.confidence > 0.9).all()  # a coincident twin is unambiguous
+
+
+def test_project_labels_spread_abstains_where_the_vote_cannot() -> None:
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    stray = np.array([[60.0, 60.0, 60.0, 60.0]])
+
+    voted = ft.project_labels(stray, labels, cell_ids=[9001], n_neighbors=20)
+    spread = ft.project_labels(
+        stray, labels, cell_ids=[9001], method="spread", n_neighbors=20
+    )
+    assert voted.labels.n_unassigned == 0  # k votes are always cast
+    assert spread.labels.n_unassigned == 1  # nothing is mutually near it
+
+
+def test_project_labels_argument_errors() -> None:
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    raw = np.zeros((3, 4))
+
+    with pytest.raises(ValueError, match="the new rows need cell ids"):
+        ft.project_labels(raw, labels)
+    with pytest.raises(ValueError, match="3 cell ids for 2 rows"):
+        ft.project_labels(np.zeros((2, 4)), labels, cell_ids=[1, 2, 3])
+    with pytest.raises(ValueError, match="but the fit covers 4"):
+        ft.project_labels(np.zeros((3, 2)), labels, cell_ids=[1, 2, 3])
+    with pytest.raises(ValueError, match="missing feature columns"):
+        ft.project_labels(pl.DataFrame({"cell_id": [1], "m0": [0.0]}), labels)
+    with pytest.raises(ValueError, match="must be 'vote' or 'spread'"):
+        ft.project_labels(raw, labels, cell_ids=[1, 2, 3], method="knn")
+
+    # the reference has to live in the mask whose space is being reused
+    with pytest.raises(ValueError, match="reference cells are outside mask"):
+        ft.add_mask("half", pl.col("cell_id") <= 30)
+        ft.project_labels(raw, labels, cell_ids=[1, 2, 3], mask="half")

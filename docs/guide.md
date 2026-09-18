@@ -84,10 +84,15 @@ with set algebra:
 ft.define_features("axon", family="axon")            # by metadata
 ft.define_features("core", columns=["axon_len", "dend_vol"])
 ft.collections["axon"] | ft.collections["dend"]      # union; also & and -
+
+ft.collections.names                                 # what's defined
+ft.collections.catalog()                             # ...with their columns
 ```
 
-Pass a collection (its name, the object, or a plain list) as `columns=` to
-`dataframe`, `features`, `cluster`, `overcluster`, and `embed`.
+Pass a collection — its name, the object, or a plain list — as `columns=` anywhere
+features are chosen: `dataframe`, `features`, `features_pca`, `scaler`, `space`,
+`cluster`, `overcluster`, `embed`, `project`, `propagate_labels`, `project_labels`,
+`assign`, `assess_labels`, `triage_labels` and `boundary_report`.
 
 ## Preprocessing and scaling
 
@@ -626,6 +631,28 @@ ft.attach(labels)                       # adds a 'subclass' column (null off-mas
 ft.labels                                # ['subclass'] — names attached so far
 ```
 
+Those verbs all act on whole clusters. `assign` is the per-*cell* one, for the
+handful you have looked at and disagree with:
+
+```python
+labels.assign(misfiled_ids, "inh")   # six somas that came out exc and plainly aren't
+labels.assign(4172, "Pvalb")         # one id; an unheld name creates the cluster
+labels.assign(junk_ids, None)        # the per-cell counterpart of unassign
+```
+
+A cluster *name* nothing holds yet is created on the spot; an unknown cluster *id*
+raises, since a stray integer is an off-by-one rather than a new cluster. Cells the
+set doesn't cover raise too — passing root_ids to a set keyed on cell_ids would
+otherwise be a silent no-op, and a silent no-op here is a mislabeled figure later.
+Emptying a cluster this way drops it from `ids` and `catalog` but keeps its identity
+in `meta`, so moving a cell back restores it with its color; `unassign` is how you
+retire one for good.
+
+`assign` edits a labelling in place rather than layering over it, so
+[`flatten_labels`](#flattening-labels-across-masks)' `source_name=` provenance won't
+show the change. Where the audit trail is the point, keep the curated calls as their
+own `LabelSet` and `combine` instead.
+
 `combine` unions label sets into one. Its default, `mode="disjoint"`, is for
 labellings of separate populations (e.g. exc + inh clustered separately): the cell
 sets must not overlap, and ids are offset so two clusters that happen to share a
@@ -821,6 +848,50 @@ when the mask is redefined or `preprocess`/`add_features` changes the scaled spa
 underneath it; `embedding_model` then raises rather than silently projecting new
 cells into coordinates the stored ones no longer share.
 
+#### Labeling cells that were never in the table
+
+`project_labels` is `propagate_labels` for rows from elsewhere — a second dataset, a
+later batch, cells you deliberately kept out. Both populations go through the mask's
+*frozen* scaler and PCA, so the reference is judged in exactly the space it was
+clustered in, and the table is never widened:
+
+```python
+result = ft.project_labels(new_rows, sub, n_neighbors=30)   # sub = a LabelSet on "inh"
+result.frame()              # cell_id + name + id + confidence, for the new cells only
+result.self_agreement()     # how well the reference recovers itself in this space
+```
+
+`new_rows` is a polars frame matched on column name (extra columns ignored) or a raw
+array in the resolved column order; ids come from its id column or from `cell_ids=`,
+and without either it raises rather than inventing ids that could collide with real
+ones. `mask=` defaults to the reference's own. The result covers **just the new
+cells** — the reference votes, it doesn't come back — and its `LabelSet` has no mask,
+since these cells are in no mask of this table.
+
+The difference from adding the rows and propagating over a widened mask is that
+nothing is re-fit: no scaler moves, no clustering is invalidated, and repeated calls
+on different batches all land in one comparable space. The cost is that the incoming
+cells get no say in the space they're measured in — which is the right trade when the
+reference is the thing you trust.
+
+`propagate_labels`' caveats apply, sharpened by distance. `"vote"` casts exactly
+`n_neighbors` votes, so *every* incoming cell gets a label however far it sits from
+the reference, and `confidence` measures neighbor disagreement rather than distance.
+Rows from another dataset are precisely where that bites, so use `method="spread"`
+when "none of these" has to be an available answer:
+
+```python
+ft.project_labels(stray, sub, cell_ids=[9001]).labels.n_unassigned                  # 0
+ft.project_labels(stray, sub, cell_ids=[9001], method="spread").labels.n_unassigned  # 1
+```
+
+Validity domains aren't checked here — they're properties of cells in the table, and
+these rows aren't in it.
+
+For rows from a dataset that was joined into this table, run them through
+`ft.harmonize(rows, dataset)` first, so they arrive in the joined units (see
+[Joining datasets](#joining-datasets)).
+
 `features_pca` (the denoising step `propagate_labels` uses) deliberately doesn't
 retain its PCA — it's an internal, unnamed space. Use `embed(method="pca")` when you
 want a PCA basis you can project into later.
@@ -923,6 +994,8 @@ names)` does the cross-dataset version: features that measure the acquisition
 rather than the cells, with `median_shift_iqr` separating "recenterable shift"
 from "shape-level difference". Same abstraction, different granularity — a
 per-dataset domain is just a validity mask that happens to be a dataset stratum.
+When the goal is to *remove* such shifts and put the datasets in one space rather than
+fence them off, see [Joining datasets](#joining-datasets).
 
 Declared domains have teeth. `propagate_labels` warns (or raises, with
 `on_invalid="raise"`) when the chosen columns don't cover the target — the
@@ -1461,6 +1534,143 @@ clusterings and the consensus matrix do not cross (they are cellpax objects
 with no AnnData equivalent) — export for the ecosystem's tools, keep the
 analysis of record on the folio side.
 
+## Joining datasets
+
+Two volumes run through the same feature extraction still disagree about the same kind
+of cell. Synapse sizes come out in different units, a lower detection threshold enriches
+one tail, a spine/shaft classifier splits differently, sections compress by a few
+percent. Concatenate the rows and scale once, and all of that becomes geometry: the
+first thing a clustering finds is the datasets.
+
+`join_datasets` removes the difference *before* the rows meet:
+
+```python
+from cellpax import FeatureTable, join_datasets, quantile_scaler_factory
+
+ft = join_datasets(
+    {"minnie": minnie, "v1dd": v1dd},        # FeatureTables with the same features
+    scaler_factory=quantile_scaler_factory(), # 1st/99th percentile clip, then rank
+    strata="subclass",                        # one mapping per (dataset, subclass)
+)
+ft.describe()
+```
+
+Each dataset gets its own scaler, fit on its own cells. Every other dataset is then
+mapped **onto the reference dataset** (the first, unless `reference=` says otherwise):
+forward through its own fit, back out through the reference's inverse. The joined
+values are in the reference's raw units, and the reference's cells are unchanged. After
+that the joined table is an ordinary table: it scales per mask, clusters, embeds and
+propagates exactly as before.
+
+### Choosing the harmonizer
+
+- **Normalize per dataset, never jointly.** A scaler fit on the pooled rows measures the
+  datasets against a mixture of both and leaves the difference in place.
+- **A rank transform aligns what linear scaling cannot.** `StandardScaler` corrects
+  location and scale, and nothing else. When one dataset's feature is a nonlinear warp
+  of the other's (different units compounded by a threshold that enriches one tail), only
+  a quantile map removes it. On Minnie vs V1dd, clipping at the 1st/99th percentile and
+  then quantile-normalizing each dataset matched 85 of 87 features' marginals (KS < 0.02),
+  including features whose raw ratios were 1000×. Clip first: `quantile_scaler_factory`
+  does by default.
+- Anything with an `inverse_transform` works. `StandardScaler`, `RobustScaler`,
+  `clipped_scaler_factory()` and `quantile_scaler_factory()` all round-trip through
+  `save`/`load`. Any other scaler works in a session, but `join_datasets` warns that
+  `save` will refuse it.
+
+### Stratifying by subclass
+
+A single per-feature map fails when the batch effect changes direction between cell
+types. On Minnie vs V1dd, mid-layer IT cells have 0.55× the spine density while L6 cells
+have 1.1–1.6×, so no one map fixes both. Subclasses, though, are easy to match between
+datasets, and `strata=` gives every `(dataset, subclass)` its own mapping. It keeps the
+differences *between* subclasses (they are in the reference's units) and removes only
+the difference between datasets *within* each one. On excitatory cells that cut the
+mixing gap by 78%.
+
+Strata are compared as strings, so the names must already agree:
+
+```python
+minnie = minnie.add_column(
+    minnie.dataframe().select(
+        pl.col("subclass").replace({"L2IT": "IT", "L3IT": "IT", "L4IT": "IT", "L5IT": "IT"})
+    ),
+    "stratum_group",
+)
+```
+
+- **Lump continua** whose internal boundaries the datasets drew differently: L2–5 IT as
+  one stratum, rather than imposing an L2/L3 boundary that doesn't match.
+- **Reconcile taxonomies** before joining, e.g. V1dd's BPC + MPC together make up Minnie's
+  ITC.
+- **Reference-only strata pass through.** A population only the reference has (Minnie's
+  L2b) keeps its values. A stratum in another dataset that the reference lacks raises,
+  because there is nothing to map it onto.
+- **Stratify where it pays.** Inhibitory cells in the same comparison were nearly aligned
+  by a single global quantile map. Give them one stratum value, and the excitatory cells
+  their subclass groups.
+- `min_cells=` (default 50) refuses a mapping estimated from too few cells, on either
+  side. `fit_mask=` fits on a trusted subset (proofread cells, say) and applies the fit
+  to every cell.
+
+### Checking that it worked
+
+`dataset_mixing` asks how much more often a cell's neighbours come from its own dataset
+than its stratum's composition predicts. A gap of 0 means the datasets are
+indistinguishable in that space.
+
+```python
+ft.dataset_mixing()                  # scaled features, stratified by the join's strata
+ft.dataset_mixing(pca=True)          # ...the same in the 95%-variance PCA space
+ft.cross_dataset_classification("subclass", train="minnie", test="v1dd").by_label()
+```
+
+**Compare representations before choosing one.** With a few dozen mostly informative
+features there is no noise floor to dilute a covariance difference between the datasets,
+and PCA keeps exactly the high-variance directions such a difference creates. On Minnie
+vs V1dd the gap was +0.13 in the 85-D feature space and +0.42 in 30-D PCA, and running
+Harmony on the PCA *after* stratified quantile normalization made mixing worse. If
+`dataset_mixing(pca=True)` is clearly worse than `dataset_mixing()`, cluster with
+`pca=False`.
+
+The per-label confusion in `cross_dataset_classification` shows where the datasets still
+disagree. Errors that fall on known taxonomy differences are a result about taxonomy,
+not a failed alignment. `accuracy_shared` leaves out test labels the training dataset
+doesn't have.
+
+Some residual gap is expected, around +0.02 overall and more for some subclasses.
+Per-feature maps align marginals, not covariance, and part of what's left is real:
+regional biology, or reconstruction survival that selects different cells in each
+volume.
+
+### Getting back to the sources
+
+Joined ids are minted in dataset blocks and should never be parsed. Every row keeps its
+dataset and original id, and both directions of the lookup are methods:
+
+```python
+ft.source_ids(joined_ids)               # cell_id, dataset, source_cell_id
+ft.cell_ids_for("v1dd", root_ids)       # original ids -> joined ids
+
+parts = ft.labels_by_dataset("joint_subclass")   # one LabelSet per dataset, original ids
+v1dd.attach(parts["v1dd"])                       # write the joint labels back
+```
+
+New cells from any dataset reach the joined space through the same frozen mapping,
+followed by the joined table's own frozen fits:
+
+```python
+rows = ft.harmonize(new_v1dd_cells, "v1dd")      # strata read from its subclass column
+ft.project_labels(rows.rename({"root_id": "cell_id"}), "joint_subclass")
+```
+
+Metadata, masks, collections, validity domains and attached labels carry over. A dataset
+missing a metadata column gets nulls, and one missing a mask gets `False`, with a
+warning. Same-named clusters merge. Embeddings, clusterings and spaces do not carry over,
+since they were computed in the per-dataset spaces. One caveat when viewing the result:
+a `root_id` column now mixes ids from different volumes, so a neuroglancer link needs the
+right segmentation for each dataset.
+
 ## Persistence
 
 Save the whole analysis under a name in a DataFolio — structured, not flattened.
@@ -1484,6 +1694,11 @@ analysis.
 
 Scalers refit lazily on load (the resolved transforms and scaler choice are
 restored, so scaled values reproduce).
+
+A table built by `join_datasets` also saves its per-dataset scalers, as explicit
+parameters rather than pickles, along with the dataset and source-id bookkeeping. After
+a `load`, `harmonize`, `source_ids` and `labels_by_dataset` work exactly as before. A
+join whose scaler cannot be recorded refuses to save before anything is written.
 
 ## Plotting
 

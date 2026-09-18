@@ -352,3 +352,40 @@ def test_describe_shows_the_session_state_at_a_glance() -> None:
     # a fresh minimal table doesn't crash on the empty sections
     bare = FeatureTable(df, features=["m0", "m1"])
     assert "not preprocessed" in bare.describe()
+
+
+def test_add_column_squeezes_a_one_column_frame() -> None:
+    """``df.select(expr)`` must not land as an Array(Boolean, shape=(1,)) column."""
+    pd = pytest.importorskip("pandas")
+    ft = _table(6)
+    ids = np.array([2, 3])
+
+    ft.add_column(
+        ft.dataframe().select(pl.col("cell_id").is_in(ids)), "hit", fill_value=False
+    )
+    assert ft.dataframe().schema["hit"] == pl.Boolean
+    assert ft.dataframe().sort("cell_id")["hit"].to_list() == [
+        False,
+        True,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+    # the same squeeze for a pandas frame and for an (n, 1) array
+    ft.add_column(pd.DataFrame({"v": range(6)}), "from_pandas")
+    assert ft.dataframe().schema["from_pandas"] == pl.Int64
+    ft.add_column(np.arange(6).reshape(6, 1), "from_2d")
+    assert ft.dataframe().schema["from_2d"] == pl.Int64
+
+    with pytest.raises(ValueError, match="DataFrame with 2 columns"):
+        ft.add_column(ft.dataframe().select("m0", "m1"), "wide")
+
+
+def test_add_mask_squeezes_a_one_column_frame() -> None:
+    ft = _table(6)
+    ft.add_mask("left", ft.dataframe().select(pl.col("region") == "L"))
+    assert ft.mask_series("left").to_list() == [True] * 3 + [False] * 3
+    with pytest.raises(ValueError, match="DataFrame with 2 columns"):
+        ft.add_mask("wide", ft.dataframe().select("m0", "m1"))

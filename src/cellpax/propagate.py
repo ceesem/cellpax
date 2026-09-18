@@ -36,10 +36,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import polars as pl
+
+if TYPE_CHECKING:
+    from cellpax.labels import LabelSet
 
 _UNASSIGNED = -1
 _TINY = np.finfo(float).tiny
@@ -60,6 +63,15 @@ class Recovery:
     ``"leave-one-out"`` (exact, the kNN vote's, free) or ``"{k}-fold"`` (withholding a
     stratified share at a time, which also thins the reference and so reads slightly
     pessimistic). Compare across feature sets with one estimator, not across estimators.
+
+    Attributes
+    ----------
+    agreement : float
+        Fraction of reference cells recovered correctly.
+    abstained : float
+        Fraction left without evidence to decide.
+    estimator : str
+        Recovery protocol, such as ``"leave-one-out"`` or ``"5-fold"``.
     """
 
     agreement: float
@@ -167,6 +179,35 @@ def propagate_knn(
     reference exempt under ``preserve_labeled``. Because ``k`` votes are always cast
     it catches rows caught *between* clusters, never rows far from all of them —
     those come back unanimous at ``1.0`` however distant they are.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        Row-aligned ``(n_cells, n_features)`` coordinate matrix.
+    codes : numpy.ndarray
+        Integer labels per row; ``-1`` marks cells to predict.
+    n_neighbors : int, default 30
+        Number of labelled neighbours voting for each row.
+    weights : {'uniform', 'distance'}, default 'uniform'
+        Vote weighting rule.
+    preserve_labeled : bool, default True
+        Keep supplied reference codes in the output.
+    min_confidence : float, optional
+        Unassign predictions below this winning support share.
+    agreement_folds : int, default 0
+        Use fold-wise reference recovery when at least two; zero uses exact
+        leave-one-out recovery.
+    seed : int, optional
+        Seed for stratified recovery folds.
+
+    Returns
+    -------
+    codes : numpy.ndarray
+        Propagated integer code for each row.
+    confidence : numpy.ndarray
+        Winning support share for each row.
+    recovery : Recovery
+        Held-out recovery of the supplied reference labels.
     """
     features, codes, fit_rows = _check(features, codes, preserve_labeled)
     k = int(min(n_neighbors, fit_rows.size - 1))
@@ -311,6 +352,42 @@ def propagate_spread(
     neighbors and comes back on the next hop, so removing a row's influence means
     removing its label. The graph is built once and reused across folds, so this
     costs extra diffusions, not extra neighbor searches.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        Row-aligned ``(n_cells, n_features)`` coordinate matrix.
+    codes : numpy.ndarray
+        Integer labels per row; ``-1`` marks cells to predict.
+    n_neighbors : int, default 30
+        Neighbourhood size of the diffusion graph.
+    mutual : bool, default True
+        Retain only mutually selected neighbour edges.
+    weights : {'uniform', 'distance'}, default 'distance'
+        Edge-weighting rule.
+    preserve_labeled : bool, default True
+        Clamp supplied reference codes during diffusion.
+    alpha : float, default 0.8
+        Weight given to propagated rather than initial label mass.
+    min_confidence : float, optional
+        Unassign predictions below this winning support share.
+    max_iter : int, default 100
+        Maximum diffusion iterations.
+    tol : float, default 1e-6
+        Convergence tolerance on the label field.
+    agreement_folds : int, default 5
+        Stratified folds used to assess reference recovery; zero disables it.
+    seed : int, optional
+        Seed for recovery folds.
+
+    Returns
+    -------
+    codes : numpy.ndarray
+        Propagated integer code for each row.
+    confidence : numpy.ndarray
+        Winning support share for each row.
+    recovery : Recovery, optional
+        Fold-wise recovery, or ``None`` when disabled.
     """
     features, codes, fit_rows = _check(features, codes, preserve_labeled)
     transition = _transition_matrix(features, n_neighbors, mutual, weights)
@@ -505,6 +582,25 @@ def confidence_curve(
     the cut whose trade you can live with. Cells with no known truth never enter
     it — and remember the cut measures ambiguity, not novelty: a cell far outside
     the reference is unanimous at 1.0, which is what ``method="spread"`` is for.
+
+    Parameters
+    ----------
+    truth : numpy.ndarray
+        Known integer codes, with ``-1`` for unknown rows.
+    predicted : numpy.ndarray
+        Propagated code for each row.
+    confidence : numpy.ndarray
+        Winning support share for each row.
+
+    Returns
+    -------
+    polars.DataFrame
+        One row per effective cut with kept count, coverage, and error rate.
+
+    Raises
+    ------
+    ValueError
+        If inputs have different lengths or no row has known truth.
     """
     truth = np.asarray(truth, dtype=np.int64).reshape(-1)
     predicted = np.asarray(predicted, dtype=np.int64).reshape(-1)
@@ -540,12 +636,37 @@ class Propagation:
     Returned by :meth:`~cellpax.featuretable.FeatureTable.propagate_labels`. The
     labels aren't attached to the table — ``ft.attach(result.labels)`` when you're
     happy with them, and ``result.frame()`` if you want the confidence alongside.
+
+    Parameters
+    ----------
+    labels : LabelSet
+        Propagated labels over the target population.
+    reference : LabelSet
+        Curated labels propagated from.
+    confidence : numpy.ndarray
+        Winning support share for each target cell.
+    recovery : Recovery, optional
+        Held-out reference recovery diagnostics.
+    method : str
+        Propagation method name.
+    n_neighbors : int
+        Neighbourhood size used by the method.
+    space : str
+        Representation in which neighbours were found.
+    params : dict, optional
+        Provenance for the originating call.
+    rungs : numpy.ndarray, optional
+        Ladder rung that labelled each cell.
+    rung_names : sequence of str, optional
+        Ladder collection names, richest first.
+    rung_recovery : dict, optional
+        Recovery diagnostics keyed by rung name.
     """
 
     def __init__(
         self,
-        labels: Any,
-        reference: Any,
+        labels: "LabelSet",
+        reference: "LabelSet",
         confidence: np.ndarray,
         recovery: Recovery | None,
         *,
@@ -570,12 +691,12 @@ class Propagation:
         self._rung_recovery = rung_recovery
 
     @property
-    def labels(self) -> Any:
+    def labels(self) -> "LabelSet":
         """The propagated ``LabelSet``, carrying the reference's names and colors."""
         return self._labels
 
     @property
-    def reference(self) -> Any:
+    def reference(self) -> "LabelSet":
         """The ``LabelSet`` propagated from."""
         return self._reference
 
@@ -667,11 +788,22 @@ class Propagation:
         failed, since a misassigned cell and an unreachable one call for different
         fixes, and for which estimator produced the number. ``nan`` when recovery
         was skipped (``agreement_folds=0``).
+
+        Returns
+        -------
+        float
+            Reference recovery fraction, or ``nan`` when not assessed.
         """
         return float("nan") if self._recovery is None else self._recovery.agreement
 
     def n_reference(self) -> int:
-        """Cells whose label came from the reference rather than from propagation."""
+        """Count cells supplied by the reference.
+
+        Returns
+        -------
+        int
+            Number of reference cells.
+        """
         return int(self._reference.assigned.sum())
 
     def frame(self, *, id_column: str = "cell_id") -> pl.DataFrame:
@@ -679,6 +811,16 @@ class Propagation:
 
         A ladder propagation adds a ``{name}_rung`` column naming the collection
         that labeled each cell (null where no rung was valid).
+
+        Parameters
+        ----------
+        id_column : str, default 'cell_id'
+            Name of the identifier column.
+
+        Returns
+        -------
+        polars.DataFrame
+            Propagated names and ids, confidence, and optional ladder rung.
         """
         frame = self._labels.to_frame(id_column=id_column).with_columns(
             pl.Series(f"{self._labels.name}_confidence", self._confidence)

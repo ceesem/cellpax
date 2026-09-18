@@ -63,6 +63,30 @@ def test_define_features_by_family_predicate_and_columns() -> None:
         ft.collections["missing"]
 
 
+def test_collections_accessor_lists_what_is_defined() -> None:
+    ft = _table_with_metadata()
+    assert ft.collections.names == []
+    assert len(ft.collections) == 0
+    assert repr(ft.collections) == "FeatureCollections([])"
+
+    ft.define_features("axon", family="axon")
+    ft.define_features("dend", family="dend")
+
+    assert ft.collections.names == ["axon", "dend"]  # definition order
+    assert list(ft.collections) == ft.collections.names
+    assert len(ft.collections) == 2
+    assert repr(ft.collections) == "FeatureCollections(['axon', 'dend'])"
+
+    catalog = ft.collections.catalog()
+    assert catalog.columns == ["name", "n_features", "columns"]
+    assert catalog["name"].to_list() == ["axon", "dend"]
+    assert catalog["n_features"].to_list() == [2, 2]
+    assert catalog["columns"].to_list()[0] == ["axon_len", "axon_tort"]
+
+    # the names round-trip straight back through the accessor
+    assert all(name in ft.collections for name in ft.collections.names)
+
+
 def test_scaling_with_a_collection_subset() -> None:
     ft = _table_with_metadata()
     ft.define_features("axon", family="axon")
