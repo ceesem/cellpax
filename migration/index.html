@@ -1,0 +1,958 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://ceesem.github.io/cellpax/migration/">
+      
+      
+        <link rel="prev" href="../reference/api/">
+      
+      
+        <link rel="next" href="../changelog/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Migration - cellpax Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bitter:300,300i,400,400i,700,700i%7CInconsolata:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Bitter";--md-code-font:"Inconsolata"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#migrating-an-existing-analysis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="cellpax Documentation" class="md-header__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cellpax Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Migration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Function Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="cellpax Documentation" class="md-nav__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cellpax Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../reference/api/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Function Reference
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-re-save-because-the-old-form-may-not-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Re-save, because the old form may not load
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-count-curve-and-the-cut-have-to-agree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The count curve and the cut have to agree
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-eight-hand-tuned-thresholds-become-one-ladder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Eight hand-tuned thresholds become one ladder
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-new-sweep-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. New sweep parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-clip-rule-for-the-small-cohorts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The clip rule, for the small cohorts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-scoring-the-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Scoring the changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6b-optional-embedding-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6b. Optional embedding backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6c-coordinate-columns-no-longer-need-reconstructing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6c. Coordinate columns no longer need reconstructing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-before-the-manual-labels-can-be-used-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Before the manual labels can be used at all
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-duplicated-notebook-code-with-library-equivalents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Duplicated notebook code with library equivalents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pinned-by-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pinned by tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="migrating-an-existing-analysis">Migrating an existing analysis</h1>
+<p>Notes for a project already using CellPax — specifically the MICrONS subclass clustering in
+<code>v1dd_feature_pax</code>, whose notebooks drive the parts of the API that changed. Nothing here
+is required to keep an old analysis <em>readable</em>: manifest version 1 folios still load, and
+every new parameter defaults to the previous behaviour. What follows is what changes if you
+want the new machinery, in the order it has to happen.</p>
+<h2 id="1-re-save-because-the-old-form-may-not-load">1. Re-save, because the old form may not load</h2>
+<p>This is the blocking one. <code>save_feature_table</code> used to write each consensus matrix as a COO
+triplet frame, whose size grows with the number of nonzero cell <em>pairs</em>. At 21,291 cells
+that is roughly 600 MB, above DataFolio's ~500 MB eager-load limit — so
+<code>load_feature_table</code> raises on a folio it wrote itself, and the notebook's first cell can
+no longer re-run against what its last cell saved:</p>
+<pre><code>ValueError: Table '&lt;name&gt;/clustering/&lt;c&gt;' is ~603.0 MB, above the ~500.0 MB
+eager-load limit.
+</code></pre>
+<p>There is no in-place fix, because the runs behind those matrices were never stored. The
+clusterings have to be recomputed once and re-saved:</p>
+<pre><code class="language-python">ft = cpx.load_feature_table(folio, name=&quot;reprocessed&quot;)   # fails today
+</code></pre>
+<p>If the folio is currently unloadable, recompute from the preprocessing notebook's output
+and re-run the clustering cells. After that, clusterings persist as their runs
+(<code>&lt;name&gt;/partitions/&lt;c&gt;</code>, int32) with the matrix derived on load — about an order of
+magnitude smaller, scaling as <code>n × n_runs</code> rather than <code>n²</code>.</p>
+<p>Two things that come back for free once the runs persist:</p>
+<ul>
+<li><code>clus.restrict(...)</code> works on a reloaded clustering. It used to raise, because
+  <code>Partitions</code> were session-only, which meant the expensive part of clustering was
+  unrecoverable and the grain could not be revisited after a reload.</li>
+<li><code>clus.merge_support(...)</code> and <code>axis_stability(...)</code> likewise.</li>
+</ul>
+<h2 id="2-the-count-curve-and-the-cut-have-to-agree">2. The count curve and the cut have to agree</h2>
+<p>Every <code>cluster_count_curve()</code> call in the clustering notebook is read at the default
+<code>min_cluster_size=1</code> while the corresponding <code>label(...)</code> cuts at 10, 50 or 100. At 1
+nothing is dropped and every singleton counts as a cluster, so the curve promises far more
+clusters than the cut delivers — usually by a wide margin, since singletons are most of the
+count. The threshold chosen from that curve was chosen against a curve the cut does not
+produce.</p>
+<pre><code class="language-python">clus.cluster_count_curve(min_cluster_size=50)   # the same value you will cut at
+clus.threshold_scan(min_cluster_size=50)        # and how many cells survive it
+</code></pre>
+<p>This is a pre-existing mismatch, not something the new code introduced, but it interacts
+with everything below: any threshold carried forward was picked under the wrong curve.</p>
+<h2 id="3-eight-hand-tuned-thresholds-become-one-ladder">3. Eight hand-tuned thresholds become one ladder</h2>
+<p>The notebook picks a <code>distance_threshold</code> per cohort, spanning 0.55–0.80, plus three
+different <code>min_cluster_size</code> values. That is the flattening step the hierarchy work
+replaces:</p>
+<pre><code class="language-python">h = clus.hierarchy()          # levels at several heights, coarse to fine
+h.nested_levels               # what each level is: height, frequency, n_clusters
+h.merge_table()               # every merge with its stability
+clus.merge_support(n_bands=4) # and which resolutions supported it
+</code></pre>
+<p>Then attach the level you want, or several:</p>
+<pre><code class="language-python">from cellpax import LabelSet
+ft.attach(LabelSet.from_labels(
+    h.nested_labels[&quot;cell_id&quot;].to_numpy(),
+    h.nested_labels[&quot;level_1&quot;].to_numpy(),
+    unassigned=-1, name=&quot;subclass&quot;, mask=clus.mask,
+))
+</code></pre>
+<p>The recursion the notebook builds by hand — cluster a cohort, cut it, <code>np.isin</code> the labels
+into a new mask, cluster again — is a different thing from this and still valid; the
+hierarchy replaces the <em>cut</em>, not the recursion. But note the two now overlap: a level of
+the ladder and a level of the recursion answer the same question differently, and it is
+worth deciding which one owns a given split rather than having both.</p>
+<h2 id="4-new-sweep-parameters">4. New sweep parameters</h2>
+<pre><code class="language-python">clus = ft.cluster(
+    mask,
+    columns=&quot;analysis&quot;,
+    alpha=0.5,                                   # partial whitening; 0.0 is unchanged
+    eigenvalue_floor=ft.space(mask).noise_floor,  # read this before using alpha=1
+    graph_type=[&quot;knn&quot;, &quot;snn_jaccard&quot;, &quot;umap_fuzzy&quot;],
+    n_neighbors=[15, 30, 60],
+    resolution=np.geomspace(0.02, 1.5, 12),
+    n_times=5,
+    seed=0,                                      # note: currently None everywhere
+)
+</code></pre>
+<p><code>seed=None</code> throughout the notebook means no run is reproducible, which matters more once
+parameters are being compared: a difference between two settings is not readable if each
+was measured once with an unrecorded seed.</p>
+<p>Pool on realised grain rather than nominal resolution when <code>graph_type</code> is a list —
+resolution is not comparable across weightings:</p>
+<pre><code class="language-python">clus.partitions.by_setting()                       # median_clusters is comparable
+clus.restrict(n_clusters_min=8, n_clusters_max=40)
+</code></pre>
+<h2 id="5-the-clip-rule-for-the-small-cohorts">5. The clip rule, for the small cohorts</h2>
+<p>The clipped scaler is configured once in <code>microns_preprocessing.ipynb</code>:</p>
+<pre><code class="language-python">ft = cpx.FeatureTable(..., scaler_factory=cpx.make_clipped_scaler)
+</code></pre>
+<p>That is a percentile rule at 0.1/99.9, which is fine at 21,000 cells and not fine at the
+few-hundred-cell interneuron subclasses. Check before switching:</p>
+<pre><code class="language-python">from cellpax import clip_comparison, clipped_scaler_factory
+clip_comparison(ft.features(small_mask), ft.feature_columns)
+</code></pre>
+<p>then, if the comparison supports it:</p>
+<pre><code class="language-python">ft = cpx.FeatureTable(..., scaler_factory=clipped_scaler_factory(mode=&quot;sigma&quot;, n_sigma=4.0))
+</code></pre>
+<p><code>n_sigma</code> is in IQR units, not standard deviations — see the user guide. Changing this
+changes every scaled value, so it invalidates stored clusterings and embeddings; do it in
+the preprocessing notebook and recompute downstream.</p>
+<h2 id="6-scoring-the-changes">6. Scoring the changes</h2>
+<p>The notebook currently judges results by looking at UMAPs. Two problems with carrying that
+forward: <code>ft.embed</code> builds its neighbour graph in the <strong>full 81-D scaled space</strong> while
+<code>ft.cluster</code> uses <code>pca(0.95)</code>, so the figure was never a picture of the clustered space;
+and at <code>alpha &gt; 0</code> the two genuinely diverge, so labels will look <em>worse</em> on the existing
+UMAP even when the clustering improved.</p>
+<pre><code class="language-python">from cellpax import subsample_stability, loo_knn_recovery, paired_recovery, label_purity
+</code></pre>
+<ul>
+<li><strong><code>subsample_stability</code></strong> is the primary criterion. Build the coordinates outside the
+  loop, from views over one <code>ft.space(...)</code> fit, so the representation is frozen and only
+  <code>alpha</code> differs.</li>
+<li><strong><code>ct_combo</code></strong> is already a column on the feature table and is subclass-resolution, which
+  makes it a far better recovery target than the 389 manual E/I labels. It is another
+  model's output, so agreeing with it rewards reproducing its boundary including its
+  errors — it ranks representations rather than certifying them.</li>
+<li><strong><code>label_purity</code> against <code>is_inhib_label_nn</code></strong> is a tripwire, not a criterion. Note it
+  can only fire where straddling is possible: the notebook pre-splits E and I before
+  clustering, so for seven of the eight cohorts purity is 1.0 by construction. It has teeth
+  on <code>exc_v1_core</code>, which is gated on <code>is_inhib_label</code> but auditable by the
+  differently-provenanced <code>is_inhib_label_nn</code> — 438 + 939 population cells disagree between
+  the two, so genuine straddlers exist to find.</li>
+</ul>
+<h2 id="6b-optional-embedding-backends">6b. Optional embedding backends</h2>
+<p><code>ft.embed</code> now takes <code>method="pacmap"</code> and <code>method="localmap"</code> as well as <code>"umap"</code>, behind
+<code>pip install 'cellpax[embeddings]'</code>. Worth trying here specifically because the eight cohort
+figures are read for inter-cluster structure, which is what UMAP is least able to provide.</p>
+<pre><code class="language-python">ft.embed(mask, method=&quot;pacmap&quot;, name=f&quot;{group}_pacmap&quot;, seed=0)
+ft.embed(mask, method=&quot;umap&quot;,   name=f&quot;{group}_umap&quot;,   seed=0)
+</code></pre>
+<p>Three practical notes for the existing notebooks:</p>
+<ul>
+<li><strong><code>seed=</code> is currently absent everywhere</strong>, so no figure in them can be regenerated. All
+  four backends accept it.</li>
+<li><strong><code>n_neighbors</code> defaults to 10</strong> for pacmap/localmap against UMAP's 15, so the first
+  output will look more fragmented than the current figures. Not a like-for-like swap.</li>
+<li><strong>On the 81-column <code>analysis</code> set, pacmap's own <code>apply_pca</code> never fires</strong> (it needs &gt;100
+  features), so it embeds what it is handed. It <em>would</em> fire on the full 133-column set.
+  <code>ft.graph_provenance()</code> shows which happened.</li>
+</ul>
+<p>Running two backends is more useful than replacing one: a cell misplaced in both is more
+likely genuinely unusual, while one misplaced in only one is that algorithm's artifact.
+<code>neighbor_label_composition</code> takes any coordinate array, so the same triage runs on each.</p>
+<h2 id="6c-coordinate-columns-no-longer-need-reconstructing">6c. Coordinate columns no longer need reconstructing</h2>
+<p>Every scatter call currently rebuilds coordinate column names from the embedding's name,
+which means writing that name three times:</p>
+<pre><code class="language-python">sns.scatterplot(
+    x=f&quot;{embedding_name}0&quot;,
+    y=f&quot;{embedding_name}1&quot;,
+    data=feat_table.dataframe(mask=mask, embedding=embedding_name),
+)
+</code></pre>
+<p><code>ft.embedding_view</code> returns the frame and the names together:</p>
+<pre><code class="language-python">v = feat_table.embedding_view(mask, name=embedding_name, labels=lbl)
+sns.scatterplot(**v.xy, data=v.frame, hue=lbl.name, palette=lbl.color_map())
+</code></pre>
+<p>That collapses three things in the project:</p>
+<ul>
+<li><strong>The local <code>plot_embedding</code> helper</strong> (<code>microns_subclass_clustering.ipynb</code> cell 7) becomes
+  unnecessary. Worth deleting rather than porting — it accepts an <code>ft</code> argument it never
+  uses and closes over the global <code>feat_table</code> instead, so it silently ignores the table
+  you hand it.</li>
+<li><strong><code>plotting.preview_labels</code></strong> (<code>plots.py:1042</code>) can take a view instead of an
+  <code>embedding_name</code>, which removes the same triple-mention from the library side.</li>
+<li><strong>The <code>pl.col('umap_core0') &gt; 10</code> filters</strong> in <code>microns_exp_inh.ipynb</code> cells 27, 44 and 45
+  become <code>v.frame.filter(pl.col(v.x) &gt; 10)</code> — coordinates as predicates, which a
+  plotting-only helper would not have covered.</li>
+</ul>
+<p>Two related additions: <code>ft.embeddings</code> lists stored <code>(mask, name)</code> pairs, which matters for
+the cells that rely on <code>embed</code>'s derived name (<code>microns_preprocessing.ipynb</code> cell 36 stores
+<code>umap_analysis</code> implicitly, and later cells have to guess it); and <code>graph_provenance()</code> now
+lists embeddings after a reload, which it previously did not.</p>
+<p>If you ever pass <code>n_components=3</code>, note that the old pattern silently plotted the first two
+axes. <code>v.xy</code> still gives you those two, but <code>v.n_components</code> says there are three and
+<code>v.pair(0, 2)</code> makes the alternative explicit.</p>
+<h2 id="7-before-the-manual-labels-can-be-used-at-all">7. Before the manual labels can be used at all</h2>
+<p>The 389 manually labelled cells exist only inside CAVE state <code>5967058931023872</code>, read by a
+hard-coded cell in <code>microns_exp_inh.ipynb</code>, and the validation cross-tabs computed from
+them have no stored outputs. Nothing can be reproducibly scored against them until they are
+snapshotted — a folio table or a checked-in parquet, with the stratum sizes and design
+weights alongside. That is a prerequisite for the validation rather than part of it, and
+it is worth doing even though the E/I axis is no longer the driver, because a mutable
+remote state is not a held-out set.</p>
+<h2 id="8-duplicated-notebook-code-with-library-equivalents">8. Duplicated notebook code with library equivalents</h2>
+<p>Not required, but the drift is already causing bugs. <code>plotting.cluster_strip</code>,
+<code>plotting.feature_v_depth_facets</code> and <code>plotting.preview_labels</code> all exist and are
+reimplemented inline — the facet loop appears seven times, two copies of which are missing
+an f-string prefix and so overwrite a single file literally named <code>{col}.png</code>, and one
+plots inhibitory cells against an excitatory background. <code>restrict</code>, <code>by_setting</code>,
+<code>threshold_scan</code> and <code>sorted_matrix</code> are library features that the notebook never calls and
+that would replace the hand-tuning directly.</p>
+<h2 id="pinned-by-tests">Pinned by tests</h2>
+<p>The default path is unchanged and that is enforced, not asserted: <code>graph_type="knn"</code>
+produces a byte-identical edge list to the previous implementation,
+<code>ft.cluster(alpha=0.0)</code> is bitwise the plain projection, <code>mode="percentile"</code> remains the
+default clip, and manifest version 1 folios load with their matrices intact. If an existing
+analysis changes after upgrading without you passing a new parameter, that is a bug worth
+reporting.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.indexes", "navigation.instant", "navigation.prune", "navigation.tabs", "navigation.tabs.sticky", "toc.follow", "toc.integrate", "navigation.top", "search.suggest", "search.highlight", "search.share", "content.code.copy", "header.autohide"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

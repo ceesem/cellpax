@@ -1,0 +1,2699 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://ceesem.github.io/cellpax/guide/">
+      
+      
+        <link rel="prev" href="../tutorial/">
+      
+      
+        <link rel="next" href="../reference/api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>User Guide - cellpax Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bitter:300,300i,400,400i,700,700i%7CInconsolata:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Bitter";--md-code-font:"Inconsolata"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#user-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="cellpax Documentation" class="md-header__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cellpax Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              User Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Function Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="cellpax Documentation" class="md-nav__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cellpax Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-featuretable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The FeatureTable
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The FeatureTable">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bringing-in-a-stable-cell-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bringing in a stable cell id
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-features-from-another-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding features from another source
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#masks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Masks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feature-collections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature collections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preprocessing-and-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preprocessing and scaling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clustering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clustering
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Clustering">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-space-the-knn-graph-is-built-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which space the kNN graph is built in
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#seeds-and-reproducibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Seeds and reproducibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whitening-the-pcs-alpha" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Whitening the PCs: alpha
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#weighting-feature-blocks-instead-of-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weighting feature blocks instead of components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clipping-small-cohorts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clipping small cohorts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-the-graph-or-marginalising-over-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the graph, or marginalising over it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-hierarchy-instead-of-flattening-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the hierarchy instead of flattening it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#triaging-a-cell-that-looks-misplaced" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triaging a cell that looks misplaced
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoring-cells-against-the-population" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoring cells against the population
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is-that-boundary-a-gap-or-a-cut" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is that boundary a gap or a cut?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parametrizing-a-continuum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parametrizing a continuum
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Labels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flattening-labels-across-masks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flattening labels across masks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-a-labelset-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading a LabelSet out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ordering-clusters-by-a-value-not-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ordering clusters by a value, not by hand
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#intenum-bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IntEnum bindings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fitting-a-classifier-on-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fitting a classifier on labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#projecting-new-cells-into-an-existing-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Projecting new cells into an existing space
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Projecting new cells into an existing space">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#labeling-cells-that-were-never-in-the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labeling cells that were never in the table
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#label-propagation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Label propagation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Label propagation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vote-or-spread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vote or spread
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validity-domains-declaring-where-features-inform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validity domains: declaring where features inform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-min_confidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing min_confidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conformal-assignment-sets-with-a-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conformal assignment: sets with a certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#smoothing-and-refilling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing and refilling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-recursive-descent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The recursive descent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validating-a-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validating a representation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validating a representation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#subsample-reproducibility-the-primary-criterion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subsample reproducibility — the primary criterion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recovery-of-an-external-label-the-cross-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery of an external label — the cross-check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#purity-against-an-audit-label-the-tripwire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purity against an audit label — the tripwire
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparing-approaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparing approaches
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embeddings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Embeddings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-embeddings-are-better-than-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two embeddings are better than one
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getting-at-the-coordinates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting at the coordinates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coordinates-from-elsewhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coordinates from elsewhere
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-anndata-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The AnnData bridge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joining-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joining datasets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Joining datasets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-the-harmonizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the harmonizer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stratifying-by-subclass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stratifying by subclass
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-that-it-worked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking that it worked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getting-back-to-the-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting back to the sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plotting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plotting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../reference/api/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Function Reference
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="user-guide">User Guide</h1>
+<p>Task-oriented reference for each part of CellPax. Skim the <a href="../tutorial/">Tutorial</a>
+first; here we go deeper. For exact signatures see the
+<a href="../reference/api/">Function Reference</a>.</p>
+<h2 id="the-featuretable">The FeatureTable</h2>
+<p>A <code>FeatureTable</code> wraps a polars frame of cells. It needs a unique id column and
+the numeric feature columns to cluster/scale on; every other column is metadata
+carried alongside.</p>
+<pre><code class="language-python">from cellpax import FeatureTable
+
+ft = FeatureTable(df, features=[...], id_column=&quot;cell_id&quot;, feature_metadata=meta)
+ft.n_cells, ft.n_features, ft.feature_columns, ft.columns
+</code></pre>
+<p>A pandas frame is accepted and converted. <code>feature_metadata</code> is an optional
+per-feature frame (<code>feature_id</code> + family/modality/units/…) exposed as <code>ft.var</code>
+and used by <code>define_features</code>. Pass <code>scaler_factory=</code> to change the scaler
+(default <code>StandardScaler</code>; <code>make_clipped_scaler</code> is also provided).</p>
+<h3 id="bringing-in-a-stable-cell-id">Bringing in a stable cell id</h3>
+<p>Extractions (e.g. ossify) are often keyed by a segmentation <code>root_id</code> and lack a
+static <code>cell_id</code>. Supply an <code>id_map</code> (a <code>[root_id, cell_id]</code>-style frame) to join
+it in and key the table on <code>cell_id</code> — at construction, or after:</p>
+<pre><code class="language-python">ft = FeatureTable(ossify_df, features=[...], id_map=root_to_cell)   # at creation
+
+ft = FeatureTable(ossify_df, features=[...], id_column=&quot;root_id&quot;)   # ...or after
+ft.set_id_column(&quot;cell_id&quot;, id_map=root_to_cell)
+</code></pre>
+<p>The map's key column (shared with the table, e.g. <code>root_id</code>) is inferred or given
+via <code>on=</code>; every cell must map and ids must be unique. The original key is kept as
+a metadata column.</p>
+<h3 id="adding-features-from-another-source">Adding features from another source</h3>
+<p>Static features from a different run-once source, keyed on <code>cell_id</code>, join in with
+<code>add_features</code> and become first-class features (usable in collections, scaling,
+and clustering):</p>
+<pre><code class="language-python">ft.add_features(
+    synapse_df,                         # features default to all columns except `on`
+    on=&quot;cell_id&quot;,                       # defaults to the id column
+    feature_metadata=conn_meta,         # optional family/modality for the new features
+    collection=&quot;conn&quot;,                  # also define a collection of these features
+)
+</code></pre>
+<p>Omit <code>features</code> to add every source column except the join key, or pass a list to
+select a subset. Every cell must be covered by the source (pass
+<code>allow_missing=True</code> to permit nulls, which then can't be scaled), and the source
+must have unique keys.</p>
+<h2 id="masks">Masks</h2>
+<p>A mask is a named boolean subset of cells, stored on the table. <code>based_on</code>
+intersects with a parent mask, so hierarchical subsets stay nested.</p>
+<pre><code class="language-python">ft.add_mask(&quot;exc&quot;, pl.col(&quot;is_inhibitory&quot;) == False)
+ft.add_mask(&quot;l23&quot;, pl.col(&quot;layer&quot;) == &quot;L2/3&quot;, based_on=&quot;exc&quot;)   # nested in &quot;exc&quot;
+ft.masks                     # ['all', 'exc', 'l23']
+ft.mask_series(&quot;l23&quot;)        # the boolean Series
+</code></pre>
+<p>A predicate is a polars expression over the table or a full-length boolean array.
+The implicit <code>"all"</code> mask covers every cell.</p>
+<h2 id="feature-collections">Feature collections</h2>
+<p>Collections are named, composable subsets of features — the clean replacement for
+loose column lists. Define them explicitly or from feature metadata, and combine
+with set algebra:</p>
+<pre><code class="language-python">ft.define_features(&quot;axon&quot;, family=&quot;axon&quot;)            # by metadata
+ft.define_features(&quot;core&quot;, columns=[&quot;axon_len&quot;, &quot;dend_vol&quot;])
+ft.collections[&quot;axon&quot;] | ft.collections[&quot;dend&quot;]      # union; also &amp; and -
+
+ft.collections.names                                 # what's defined
+ft.collections.catalog()                             # ...with their columns
+</code></pre>
+<p>Pass a collection — its name, the object, or a plain list — as <code>columns=</code> anywhere
+features are chosen: <code>dataframe</code>, <code>features</code>, <code>features_pca</code>, <code>scaler</code>, <code>space</code>,
+<code>cluster</code>, <code>overcluster</code>, <code>embed</code>, <code>project</code>, <code>propagate_labels</code>, <code>project_labels</code>,
+<code>assign</code>, <code>assess_labels</code>, <code>triage_labels</code> and <code>boundary_report</code>.</p>
+<h2 id="preprocessing-and-scaling">Preprocessing and scaling</h2>
+<p><code>preprocess()</code> resolves one per-feature transform (a heavy-tail <code>ihs</code> screen by
+default) recorded in <code>ft.transforms</code>. Scaling is lazy and per-mask: the first time
+you request scaled values for a <code>(mask, columns)</code> pair, a scaler is fit on that
+mask and cached.</p>
+<pre><code class="language-python">ft.preprocess(skew_screen=True, method=&quot;ihs&quot;, threshold=1.5)
+ft.dataframe(&quot;l23&quot;, scaled=True)      # transformed + scaled features + metadata
+ft.dataframe(&quot;l23&quot;, scaled=False)     # raw units (for plotting actual values)
+ft.features(&quot;l23&quot;, scaled=True, columns=&quot;axon&quot;)   # numpy matrix
+</code></pre>
+<p>Cluster on the normalized features, plot the raw ones — both come from the same
+table. <code>ihs</code> handles zeros and negatives; <code>log</code>/<code>sqrt</code> are also available and skip
+features with negative values.</p>
+<h2 id="clustering">Clustering</h2>
+<p>Consensus clustering (repeated kNN/Leiden, "fauxnograph") runs on scaled features
+reduced by PCA (see <a href="#which-space-the-knn-graph-is-built-in">below</a>). The full path
+from features to a table column is four steps:</p>
+<pre><code class="language-python">clus = ft.cluster(                      # -&gt; Clustering
+    &quot;l23&quot;, columns=&quot;axon&quot;,
+    n_neighbors=(30,),      # int or a swept list
+    resolution=(1.0,),      # int/float or a swept list
+    n_times=20, min_cluster_size=10,
+    seed=0, n_jobs=-1, name=&quot;run&quot;,
+)
+clus.cluster_count_curve()              # choose a distance threshold
+labels = clus.label(distance_threshold=0.6, min_cluster_size=10)   # -&gt; LabelSet
+ft.attach(labels)                       # -&gt; table columns
+</code></pre>
+<p>A <code>Clustering</code> is a <code>SimilarityMatrix</code> that also remembers <strong>which cells it covers</strong> —
+its <code>mask</code>, that mask's <code>cell_ids</code> in matrix-row order, the <code>columns</code> compared, and
+the <code>space</code> they were compared in:</p>
+<pre><code class="language-python">clus.mask       # 'l23'
+clus.space      # 'pca(0.95)'
+clus.columns    # ('axon_length', 'axon_branches', …)
+clus.cell_ids   # the mask's ids, row-aligned with the matrix
+</code></pre>
+<p>That provenance is what makes <code>clus.label(...)</code> safe. Rows are matched to mask
+members <strong>by position, not by id</strong>, so cutting a clustering against the wrong mask
+mislabels every cell. Because the clustering carries its own mask, there is nothing
+to line up by hand — and <code>ft.label</code> takes the mask from it, raising if you pass
+one that disagrees rather than silently misaligning.</p>
+<p>Everything a <code>SimilarityMatrix</code> does still works, since <code>Clustering</code> subclasses it:
+<code>linkage</code> is cached, <code>cluster_labels(0.6)</code> gives raw integer labels, and
+<code>cluster_count_curve()</code> sweeps thresholds. <code>ft.label(sim, mask=…, …)</code> also remains,
+for a <code>SimilarityMatrix</code> computed outside the table.</p>
+<p><code>ft.clustering("run")</code> retrieves a stored one, provenance intact — including after a
+<code>save</code>/<code>load</code> round trip. (Analyses saved before clusterings carried provenance load
+with <code>mask="all"</code>, which is what <code>ft.label(name, distance_threshold=…)</code> assumed back
+then.)</p>
+<h3 id="which-space-the-knn-graph-is-built-in">Which space the kNN graph is built in</h3>
+<p>The graph is built on the mask's scaled features <strong>reduced by PCA to <code>pca=0.95</code></strong> —
+the smallest number of components reaching that explained variance. This is the space
+phenograph-style clustering is conventionally run in: correlated features stop each
+counting separately toward the neighbor distances, and the graph is built on a
+denoised, cheaper matrix. It matches <code>propagate_labels</code>' default, so clusters and the
+propagation of those clusters live in one space.</p>
+<pre><code class="language-python">ft.cluster(&quot;l23&quot;, n_times=20, name=&quot;run&quot;)            # pca=0.95, the default
+ft.cluster(&quot;l23&quot;, n_times=20, pca=False, name=&quot;run&quot;) # raw scaled, full dimensionality
+ft.cluster(&quot;l23&quot;, n_times=20, pca=0.99, name=&quot;run&quot;)  # keep more variance
+</code></pre>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>A reduced space can split more finely than the full one.</strong> Components carrying
+  little variance also carried little separation, so a group held together by their
+  combined strength can come apart without them. Read <code>cluster_count_curve()</code> after
+  changing <code>pca</code> rather than reusing a threshold chosen under the other setting.</li>
+<li><strong>The reduction is degenerate when features are near-perfectly correlated.</strong> If
+  every feature separates your groups the same way, 0.95 collapses to one component
+  and Leiden will over-split along it. Check with
+  <code>ft.features_pca(mask, explained_variance=0.95).shape[1]</code> — if that's 1 or 2 on a
+  many-feature table, prefer <code>pca=False</code>.</li>
+</ul>
+<p>A single high-resolution Leiden partition is available too — the quick look before
+committing to a full consensus run, and the deliberate over-split that downstream
+merging or manifold work starts from:</p>
+<pre><code class="language-python">ft.overcluster(&quot;l23&quot;, resolution=4.0)   # -&gt; a LabelSet, many small clusters
+</code></pre>
+<p><code>overcluster</code> runs on the <strong>raw scaled features</strong> rather than <code>pca(0.95)</code>. Pass
+<code>space=ft.space(mask, columns=…)</code> to put it in the same representation <code>cluster</code>
+uses, so the two are comparing cells in one space rather than two.</p>
+<h3 id="seeds-and-reproducibility">Seeds and reproducibility</h3>
+<p>Every stochastic verb is deterministic by default. The table carries a seed
+(<code>FeatureTable(df, features=[...], seed=0)</code>), and <code>cluster</code>, <code>embed</code> and
+<code>overcluster</code> with <code>seed=None</code> — the default — derive a per-call seed from it and
+the call's <em>identity</em>: the verb, the mask, and the run name. The same call on the
+same table reproduces exactly; two differently-named runs get different streams; an
+explicit <code>seed=</code> overrides the derivation.</p>
+<pre><code class="language-python">ft = FeatureTable(df, features=cols, seed=0)
+ft.cluster(&quot;l23&quot;, n_times=20, name=&quot;run&quot;)     # reproducible without a seed argument
+ft.cluster(&quot;l23&quot;, n_times=20, name=&quot;run2&quot;)    # a different, equally stable stream
+</code></pre>
+<p>The derivation deliberately ignores the <em>data</em> — feature values, column lists —
+because a seed that moved with the features would confound the comparisons the
+validation tools are built for: comparing two feature sets under one run name should
+change the features and nothing else. Rename the run when you want a fresh stream;
+hold the name when you want a controlled comparison.</p>
+<p>What a run actually received is recorded, not remembered. <code>clus.params</code> carries the
+full producing call, resolved seed included, and persists with a saved analysis —
+<code>ft.cluster(mask, **params)</code> replays the ensemble bit for bit. Embedding
+parameterizations persist in the manifest the same way, which matters because the
+fitted models themselves do not.</p>
+<p>One cost worth knowing: a UMAP given a <code>random_state</code> runs single-threaded, and
+<code>embed(method="umap")</code> now always passes one. If you want unseeded, parallel UMAP
+layout, call the backend directly and register the coordinates with
+<code>add_embedding</code>.</p>
+<h3 id="whitening-the-pcs-alpha">Whitening the PCs: <code>alpha</code></h3>
+<p>Truncating PCA is a rotation plus a truncation, not a reweighting. A block of features
+that measures one thing several ways — soma volume, soma area, soma radius; or eleven
+percentiles of one depth profile — collapses into a single high-eigenvalue component that
+then dominates Euclidean distance exactly as much as the raw block did. With dozens of
+engineered features rather than thousands of genes, that does not average out.</p>
+<p><code>alpha</code> scales component <em>j</em> by <code>λ_j ** (-alpha/2)</code>: <code>0.0</code> (the default) leaves PCA's own
+scaling alone, <code>1.0</code> equalises the retained components entirely.</p>
+<pre><code class="language-python">space = ft.space(&quot;l23&quot;)                     # the frozen scaling + PCA
+space.condition_number                      # how ill-conditioned the inputs are
+space.spectrum(ft.features(&quot;l23&quot;, scaled=True))   # scree + discarded-PC kurtosis
+
+for alpha in (0.0, 0.25, 0.5, 0.75, 1.0):   # one PCA fit serves all five
+    ft.cluster(&quot;l23&quot;, alpha=alpha, n_times=20, seed=0, name=f&quot;a{alpha}&quot;)
+</code></pre>
+<p><code>ft.space(...)</code> caches on the <em>fit</em> only — <code>alpha</code> is applied as a view over it, so a
+sweep is structurally incapable of refitting the space underneath itself. That is what
+makes "only the swept axis differs" true rather than intended.</p>
+<p>Which features are redundant is worth looking at before choosing an <code>alpha</code>:</p>
+<pre><code class="language-python">from cellpax import feature_correlation
+sm = feature_correlation(ft.features(&quot;l23&quot;, columns=&quot;analysis&quot;),
+                         ft.collections[&quot;analysis&quot;].columns)
+sm.sizes            # block sizes; a block of 11 is 11 columns counting once
+sm.cell_ids         # feature names in dendrogram order
+</code></pre>
+<p>Three things to watch:</p>
+<ul>
+<li><strong>Whitening amplifies the <em>smallest retained</em> component most</strong>, so a truncation chosen
+  by cumulative variance becomes a discontinuity: the last kept component gets full
+  weight and the first dropped one gets none. Pass
+  <code>eigenvalue_floor=ft.space(mask).noise_floor</code> — the median discarded eigenvalue, an
+  estimate of the scale the truncation already judged to be noise — to bound that. At
+  <code>alpha=1</code> with no floor, a near-degenerate direction can be inflated into the metric;
+  the transform raises rather than doing so silently.</li>
+<li><strong>The clustering space diverges from the space <code>embed</code> builds a UMAP in.</strong> At <code>alpha=0</code>
+  the two are metrically close, since PCA at 0.95 preserves most pairwise distance. At
+  <code>alpha &gt; 0</code> they genuinely differ, so <strong>labels will look worse on an existing UMAP even
+  when the clustering improved.</strong> Score the change on <code>cellpax.validate</code>, not on the
+  figure — that divergence is the reason the figure stops being evidence.</li>
+<li><strong>A discarded component with high excess kurtosis is not noise.</strong> <code>spectrum()</code> reports
+  it per component, with <code>n_tail_cells</code>. A near-Gaussian dropped component costs nothing;
+  a sharply peaked one is a small group separating along a low-variance direction, and a
+  cumulative-variance cut discards it <em>because</em> few cells are involved — backwards if
+  those cells are a rare type.</li>
+</ul>
+<h3 id="weighting-feature-blocks-instead-of-components">Weighting feature blocks instead of components</h3>
+<p><code>alpha</code> reweights <em>components</em>, which is a blunt way to fix a problem that lives in the
+<em>features</em>: a block of eleven columns measuring one thing counts eleven times toward every
+Euclidean distance. Flattening the spectrum fixes that, but it also upweights low-variance
+components — whose directions a finite sample barely determines — and pays for it in
+reproducibility.</p>
+<p>Block weighting attacks the same redundancy without that cost, because it acts before the
+rotation exists and so never touches the component directions:</p>
+<pre><code class="language-python">from cellpax import block_weights
+
+names  = list(ft.collections[&quot;analysis&quot;].columns)
+scaled = ft.features(mask, scaled=True, columns=&quot;analysis&quot;)
+
+w = block_weights(scaled, names)                   # one weight per feature
+ft.cluster(mask, columns=&quot;analysis&quot;, feature_weights=w, name=&quot;run&quot;)
+
+space = ft.space(mask, columns=&quot;analysis&quot;, feature_weights=w)   # the same fit,
+space.label                                        # 'pca(0.95, weighted)'
+ft.embed(mask, space=space, method=&quot;umap&quot;)         # shared by every consumer
+</code></pre>
+<p><code>cluster</code> also accepts a prebuilt <code>space=</code> outright (like <code>embed</code> and
+<code>overcluster</code>), which is how one weighted or whitened fit provably serves the
+consensus, the embeddings, and <code>boundary_report</code> together; a passed space
+<em>is</em> the representation choice, so combining it with <code>pca=</code>/<code>alpha=</code> raises
+rather than silently picking one.</p>
+<p>The default <code>method="mfa"</code> divides each correlated block by the standard deviation along
+its own first principal direction — Escofier &amp; Pagès' multiple factor analysis. That's an
+<em>adaptive</em> <code>1/√k</code>: it collapses to it for a perfectly correlated block and barely touches a
+loosely correlated one, so a block of eight at r≈0.3 isn't punished as hard as a block of
+eight at r≈0.99. <code>method="sqrt_k"</code> is the plain size-based version.</p>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>Pass the weights to <code>ft.space(feature_weights=…)</code>, don't multiply by hand.</strong> Weights
+  applied outside the space are invisible to it, so <code>embed(space=…)</code> and <code>project</code> would
+  silently skip them and land you in a different space than you fit — with matching shapes
+  and no error. Inside the space they're frozen with the fit and persisted with it.</li>
+<li><strong>A weighted space caches and persists separately</strong> from the unweighted fit of the same
+  mask, so you can hold both and compare. <code>clus.space</code> records which is which.</li>
+</ul>
+<p><code>alpha</code> and <code>feature_weights</code> are independent — weighting is pre-PCA, whitening is
+post-PCA — so they compose, and <code>label</code> reports both (<code>pca(0.95, weighted, alpha=0.5)</code>).
+Whether either helps is an empirical question; see
+<a href="#validating-a-representation">Validating a representation</a>.</p>
+<h3 id="clipping-small-cohorts">Clipping small cohorts</h3>
+<p>The default clip is a percentile rule (<code>0.1</code>/<code>99.9</code>, applied after <code>RobustScaler</code>), which
+defines its bound by <strong>rank</strong>. That has two costs, and both bite hardest exactly where
+the cohorts are smallest.</p>
+<pre><code class="language-python">from cellpax import clip_comparison, clipped_scaler_factory
+
+clip_comparison(ft.features(&quot;l23&quot;), ft.feature_columns)   # what each rule would take
+
+ft = FeatureTable(df, features=cols,
+                  scaler_factory=clipped_scaler_factory(mode=&quot;sigma&quot;, n_sigma=4.0))
+</code></pre>
+<ul>
+<li><strong>The bound stops being robust on a few hundred cells.</strong> The 99.9th percentile has a
+  breakdown point near <code>0.001 × n</code> — below one cell when <code>n &lt; 1000</code>. At n=500
+  <code>np.percentile</code> interpolates the bound between the top two order statistics, so <em>the
+  outlier partly sets the bound meant to clip it</em>: one cell at 40 robust units yields a
+  bound near 15, and the same cell at 400 yields a bound near 165. The more extreme the
+  cell, the weaker its own clipping. By n≈5000 the tail holds enough points that the
+  bound settles.</li>
+<li><strong>It pulls rare populations toward the bulk by construction.</strong> <code>f × n</code> cells are
+  clipped however clean the data is, so a population that is both rare <em>and</em> extreme is
+  partly clipped automatically. No choice of <code>f</code> removes that.</li>
+</ul>
+<p><code>mode="sigma"</code> clips at <code>±n_sigma</code> instead: a fixed value from a median and an IQR, which
+a handful of extreme cells cannot move, identical at n=500 and n=21000, and clipping
+<em>only</em> what is actually extreme — possibly nothing. It also has <strong>no fitted parameters</strong>,
+so a frozen transform carries no clip bounds for a future dataset to shift.</p>
+<p>An existing table doesn't need rebuilding to change rules:
+<code>ft.set_scaler_factory(clipped_scaler_factory(mode="sigma", n_sigma=4.0))</code> swaps the
+rule and lazily refits every scaler — dropping, with a warning, anything computed
+under the old scaling rather than serving it against geometry that no longer exists —
+and <code>load_feature_table(folio, name, scaler_factory=…)</code> is the load-time form, leaving
+the saved analysis untouched until you save over it. A/B-ing two rules is swap →
+measure → swap back, since refits are lazy and cheap.</p>
+<p>Two things to watch:</p>
+<ul>
+<li><strong><code>n_sigma</code> is in IQR units, not standard deviations.</strong> <code>RobustScaler</code> divides by the
+  IQR, and IQR ≈ 1.349σ for a Gaussian, so <code>n_sigma=5</code> is about ±6.7 Gaussian σ and will
+  clip almost nothing on well-behaved features. A useful sweep is nearer 3–5 than 5–10;
+  <code>clip_comparison</code>'s <code>max_abs_sigma</code> column says how extreme anything actually is.</li>
+<li><strong>While the percentile rule is in use, report the clip percentile against the smallest
+  cluster you resolve.</strong> At 0.1% on 21,000 cells the bound sits at ~21 cells against a
+  <code>min_cluster_size=100</code> cut — clear. On a 3,000-cell cohort cut at <code>min_cluster_size=10</code>
+  the bound is 3 cells, within a factor of three of the smallest cluster, and the
+  pipeline cannot resolve populations of that size by construction.</li>
+</ul>
+<h3 id="choosing-the-graph-or-marginalising-over-it">Choosing the graph, or marginalising over it</h3>
+<p>The consensus already marginalises over resolution and seed but treated graph
+construction as a fixed upstream choice. <code>graph_type</code> makes it a third axis:</p>
+<pre><code class="language-python">clus = ft.cluster(
+    &quot;l23&quot;,
+    graph_type=[&quot;knn&quot;, &quot;snn_jaccard&quot;, &quot;umap_fuzzy&quot;],
+    n_neighbors=[15, 30, 60],
+    resolution=np.geomspace(0.02, 1.5, 12),
+    n_times=5, seed=0, name=&quot;run&quot;,
+)
+</code></pre>
+<p>The three weightings have known and <em>different</em> failure modes, which is why the choice is
+worth marginalising over rather than defending:</p>
+<ul>
+<li><strong><code>umap_fuzzy</code></strong> subtracts each cell's distance to its nearest neighbour before
+  exponentiating, so every cell keeps at least one full-weight edge and nothing is ever
+  fully disconnected. Tends to hold rare and peripheral populations together. Implemented
+  in-library rather than imported, so it is a separate object from any UMAP <em>embedding</em>'s
+  graph by construction.</li>
+<li><strong><code>snn_jaccard</code></strong> offers no such guarantee: two cells in a sparse region can be mutual
+  neighbours and share almost no neighbourhood, so <code>prune</code> can strand them. Denoises
+  dense regions hardest and fragments sparse ones. Stranded cells are counted as
+  <code>graph["n_isolated"]</code> and warned about.</li>
+<li><strong><code>knn</code></strong> (unweighted, the default) and <strong><code>knn_distance</code></strong> as baselines.</li>
+</ul>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>Resolution is not comparable across graph types.</strong> Fuzzy weights, Jaccard values in
+  <code>[0, 1]</code>, and unit weights put Leiden's RBConfiguration null on three different scales,
+  so one geomspaced grid lands at very different granularities per type — and pooling raw
+  lets whichever type happened to produce mid-range grain dominate. Select on <strong>realised
+  grain</strong> instead, which costs nothing because the runs already exist:</li>
+</ul>
+<p><code>python
+  clus.partitions.by_setting()             # median_clusters is the comparable column
+  mid = clus.restrict(n_clusters_min=8, n_clusters_max=40)</code></p>
+<ul>
+<li><strong>Check that no one weighting is being averaged in against the rest.</strong> A type that
+  systematically disagrees with the pool is evidence about that type, not noise to be
+  diluted:</li>
+</ul>
+<p><code>python
+  from cellpax import axis_stability
+  axis_stability(clus.partitions, clus.cluster_labels(0.5))   # per-type ARI vs the pool
+  clus.restrict(graph_type="snn_jaccard")                     # look at one alone</code></p>
+<p><code>ft.graph_provenance()</code> lists what space and graph every clustering and embedding on the
+table received, and warns when a clustering and an embedding on the same mask share both
+— the case where comparing their neighbourhoods becomes circular while still producing
+agreeable-looking numbers.</p>
+<h3 id="reading-the-hierarchy-instead-of-flattening-it">Reading the hierarchy instead of flattening it</h3>
+<p>The resolution sweep is geomspaced because structure exists at more than one scale.
+Collapsing the consensus to one flat vector with a single <code>fcluster</code> cut throws that away
+again — and in practice produces a hand-tuned <code>distance_threshold</code> per cohort.</p>
+<pre><code class="language-python">h = clus.hierarchy()             # -&gt; ConsensusHierarchy
+h.merge_table()                  # every merge, annotated with its stability
+h.nested_labels                  # one row per cell, level_0 (coarsest) .. level_k
+h.nested_levels                  # what each level is: height, frequency, n_clusters
+h.cell_stability                 # per-cell max co-clustering frequency
+</code></pre>
+<p>Worth being explicit about where the merge annotation comes from: distance here <em>is</em>
+<code>max_value - similarity</code>, and similarity is the fraction of runs that put a pair
+together, so under average linkage <code>coclustering_frequency</code> is just
+<code>max_value - height</code>. It is not a separate measurement and does not need recomputing from
+the runs. Likewise, per-cell stability is the existing <code>consensus_strength()</code>.</p>
+<p>What <em>is</em> new is telling a type from a subtype, which the pooled frequency cannot express:</p>
+<pre><code class="language-python">clus.merge_support(n_bands=4)     # per merge, support per resolution band
+</code></pre>
+<p>A merge holding across coarse and fine runs alike is a type; one appearing only in the
+runs fine enough to create it is a subtype. <code>resolution_min_supporting</code> is the lowest
+band where support passes 0.5.</p>
+<p>Each level converts to a <code>LabelSet</code> and attaches like any other:</p>
+<pre><code class="language-python">from cellpax import LabelSet
+for level in (&quot;level_0&quot;, &quot;level_1&quot;, &quot;level_2&quot;):
+    ft.attach(LabelSet.from_labels(
+        h.nested_labels[&quot;cell_id&quot;].to_numpy(),
+        h.nested_labels[level].to_numpy(),
+        unassigned=-1, name=level, mask=clus.mask,
+    ))
+</code></pre>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>Nesting is checked, not assumed.</strong> Average, complete and single linkage are monotone,
+  so cuts at decreasing thresholds <em>are</em> nested and a violation means the linkage method
+  is wrong — that raises. Above <code>min_cluster_size=1</code> it cannot hold strictly (a cell in a
+  cluster too small to keep is <code>-1</code> at that level and assigned at others), so the check
+  runs over cells assigned in both levels and any residual is warned about with a count.</li>
+<li><strong><code>merge_support</code> is capped and says so.</strong> Only the top <code>max_merges</code> merges are
+  annotated, and each group is sampled to <code>max_block</code> cells; both are logged. Exact group
+  sizes still come from <code>merge_table()</code>.</li>
+</ul>
+<h3 id="triaging-a-cell-that-looks-misplaced">Triaging a cell that looks misplaced</h3>
+<p>A dot inside a differently-coloured cloud has two very different explanations, and the
+embedding cannot tell them apart. Its feature-space neighbourhood can:</p>
+<pre><code class="language-python">triage = ft.triage_labels(labels, mask=&quot;l23&quot;, n_neighbors=30)
+triage.group_by(&quot;verdict&quot;).len()
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>verdict</code></th>
+<th>reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>own</code></td>
+<td>most neighbours share its label — the embedding misplaced it, nothing to fix</td>
+</tr>
+<tr>
+<td><code>other</code></td>
+<td>most neighbours carry one other label — the label is wrong, or it is a real outlier</td>
+</tr>
+<tr>
+<td><code>mixed</code></td>
+<td>no label reaches a majority — the consensus was ambiguous; check <code>cell_stability</code></td>
+</tr>
+</tbody>
+</table>
+<p>Which turns "some dots scattered here and there" into three countable groups.</p>
+<h3 id="scoring-cells-against-the-population">Scoring cells against the population</h3>
+<p><code>score_cells</code> is the adapter between the table and the outlier-detector
+ecosystem: fit any estimator with a per-sample score on a mask's scaled
+features, and the scores land as an ordinary metadata column — maskable,
+plottable, persisted with the table, usable as an audit label.</p>
+<pre><code class="language-python">ft.score_cells(&quot;l23&quot;, columns=&quot;analysis&quot;, name=&quot;iso&quot;)     # IsolationForest, seeded
+ft.score_cells(&quot;l23&quot;, scorer=LocalOutlierFactor(n_neighbors=20), name=&quot;lof&quot;)
+ft.add_mask(&quot;clean&quot;, pl.col(&quot;iso&quot;) &gt; threshold, based_on=&quot;l23&quot;)
+</code></pre>
+<p>Higher scores read as more normal under every supported protocol
+(<code>score_samples</code>, <code>decision_function</code>, LOF's <code>negative_outlier_factor_</code>), so
+the tail is <code>pl.col(name) &lt; threshold</code>. Scoring never filters — an extreme
+cell is either a reconstruction problem or the most interesting thing in the
+data, and the whole point is to look before deciding which. One comparison
+worth making routinely: score under the full feature set and under a
+truncation-safe collection; a cell extreme under one and ordinary under the
+other is being flagged by its invalid features — truncation talking, not
+biology.</p>
+<h3 id="is-that-boundary-a-gap-or-a-cut">Is that boundary a gap or a cut?</h3>
+<p>Two clusters can be perfectly separable and still be two halves of one thing —
+any slice through a continuum is stably distinguishable at its ends, which is
+why a classifier test certifies every split it is shown (and why the CHOIR-style
+resolver earlier versions shipped was removed: it stamped p-values on arbitrary
+cuts). The question that matters is whether anything <em>happens</em> at the boundary,
+and <code>boundary_report</code> measures that four ways per cluster pair:</p>
+<pre><code class="language-python">report = ft.boundary_report(&quot;run&quot;, labels=labels)
+report.filter(pl.col(&quot;verdict&quot;) == &quot;continuous&quot;)
+</code></pre>
+<ul>
+<li><strong><code>dip</code> / <code>dip_p</code></strong> — Hartigan's dip on the pair projected onto the axis
+  joining the centroids (via the <code>diptest</code> package). Two real modes dip;
+  a sliced Gaussian doesn't. Blind to curved boundaries.</li>
+<li><strong><code>connectivity_ratio</code></strong> — observed kNN cross-edges against the
+  configuration-model expectation (the statistic PAGA built cluster graphs
+  on). Read it comparatively across the report's pairs, not against a
+  universal constant.</li>
+<li><strong><code>valley_ratio</code></strong> — saddle-to-peak density along the boundary. Near 0 is a
+  gap; near 1 means the boundary runs through terrain as dense as the
+  clusters themselves — the "northwest corner vs southwest corner" signature.
+  <code>density="pak"</code> upgrades the estimator via the optional <code>dadapy</code> extra.</li>
+<li><strong><code>cocluster_cross_mean</code> / <code>cocluster_band</code></strong> — the ensemble's own read,
+  from the consensus matrix: a real gap has its cross-pair co-clustering mass
+  pinned near zero, while a cut continuum shows a <em>band</em> of intermediate
+  frequencies — cells the runs couldn't agree about because there is no fact
+  of the matter. No other leg (and no other package) has access to this.</li>
+</ul>
+<p>Each leg votes; <code>verdict</code> is the majority of the legs that expressed an
+opinion, with everything else <code>"ambiguous"</code>. The verdict is a summary, not a
+result — the columns are the result, the thresholds behind the votes are
+parameters, and a verdict worth acting on should hold across a couple of
+<code>n_neighbors</code> values. A <code>"continuous"</code> boundary is not a failure: it is the
+signal to stop pretending modes and parametrize the gradient instead (coming
+as <code>ft.parametrize</code>), or to merge the pair for downstream use.</p>
+<p>The hierarchy tools above — <code>merge_support</code>, <code>nested_labels</code>, per-cell
+stability — remain the complementary view: they say <em>where in the tree</em>
+support lives, while the boundary report says <em>what kind of boundary</em> each
+split created.</p>
+<h3 id="parametrizing-a-continuum">Parametrizing a continuum</h3>
+<p>When the report says <code>"continuous"</code>, the honest object is a coordinate, not a
+better cut. <code>parametrize</code> fits a principal curve (Hastie &amp; Stuetzle 1989,
+implemented in-library — the Python ecosystem has no maintained home for it)
+through the selected cells and returns a <code>Gradient</code>: per-cell arc length in
+<code>[0, 1]</code>, attachable like any label, and convertible back to <em>named interval
+cuts</em> of a persisted coordinate:</p>
+<pre><code class="language-python">g = ft.parametrize(&quot;l23&quot;, labels=&quot;subclass&quot;, clusters=[&quot;L2a&quot;, &quot;L2b&quot;, &quot;L3&quot;],
+                   orient_by=&quot;soma_depth_um&quot;, nuisance=[&quot;axon_frac_inside&quot;])
+g.loadings()                     # which features vary along the axis
+ft.attach(g)                     # a float column, plottable like anything
+
+labels = g.bin(3, names=[&quot;upper&quot;, &quot;mid&quot;, &quot;deep&quot;])   # honest names: declared cuts
+ft.attach(labels)
+</code></pre>
+<p>Two guards run inside the fit rather than living in the documentation. The
+<strong>dimension gate</strong>: the intrinsic dimension is estimated first (TwoNN, with
+decimation so noise at the nearest-neighbour scale doesn't masquerade as
+dimensionality), and a value that doesn't look like a curve warns before you
+compress real structure into an axis. The <strong>nuisance tripwire</strong>: truncation
+manufactures fake gradients — partial reconstruction is <em>graded</em> feature
+loss, so a completeness artifact reads as a smooth biological axis, which is
+more insidious than a fake cluster because a continuum is what you are now
+primed to accept. Pass completeness metrics as <code>nuisance=</code> and a coordinate
+that tracks them warns before it acquires a biological name.</p>
+<p><code>orient_by</code> fixes the arbitrary sign of the axis against a column (depth,
+say), so "0 means upper" survives a refit. Branching topologies are out of
+scope for the curve — that is elastic-principal-graph territory
+(<code>elpigraph-python</code>), a candidate future backend.</p>
+<h2 id="labels">Labels</h2>
+<p><code>ft.label</code> cuts a stored clustering at a threshold into a <code>LabelSet</code>, with
+cluster ids 0-based. A <code>LabelSet</code> gives clusters identity and clean relabeling:</p>
+<pre><code class="language-python">labels = clus.label(distance_threshold=0.6, name=&quot;subclass&quot;)   # clus from ft.cluster
+labels.rename({0: &quot;L2a&quot;, 1: &quot;L2b&quot;})     # or rename([&quot;L2a&quot;, &quot;L2b&quot;]) in id order
+labels.merge([&quot;L2a&quot;, &quot;L2b&quot;], into=&quot;L2&quot;)
+labels.reorder([&quot;L2&quot;, &quot;L3&quot;])
+labels.set_colors({&quot;L2&quot;: &quot;#1f77b4&quot;})
+labels.counts()
+ft.attach(labels)                       # adds a 'subclass' column (null off-mask)
+ft.labels                                # ['subclass'] — names attached so far
+</code></pre>
+<p>Those verbs all act on whole clusters. <code>assign</code> is the per-<em>cell</em> one, for the
+handful you have looked at and disagree with:</p>
+<pre><code class="language-python">labels.assign(misfiled_ids, &quot;inh&quot;)   # six somas that came out exc and plainly aren't
+labels.assign(4172, &quot;Pvalb&quot;)         # one id; an unheld name creates the cluster
+labels.assign(junk_ids, None)        # the per-cell counterpart of unassign
+</code></pre>
+<p>A cluster <em>name</em> nothing holds yet is created on the spot; an unknown cluster <em>id</em>
+raises, since a stray integer is an off-by-one rather than a new cluster. Cells the
+set doesn't cover raise too — passing root_ids to a set keyed on cell_ids would
+otherwise be a silent no-op, and a silent no-op here is a mislabeled figure later.
+Emptying a cluster this way drops it from <code>ids</code> and <code>catalog</code> but keeps its identity
+in <code>meta</code>, so moving a cell back restores it with its color; <code>unassign</code> is how you
+retire one for good.</p>
+<p><code>assign</code> edits a labelling in place rather than layering over it, so
+<a href="#flattening-labels-across-masks"><code>flatten_labels</code></a>' <code>source_name=</code> provenance won't
+show the change. Where the audit trail is the point, keep the curated calls as their
+own <code>LabelSet</code> and <code>combine</code> instead.</p>
+<p><code>combine</code> unions label sets into one. Its default, <code>mode="disjoint"</code>, is for
+labellings of separate populations (e.g. exc + inh clustered separately): the cell
+sets must not overlap, and ids are offset so two clusters that happen to share a
+name stay two clusters. <code>mode="priority"</code> is for layering labellings of the <em>same</em>
+population — each cell takes the label of the first set that assigned it, and
+clusters are matched by name, so <code>"L5IT"</code> from two sets becomes one cluster keeping
+the first's color. That's what <a href="#flattening-labels-across-masks">flattening</a> is
+built on. A <code>LabelSet</code> itself is otherwise ephemeral — <code>ft.labels</code> only lists ones
+that have been <code>attach</code>ed to the table.</p>
+<h3 id="flattening-labels-across-masks">Flattening labels across masks</h3>
+<p>Labels built over a diverse collection of masks are a stack of columns, each null
+where it has nothing to say. <code>ft.flatten_labels</code> collapses them into one, taking
+each cell's label from the first entry in the list that assigned it — so list them
+most-specific-first and the coarser labels fill the holes the finer ones left:</p>
+<pre><code class="language-python">leaf = ft.flatten_labels([&quot;subtype_nn&quot;, &quot;family_nn&quot;], mask=&quot;exc&quot;, name=&quot;leaf&quot;)
+leaf.color_map()          # colors merged out of both, first entry in the list wins
+ft.attach(leaf)
+</code></pre>
+<p>Entries are attached column names or <code>LabelSet</code> objects, mixed freely. <code>mask</code> scopes
+the result — the label set covers exactly that mask's cells, cells outside it are
+dropped even where an entry labels them, and cells inside it that nothing labels are
+unassigned, or land in the cluster named by <code>fill</code>. Pass <code>source_name=</code> to get a
+second <code>LabelSet</code> back alongside, recording which entry won each cell:</p>
+<pre><code class="language-python">flat, source = ft.flatten_labels(
+    [&quot;subtype_nn&quot;, &quot;family_nn&quot;], mask=&quot;exc&quot;, name=&quot;leaf&quot;,
+    fill=&quot;unlabelled&quot;, source_name=&quot;from&quot;,
+)
+source.counts()           # how many cells each label actually contributed
+</code></pre>
+<p>An entry that <em>covers</em> a cell but leaves it unassigned falls through to the next
+one, which is what makes this the way out of <a href="#the-recursive-descent">the recursive
+descent</a>.</p>
+<p><code>attach</code> writes a name column and an id column, but a column can't hold a color, a
+description, or which mask the labels came from — so it records those alongside the
+table and <code>ft.labelset(column)</code> restores them, before or after a <code>save</code>/<code>load</code>:</p>
+<pre><code class="language-python">labels.set_colors({&quot;L2&quot;: &quot;#1f77b4&quot;}).set_descriptions({&quot;L2&quot;: &quot;upper layer 2&quot;})
+ft.attach(labels)
+ft.save(folio, &quot;l23it&quot;)
+
+ft = FeatureTable.load(folio, &quot;l23it&quot;)
+ft.labelset(&quot;subclass&quot;).color_map()      # {'L2': '#1f77b4'} — still there
+ft.labelset(&quot;subclass&quot;).mask             # the mask the labels were computed on
+</code></pre>
+<p>The table stays authoritative for names: edit the name column and <code>labelset</code> picks
+that up, matching colors to it by cluster id. <code>detach</code> forgets the identities along
+with the columns, and attaching over an existing label column raises rather than
+quietly leaving a <code>subclass_right</code> behind — <code>detach</code> first, or pass <code>name=</code>.</p>
+<p>Relabeling verbs mutate in place, so <code>labels.copy()</code> before trying a merge you
+might want to walk back. <code>merge</code> keeps the lowest id of its members, which leaves
+gaps; <code>compact()</code> renumbers back to <code>0..k-1</code>.</p>
+<p>Building a <code>LabelSet</code> by hand, names come with it — <code>names=</code> takes a list in
+cluster-id order or a <code>{id: name}</code> mapping, so there's no <code>Label</code> ceremony and no
+follow-up <code>rename</code> pass:</p>
+<pre><code class="language-python">LabelSet(cell_ids, codes, names=[&quot;exc&quot;, &quot;inh&quot;], name=&quot;cls&quot;)
+LabelSet.from_labels(cell_ids, [&quot;exc&quot;, &quot;inh&quot;, &quot;exc&quot;])   # already-named values
+</code></pre>
+<p><code>from_labels</code> factorizes human-readable values (a cell type column, say) and uses
+each value as its cluster's name; <code>names=</code> is for when you already have the
+integer codes.</p>
+<h3 id="reading-a-labelset-out">Reading a LabelSet out</h3>
+<p>Per cluster, in id order — <code>ids</code>, <code>names</code>, <code>counts()</code>, <code>n_clusters</code>; the full
+table, one row per cluster, is <code>catalog()</code> (<code>id</code> / <code>name</code> / <code>color</code> /
+<code>description</code> / <code>n_cells</code>), and <code>color_map()</code> gives a <code>{name: color}</code> dict to hand
+to seaborn's <code>palette=</code>. For one cluster, <code>labels.cluster(key)</code> takes an id <em>or</em> a
+name and returns its <code>Label</code> — how you read a color or description back out.</p>
+<p>Per cell, in <code>cell_ids</code> order — <code>codes</code> (the integer array, <code>-1</code> unassigned),
+<code>to_names()</code> (the names, <code>None</code> unassigned), <code>assigned</code> (a boolean mask), plus
+<code>len(labels)</code> and <code>n_unassigned</code>. <code>to_frame()</code> is the dataframe view of the same
+thing.</p>
+<pre><code class="language-python">labels.cluster(&quot;L2&quot;).color       # '#1f77b4' — by name or by id
+labels.catalog()                  # every cluster: id, name, color, description, n
+labels.codes                      # array([0, 0, 1, -1, ...]) per cell
+labels.to_names()                 # ['L2', 'L2', 'L3', None, ...]
+</code></pre>
+<p>Note <code>labels.cluster(...)</code> (a noun: one cluster's identity) is unrelated to
+<code>ft.cluster(...)</code> (a verb: run a clustering) or <code>Clustering.label(...)</code> (cut one into
+a <code>LabelSet</code>).</p>
+<h3 id="ordering-clusters-by-a-value-not-by-hand">Ordering clusters by a value, not by hand</h3>
+<p><code>reorder</code> takes an explicit order; <code>reorder_by</code> derives one from data — renumbers
+clusters so cluster 0 has the lowest (or, with <code>ascending=False</code>, highest) mean
+(or <code>agg="median"</code>) of some per-cell value. Handy for e.g. sorting clusters by
+mean soma depth so cluster numbers read top-to-bottom instead of arbitrarily:</p>
+<pre><code class="language-python">ft.reorder_labels(labels, &quot;soma_depth_um&quot;)   # any column — feature or metadata
+</code></pre>
+<p><code>reorder_labels</code> is a thin wrapper that pulls <code>column</code> from the table and matches
+it to <code>labels</code> by cell id, then calls <code>LabelSet.reorder_by</code> — use that directly if
+your values live outside the table (e.g. a <code>{cell_id: value}</code> dict or a precomputed
+array). Do this <strong>before</strong> <code>ft.attach(labels)</code>: <code>reorder</code>/<code>reorder_by</code> renumber
+cluster ids in place, so attaching first would leave the table's id column stale.</p>
+<h3 id="intenum-bindings">IntEnum bindings</h3>
+<p>Work by name with autocomplete instead of remembering numbers:</p>
+<pre><code class="language-python">L = labels.to_enum(&quot;SubclassLabels&quot;)            # members = names, values = ids
+ft.dataframe().filter(pl.col(&quot;subclass_id&quot;) == L.L2a)
+
+class ITLabels(IntEnum):                         # or drive naming from your enum
+    L5IT = 0
+    L23IT = 1
+labels.apply_enum(ITLabels)
+</code></pre>
+<h3 id="fitting-a-classifier-on-labels">Fitting a classifier on labels</h3>
+<p>A <code>LabelSet</code> is the id-to-name dictionary you'd otherwise hand-maintain around a
+model. Out: <code>codes_for(cell_ids)</code> gives <code>y</code> aligned to whatever row order your
+feature matrix is in (cells the label set doesn't cover come back <code>-1</code>, so
+<code>y != -1</code> is the fittable subset). Back in: <code>with_codes</code> turns predicted integers
+into a <code>LabelSet</code> carrying the same names and colors as the one you trained on.</p>
+<pre><code class="language-python">X = ft.features(&quot;l23&quot;, scaled=True)
+cell_ids = ft.dataframe(&quot;l23&quot;)[ft.id_column].to_numpy()
+y = labels.codes_for(cell_ids)                  # aligned by cell id, not row order
+
+fit = y != -1
+model = XGBClassifier(num_class=labels.n_clusters).fit(X[fit], y[fit])
+
+predicted = labels.with_codes(cell_ids, model.predict(X), name=&quot;subclass_pred&quot;)
+ft.attach(predicted)                            # names, not integers, in the table
+labels.decode(model.predict(X_other))           # or just ints -&gt; names
+</code></pre>
+<p>Scaled features are mask-relative by design — a scaler is fit on the mask it's
+asked for, so <code>features("l23", scaled=True)</code> expresses variance <em>within</em> l23, not
+against the whole population. A model fit on one mask's scaled features therefore
+only means anything applied to that same mask's scaled features. Fit and predict
+within one mask (as above), or <code>project</code> new cells into that mask's space (below) to
+carry the model onto cells it was never fit on.</p>
+<h3 id="projecting-new-cells-into-an-existing-space">Projecting new cells into an existing space</h3>
+<p><code>project</code> pushes rows through a mask's <em>existing</em> fits without re-fitting anything,
+which is what you want when new data arrives and has to land in the space a model or
+an embedding already lives in:</p>
+<pre><code class="language-python">ft.embed(&quot;l23&quot;, method=&quot;umap&quot;, n_components=2, seed=0)
+
+new = pl.read_parquet(&quot;later_batch.parquet&quot;)   # same feature columns, by name
+X = ft.project(new, &quot;l23&quot;)                      # transforms + l23's scaler
+coords = ft.project(new, &quot;l23&quot;, embedding=&quot;umap&quot;)   # ...and into that UMAP
+model.predict(X)                                 # a model fit on l23's scaled features
+</code></pre>
+<p><code>data</code> is a polars frame matched on column <em>name</em> (extra columns ignored, order
+irrelevant) or a raw array in the resolved column order. Nothing is stored, so it's
+safe to call repeatedly.</p>
+<p>The two fits behind it are retrievable on their own:</p>
+<pre><code class="language-python">fitted = ft.scaler(&quot;l23&quot;, columns=&quot;stable&quot;)   # FittedScaler; .transform(matrix)
+fitted.scaler.mean_, fitted.transforms        # the sklearn estimator, and ihs/log/sqrt per feature
+ft.embedding_model(&quot;l23&quot;, name=&quot;umap&quot;).model  # the fitted UMAP/PCA itself
+</code></pre>
+<p>Two things to know. Fitted <strong>models are session-only</strong>: coordinates persist through
+<code>save</code>/<code>load</code> but the estimator behind them does not, since a UMAP fit is neither
+small nor reproducible across versions — after a <code>load</code> you have the coordinates and
+must re-<code>embed</code> to project anything new. And a model is <strong>dropped, not kept stale</strong>,
+when the mask is redefined or <code>preprocess</code>/<code>add_features</code> changes the scaled space
+underneath it; <code>embedding_model</code> then raises rather than silently projecting new
+cells into coordinates the stored ones no longer share.</p>
+<h4 id="labeling-cells-that-were-never-in-the-table">Labeling cells that were never in the table</h4>
+<p><code>project_labels</code> is <code>propagate_labels</code> for rows from elsewhere — a second dataset, a
+later batch, cells you deliberately kept out. Both populations go through the mask's
+<em>frozen</em> scaler and PCA, so the reference is judged in exactly the space it was
+clustered in, and the table is never widened:</p>
+<pre><code class="language-python">result = ft.project_labels(new_rows, sub, n_neighbors=30)   # sub = a LabelSet on &quot;inh&quot;
+result.frame()              # cell_id + name + id + confidence, for the new cells only
+result.self_agreement()     # how well the reference recovers itself in this space
+</code></pre>
+<p><code>new_rows</code> is a polars frame matched on column name (extra columns ignored) or a raw
+array in the resolved column order; ids come from its id column or from <code>cell_ids=</code>,
+and without either it raises rather than inventing ids that could collide with real
+ones. <code>mask=</code> defaults to the reference's own. The result covers <strong>just the new
+cells</strong> — the reference votes, it doesn't come back — and its <code>LabelSet</code> has no mask,
+since these cells are in no mask of this table.</p>
+<p>The difference from adding the rows and propagating over a widened mask is that
+nothing is re-fit: no scaler moves, no clustering is invalidated, and repeated calls
+on different batches all land in one comparable space. The cost is that the incoming
+cells get no say in the space they're measured in — which is the right trade when the
+reference is the thing you trust.</p>
+<p><code>propagate_labels</code>' caveats apply, sharpened by distance. <code>"vote"</code> casts exactly
+<code>n_neighbors</code> votes, so <em>every</em> incoming cell gets a label however far it sits from
+the reference, and <code>confidence</code> measures neighbor disagreement rather than distance.
+Rows from another dataset are precisely where that bites, so use <code>method="spread"</code>
+when "none of these" has to be an available answer:</p>
+<pre><code class="language-python">ft.project_labels(stray, sub, cell_ids=[9001]).labels.n_unassigned                  # 0
+ft.project_labels(stray, sub, cell_ids=[9001], method=&quot;spread&quot;).labels.n_unassigned  # 1
+</code></pre>
+<p>Validity domains aren't checked here — they're properties of cells in the table, and
+these rows aren't in it.</p>
+<p>For rows from a dataset that was joined into this table, run them through
+<code>ft.harmonize(rows, dataset)</code> first, so they arrive in the joined units (see
+<a href="#joining-datasets">Joining datasets</a>).</p>
+<p><code>features_pca</code> (the denoising step <code>propagate_labels</code> uses) deliberately doesn't
+retain its PCA — it's an internal, unnamed space. Use <code>embed(method="pca")</code> when you
+want a PCA basis you can project into later.</p>
+<p><code>num_class</code> wants contiguous classes, so call <code>compact()</code> after a <code>merge</code> and
+before fitting. For held-out splits, <code>subset(cell_ids)</code> and <code>drop_unassigned()</code>
+return new label sets with cluster ids and names preserved, so their codes stay
+comparable with the parent's.</p>
+<h2 id="label-propagation">Label propagation</h2>
+<p>Cluster a high-quality core, then carry those labels out to every cell that looks
+like them. <code>propagate_labels</code> takes a <code>LabelSet</code> (or an attached column name) over
+a subset of mask <code>to</code>, and gives each cell of <code>to</code> the majority label of its
+<code>n_neighbors</code> nearest labeled cells:</p>
+<pre><code class="language-python">core = clus.label(distance_threshold=0.6, name=&quot;subclass&quot;)   # clus on mask &quot;exc_core&quot;
+core.rename([&quot;L2a&quot;, &quot;L2b&quot;, &quot;L3&quot;])
+
+result = ft.propagate_labels(core, to=&quot;exc&quot;, columns=&quot;stable&quot;, n_neighbors=30)
+result.labels             # a LabelSet over all of &quot;exc&quot;, named subclass_nn
+result.confidence         # neighbor-vote share behind each cell's label
+result.self_agreement()   # how often the vote reproduces a known core label
+result.frame()            # cell_id + name + id + confidence
+ft.attach(result.labels)  # nothing is attached until you say so
+</code></pre>
+<p>The propagated set keeps the core's cluster ids, names and colors, so the two
+columns are directly comparable — <code>ft.compare("subclass", "subclass_nn")</code> means
+what you'd expect.</p>
+<h3 id="vote-or-spread">Vote or spread</h3>
+<p><code>method="vote"</code> (the default) is the k-nearest-neighbor vote above: cheap, and the
+standard baseline — the single-cell field's label transfer is essentially this in
+PCA space. Its weakness is that it must cast exactly <code>k</code> votes for every cell, so a
+cell far from anything labeled still gets a unanimous verdict. Confidence measures
+<em>disagreement among neighbors</em>, never <em>distance to them</em>.</p>
+<p><code>method="spread"</code> diffuses labels along a mutual-nearest-neighbor graph instead:</p>
+<pre><code class="language-python">result = ft.propagate_labels(core, to=&quot;exc&quot;, method=&quot;spread&quot;, n_neighbors=30)
+result.labels.n_unassigned    # cells no label could reach
+</code></pre>
+<p>Two things follow that a fixed <code>k</code> can't give. Evidence accumulates over however
+much labeled signal is actually nearby rather than exactly <code>k</code> votes, so a cell in a
+dense well-labeled region draws on all of it. And a cell with no mutual path to any
+labeled cell receives nothing and stays unassigned — which is the right answer for a
+cell that isn't like anything in the reference.</p>
+<p>Mutuality is what does the rejecting: a cell that names labeled neighbors which
+don't name it back gets pruned out of the graph. That adapts to local density,
+unlike a global distance cutoff, which matters when the population you're labeling
+is genuinely sparser than the core it came from. The cost is that mutual pruning
+also discards some legitimately diffuse cells, and <code>n_neighbors</code> is the knob — with
+<code>method="spread"</code> prefer a larger <code>k</code> than you would for the vote. <code>mutual=False</code>
+falls back to a union graph, which rejects nothing.</p>
+<p><code>weights="distance"</code> weights neighbors by inverse distance (the default for
+<code>spread</code>, available for <code>vote</code>), so a close labeled cell counts for more than one at
+the edge of the neighborhood. Worth reaching for when clusters differ a lot in size,
+since uniform votes favor the larger one near a boundary.</p>
+<p><code>self_agreement()</code> is leave-one-out for the vote and fold-wise recovery for spread
+(a clamped cell would trivially agree with itself), counting an unreachable cell as
+not recovered.</p>
+<h3 id="validity-domains-declaring-where-features-inform">Validity domains: declaring where features inform</h3>
+<p>A feature can be measurable for a cell and still be meaningless for it — a
+truncated reconstruction yields a dendrite length, it's just not informative about
+type. Those features are fine <em>within</em> a well-reconstructed core and misleading
+outside it, and no importance ranking computed on the core can detect the problem,
+because on the core the features behave. It has to be declared, and the
+declaration is first-class:</p>
+<pre><code class="language-python">ft.add_mask(&quot;axon_complete&quot;, pl.col(&quot;axon_frac_inside&quot;) &gt; 0.8)
+ft.set_validity(columns=&quot;axon&quot;, where=&quot;axon_complete&quot;)   # or valid_where= on define_features
+
+ft.validity_domains          # {'axon_len': 'axon_complete', ...}
+ft.fully_valid(columns=&quot;axon&quot;)     # per-cell: every axon feature valid here?
+ft.validity_patterns()             # the distinct patterns and their sizes
+</code></pre>
+<p>A domain is a named mask, so it persists with the analysis, composes with
+<code>based_on</code>, and can't be dropped out from under the features that reference it.
+Truncation is positional, so <code>validity_patterns()</code> usually collapses to a
+handful of patterns — worth reading once before deciding how to propagate.</p>
+<p>Two diagnostics help <em>build</em> the domains rather than guess them.
+<code>covariate_sensitivity(features, completeness, names)</code> ranks features by how
+strongly they track a completeness metric — a feature measuring truncation
+rather than biology tops the list (near-zero is necessary, not sufficient: rank
+correlation misses nonmonotone artifacts). <code>stratum_shift(features, dataset,
+names)</code> does the cross-dataset version: features that measure the acquisition
+rather than the cells, with <code>median_shift_iqr</code> separating "recenterable shift"
+from "shape-level difference". Same abstraction, different granularity — a
+per-dataset domain is just a validity mask that happens to be a dataset stratum.
+When the goal is to <em>remove</em> such shifts and put the datasets in one space rather than
+fence them off, see <a href="#joining-datasets">Joining datasets</a>.</p>
+<p>Declared domains have teeth. <code>propagate_labels</code> warns (or raises, with
+<code>on_invalid="raise"</code>) when the chosen columns don't cover the target — the
+failure the audit found every safeguard silent on — and <code>ladder=</code> uses the
+domains per cell:</p>
+<pre><code class="language-python">result = ft.propagate_labels(core, to=&quot;exc&quot;, ladder=[&quot;full&quot;, &quot;stable&quot;])
+result.rungs                 # which collection labeled each cell
+result.rung_recovery         # per-rung self-recovery: what each set still carries
+result.frame()               # ..._rung column alongside label and confidence
+</code></pre>
+<p>Each cell gets the <em>richest</em> collection whose features are all valid for it, so
+a global <code>columns=</code> choice no longer coarsens every cell to the worst cell's
+validity: well-reconstructed cells keep the distinctions the full set supports,
+truncated ones fall back to what their features can honestly say, and a cell no
+rung covers stays unassigned — the honest answer for a cell whose informative
+features don't exist. Each rung is its own propagation with its own scaler and
+PCA over only its participants, so invalid values never contaminate a fit. Two
+consequences to keep in mind: confidence is comparable within a rung, not across
+rungs (each rung is its own space with its own local label competition), and
+the information-theoretic limit still stands — two clusters separated <em>only</em> by
+truncation-sensitive features cannot be told apart on the periphery by any
+method. <code>rung_recovery</code> is the per-rung version of the old advice to compare
+<code>self_agreement()</code> across column sets: if the fallback rung's recovery drops
+sharply, the honest move is to merge those clusters for the peripheral
+population rather than propagate a distinction its features can't support.</p>
+<p><strong>The reference must live inside <code>to</code>.</strong> One feature space is fit over all of <code>to</code>
+(scaling and PCA are both mask-relative), and the reference cells are picked out of
+those rows — so propagating from a core that isn't inside the target mask raises
+rather than silently comparing two unrelated spaces. <code>pca=0.95</code> is the default
+space; <code>pca=False</code> uses raw scaled features, and <code>columns=</code> narrows to a feature
+collection.</p>
+<p><code>self_agreement()</code> asks how often the reference's own labels come back when they
+aren't given. Near 1.0 means the labels are locally coherent in this space and
+propagation is interpolating; a low value means it's guessing, which usually points
+at the feature set rather than at <code>n_neighbors</code>.</p>
+<h3 id="choosing-min_confidence">Choosing <code>min_confidence</code></h3>
+<p><code>confidence</code> is the winning label's share of the support that reached a cell, in
+<code>[0, 1]</code>, and <code>min_confidence</code> unassigns everything below a cut. Read it as a
+<em>plurality margin</em>, not a probability, and don't pick the number a priori — three
+things make any given value mean something different from run to run:</p>
+<ul>
+<li><strong>The floor moves with local competition.</strong> The winner among <code>c</code> labels present in
+  a neighborhood can't score below <code>1/c</code>, so <code>0.5</code> gates nothing along a two-cluster
+  boundary and quite a lot in a five-way muddle.</li>
+<li><strong>With <code>weights="uniform"</code> the values are quantized to <code>1/n_neighbors</code>.</strong> At
+  <code>n_neighbors=15</code> confidence only ever takes 15 values, so <code>0.35</code> and <code>0.45</code> are the
+  same cut. Either place cuts on that grid or use <code>weights="distance"</code>, which spreads
+  them out continuously.</li>
+<li><strong>It measures ambiguity, not novelty.</strong> A cell far outside the reference gets
+  unanimous votes at confidence <code>1.0</code>. Gating will never remove it; that is what
+  <code>method="spread"</code> and <code>mutual</code> are for.</li>
+</ul>
+<p>So calibrate on the reference, the only cells whose answer you know. Propagate once
+with <code>preserve_labeled=False</code> — that relabels the reference from its neighborhood
+too, making its confidence a winner-share comparable with the periphery's — and read
+off what each cut buys:</p>
+<pre><code class="language-python">import numpy as np
+
+probe = ft.propagate_labels(core, to=&quot;exc&quot;, preserve_labeled=False,
+                            n_neighbors=15, columns=&quot;stable&quot;)
+ids = probe.labels.cell_ids
+truth, got, conf = core.codes_for(ids), probe.labels.codes_for(ids), probe.confidence
+known = truth != -1                     # reference cells; the rest have no answer
+wrong = got != truth
+
+for cut in np.unique(conf[conf &lt; 1.0]):  # the cuts that actually do something
+    keep = known &amp; (conf &gt;= cut)
+    if not keep.any():
+        break
+    print(f&quot;{cut:.3f}  keeps {keep.sum():4d}/{known.sum()}  &quot;
+          f&quot;error among kept {wrong[keep].mean():.0%}&quot;)
+</code></pre>
+<p>That prints a purity-versus-coverage curve, e.g. for three types over a diffuse
+periphery at <code>n_neighbors=15</code>:</p>
+<table>
+<thead>
+<tr>
+<th>cut</th>
+<th>reference kept</th>
+<th>error among kept</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>≤0.533</td>
+<td>120/120</td>
+<td>38%</td>
+</tr>
+<tr>
+<td>0.600</td>
+<td>91/120</td>
+<td>33%</td>
+</tr>
+<tr>
+<td>0.667</td>
+<td>66/120</td>
+<td>23%</td>
+</tr>
+<tr>
+<td>0.733</td>
+<td>48/120</td>
+<td>15%</td>
+</tr>
+<tr>
+<td>0.800</td>
+<td>42/120</td>
+<td>5%</td>
+</tr>
+</tbody>
+</table>
+<p>Take the loosest cut whose kept-set error you can live with — here <code>0.8</code> buys a 5%
+error rate for a third of the cells, and anything at or below <code>0.533</code> is a no-op.
+Then apply it for real with <code>preserve_labeled=True</code>, which exempts the reference:
+a curated label is not the vote's to discard.</p>
+<p>One consequence of that exemption: under <code>preserve_labeled=True</code> a reference cell's
+<code>confidence</code> is the share behind the label it was <em>given</em>, not behind the winner, so
+a mislabeled curated cell sitting deep inside another cluster reports <code>0.0</code> and
+keeps its label anyway. That is a useful flag for reviewing the core, but it means
+the confidence column is not one population — filter to the propagated cells before
+taking a quantile of it.</p>
+<h3 id="conformal-assignment-sets-with-a-certificate">Conformal assignment: sets with a certificate</h3>
+<p><code>propagate_labels</code>' confidence is a plurality margin — useful, calibrated
+against nothing. <code>ft.assign</code> answers the stronger question — <em>which labels can
+this cell defensibly be given?</em> — with a finite-sample guarantee attached:</p>
+<pre><code class="language-python">assignment = ft.assign(core, to=&quot;exc&quot;, columns=&quot;stable&quot;)
+
+assignment.prediction_set(alpha=0.1)     # labels not rejected at 90% coverage
+assignment.set_sizes(alpha=0.1)          # 1 = decisive, 3 = honestly torn
+ft.attach(assignment.to_labelset(alpha=0.1))   # singletons keep their label,
+                                               # everything else abstains
+assignment.coverage(alpha=0.1)           # the self-check, per class
+</code></pre>
+<p>The curated reference is split into a training part and a calibration part;
+a classifier (any sklearn estimator — the guarantee doesn't depend on its
+quality, only the set sizes do) is fit on the first and its surprise on the
+second becomes the yardstick. Every cell then gets a <strong>p-value per label</strong>,
+and that matrix is the stored evidence: <code>alpha</code> is a <em>read-time</em> parameter,
+so one <code>assign</code> call serves every coverage level you later care about — the
+same stance the boundary report takes with its thresholds.</p>
+<p>Calibration is <strong>Mondrian by class</strong> by default: each label's threshold comes
+from calibration cells of that label, so 90% coverage means 90% <em>for the rare
+type too</em>, not on average. The price is honest arithmetic — a class needs at
+least <code>⌈1/alpha⌉ − 1</code> calibration cells to back its guarantee, and
+<code>prediction_set</code> names the classes that fall short rather than letting them
+borrow a threshold.</p>
+<p><strong>When the target drifts away from the core</strong> — truncation being the standing
+example — the plain guarantee quietly dies on the drifted cells: their scores
+exceed everything in calibration and their sets come back empty (measured on
+the truncation benchmark: 26% coverage at nominal 90%). Two remedies, both
+kept while the toolkit is deliberately overcomplete. Passing
+<code>shift_covariates=["completeness"]</code> switches to weighted conformal
+(Tibshirani et al. 2019): calibration cells resembling each test cell in the
+covariates count for more, restoring coverage at the honest price of
+conceding both labels where the classes have genuinely merged.
+<code>conditional_prediction_set</code> (optional <code>conditional</code> extra) is the
+finer instrument — Gibbs–Cherian–Candès conditional coverage, holding at
+<em>every</em> completeness level while keeping sets small (88% coverage at mean
+set size 0.91 on the same benchmark) — at the cost of a construction-time
+<code>alpha</code> and an LP per cell.</p>
+<p>Two boundaries worth respecting. An <strong>empty set is not novelty detection</strong>:
+the guarantee assumes exchangeability with the calibration cells, which is
+precisely what a truncated or foreign cell violates — <code>plausibility()</code> is a
+screen, <code>score_cells</code> and the validity machinery are the real tools, and
+<code>assign</code> warns when its columns' validity domains don't cover the target for
+exactly this reason. And the calibrated <strong>probabilities that ride along</strong>
+(<code>assignment.probabilities</code>) are a different object from the sets:
+probabilities rank and average nicely but can be wrong together; the sets
+carry the certificate.</p>
+<h3 id="smoothing-and-refilling">Smoothing and refilling</h3>
+<p>Same verb, two variations that were workhorses of the old pipeline:</p>
+<pre><code class="language-python"># smooth a noisy clustering: relabel the core cells from their own neighborhoods
+ft.propagate_labels(core, to=&quot;exc_core&quot;, preserve_labeled=False, n_neighbors=50)
+
+# throw out a junk cluster and let its cells be reassigned
+core.unassign(&quot;L2b&quot;)
+ft.propagate_labels(core, to=&quot;exc_core&quot;, n_neighbors=30)
+</code></pre>
+<p><code>unassign</code> sends a cluster's cells back to <code>-1</code> and drops the cluster, so the next
+propagation refills them from their neighbors rather than leaving a hole. Both leave
+gaps in the cluster ids; <code>compact()</code> closes them.</p>
+<p>For the array-level primitives without a table, <code>propagate_knn(features, codes)</code> and
+<code>propagate_spread(features, codes)</code> both return <code>(codes, confidence, recovery)</code> and
+treat <code>-1</code> as unlabeled.</p>
+<h3 id="the-recursive-descent">The recursive descent</h3>
+<p>Clustering, masking and propagation compose into one loop, which is how a hierarchy
+gets built: cluster a curated core, propagate to the population, carve the next
+mask out of the propagated labels, and recurse.</p>
+<pre><code class="language-python">coarse = ft.cluster(mask=&quot;core&quot;, n_times=20, name=&quot;coarse&quot;)
+family = coarse.label(distance_threshold=0.9, name=&quot;family&quot;)
+ft.attach(ft.propagate_labels(family, to=&quot;exc&quot;, method=&quot;spread&quot;).labels)
+
+# the propagated column defines where to look next
+ft.add_mask(&quot;l23it&quot;, pl.col(&quot;family_nn&quot;) == &quot;L23IT&quot;)
+ft.add_mask(&quot;l23it_core&quot;, pl.col(&quot;is_core&quot;), based_on=&quot;l23it&quot;)   # stays nested
+
+fine = ft.cluster(mask=&quot;l23it_core&quot;, n_times=20, name=&quot;fine&quot;)
+subtype = fine.label(distance_threshold=0.5, name=&quot;subtype&quot;)
+ft.attach(ft.propagate_labels(subtype, to=&quot;l23it&quot;, method=&quot;spread&quot;).labels)
+</code></pre>
+<p>Each round leaves its columns in the table, so the hierarchy is legible at the end:
+a cell has a <code>subtype_nn</code> only where <code>family_nn</code> put it in that branch, and null
+elsewhere. Use <code>based_on</code> to keep a child mask inside its parent rather than
+re-deriving the intersection by hand. When you want the leaves back as a single
+column, <a href="#flattening-labels-across-masks"><code>ft.flatten_labels</code></a> collapses the stack
+finest-first.</p>
+<p>A predicate that evaluates to null counts as <code>False</code>, so masking on a label column
+works directly even where propagation abstained — an unassigned cell simply isn't in
+the subset. Worth knowing because scaling is per-mask: each round of the descent
+rescales within its own branch, which is usually what you want (variance <em>within</em> the
+family you're subdividing) and is why the reference for each propagation must live
+inside that round's target mask.</p>
+<h2 id="validating-a-representation">Validating a representation</h2>
+<p>Whitening strength, graph weighting, neighbourhood size and clipping rule are all
+parameters with no principled default. A UMAP is the worst available way to choose between
+them: it is a lossy 2-D projection, it is usually built in a different space from the one
+being compared, and it rewards whichever setting produces visually tidy blobs rather than
+reproducible groups. Two criteria, plus one tripwire.</p>
+<h3 id="subsample-reproducibility-the-primary-criterion">Subsample reproducibility — the primary criterion</h3>
+<p>Cluster repeated subsamples under a <strong>frozen</strong> representation and measure how much the
+labels agree with the full-data labels. No ground truth needed, and it measures the
+property actually wanted: that the structure is a property of the population rather than
+of the particular cells in hand.</p>
+<pre><code class="language-python">from cellpax import subsample_stability
+
+space = ft.space(&quot;l23&quot;)
+scores = {}
+for alpha in (0.0, 0.25, 0.5, 0.75, 1.0):
+    coords = space.with_alpha(alpha).transform_scaled(ft.features(&quot;l23&quot;, scaled=True))
+    scores[alpha] = subsample_stability(
+        coords, distance_threshold=0.6, n_draws=10, fraction=0.8,
+        n_neighbors=30, resolution=[0.3, 1.0], n_times=2, seed=0,   # held fixed
+    )
+{a: s.mean_ari for a, s in scores.items()}
+</code></pre>
+<p>Three things to watch:</p>
+<ul>
+<li><strong>The space must not be refit inside a draw.</strong> <code>subsample_stability</code> takes
+  <em>coordinates</em>, so there is nothing for it to refit — but that means you must build them
+  outside the loop, from views over one fit as above. Refitting would measure preprocessing
+  stability confounded with clustering stability, and those answer different questions.</li>
+<li><strong>The inner ensemble must be identical across representations.</strong> Keep it small (a couple
+  of resolutions and seeds); absolute ARI is then not interpretable, but the <em>paired</em>
+  comparison is — the same argument that makes a stratified-sample comparison valid.</li>
+<li><strong>Cost is real.</strong> <code>n_draws</code> times the inner ensemble, per representation. Budget it as
+  comparable to the main sweep.</li>
+</ul>
+<p>A representation whose groups survive dropping a fifth of the cells is describing the
+population; one whose groups rearrange was describing these cells. On a genuine continuum
+expect a low score — that is the property that makes this a criterion rather than a
+formality.</p>
+<h3 id="recovery-of-an-external-label-the-cross-check">Recovery of an external label — the cross-check</h3>
+<p>Leave-one-out kNN recovery of labels the clustering never saw. Any population-wide
+external call works.</p>
+<pre><code class="language-python">from cellpax import loo_knn_recovery, paired_recovery
+
+truth = ft.labelset(&quot;ct_combo&quot;).codes_for(ft._cell_ids(&quot;l23&quot;))
+reps = {
+    f&quot;alpha={a}&quot;: loo_knn_recovery(
+        space.with_alpha(a).transform_scaled(ft.features(&quot;l23&quot;, scaled=True)),
+        truth, n_neighbors=15, name=f&quot;alpha={a}&quot;,
+    )
+    for a in (0.0, 0.5, 1.0)
+}
+paired_recovery(reps)     # deltas, discordance counts, exact McNemar p
+</code></pre>
+<p><code>graph_knn_recovery</code> does the same along a neighbour graph, which is how a <code>graph_type</code>
+gets scored rather than a coordinate space. Edge weights there are <em>similarities</em> and a
+shortest path needs costs, so <code>cost="neg_log"</code> (the default) or <code>cost="complement"</code> — a
+choice that changes the ranking, hence a parameter.</p>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>Differences, not absolute numbers.</strong> Absolute recovery is often not even well defined:
+  with a stratified labelled set it depends on the design, while the paired difference
+  does not. <code>paired_recovery</code>'s McNemar test is what keeps a difference of a handful of
+  cells from being read as a result — with a few hundred labelled cells most differences
+  between reasonable representations will not clear it, and that is the honest answer.</li>
+<li><strong>An external call that is itself a classifier's output measures agreement with that
+  classifier</strong>, decision boundary and errors alike. It ranks representations; it does not
+  certify them. If it disagrees with subsample ARI about the best setting, prefer the
+  reproducibility number and say so.</li>
+</ul>
+<p>Design weights are supported for a stratified labelled set, but read what the weighting
+does before leaning on it:</p>
+<pre><code class="language-python">score = loo_knn_recovery(coords, truth, weights=design_weights, strata=strata)
+score.accuracy_ipw       # population estimate
+score.by_stratum()       # what the weighting hides
+</code></pre>
+<p>A design that oversamples the cells where two classifiers disagree gives those cells
+<em>small</em> weights, precisely because they were oversampled — so the population estimate is
+dominated by the easy stratum and its standard error can swamp the effect being measured.
+<code>by_stratum()</code> is the informative view when that is the case.</p>
+<h3 id="purity-against-an-audit-label-the-tripwire">Purity against an audit label — the tripwire</h3>
+<pre><code class="language-python">from cellpax import label_purity
+label_purity(h.nested_labels, ft.dataframe(&quot;l23&quot;)[&quot;is_inhib_label_nn&quot;])
+</code></pre>
+<p>Per cluster per level, sorted worst-first: <code>n_audit_labels</code>, <code>dominant</code>, <code>purity</code>. A
+cluster spanning a boundary the features had no access to is a genuine red flag rather
+than something to tune away.</p>
+<p>One thing to watch: <strong>it only has teeth where straddling is possible.</strong> Cluster a cohort
+that was itself selected on the audit label and every purity is 1.0 by construction, which
+is not evidence of anything. It bites when the audit label comes from a different source
+than the one that defined the cohort — then the two genuinely disagree about some cells,
+and a cluster containing both is telling you something.</p>
+<h2 id="comparing-approaches">Comparing approaches</h2>
+<pre><code class="language-python">from cellpax import compare, compare_many
+
+cmp = compare(labels_a, labels_b)      # aligned on shared cells
+cmp.agreement()                        # ARI / NMI / FMI / Jaccard (+ n)
+cmp.contingency(normalize=False)       # long-form cross-tab
+cmp.alluvial_frame()                   # source / target / value for sankey plots
+compare_many([a, b, c], metric=&quot;ari&quot;)  # pairwise agreement matrix
+</code></pre>
+<h2 id="embeddings">Embeddings</h2>
+<pre><code class="language-python">ft.embed(&quot;l23&quot;, method=&quot;pca&quot;, n_components=2, name=&quot;pca&quot;)   # sklearn PCA
+ft.embed(&quot;l23&quot;, method=&quot;umap&quot;, n_components=2)              # optional umap-learn
+ft.embed(&quot;l23&quot;, method=&quot;pacmap&quot;, seed=0)                    # optional pacmap
+ft.embed(&quot;l23&quot;, method=&quot;localmap&quot;, seed=0)                  # LocalMAP, same package
+ft.embedding(&quot;l23&quot;, name=&quot;pca&quot;)                             # stored coordinates
+ft.dataframe(&quot;l23&quot;, embedding=&quot;pca&quot;)                        # joined onto the tidy view
+</code></pre>
+<p>Install the optional backends with <code>pip install 'cellpax[embeddings]'</code> (or <code>[umap]</code> /
+<code>[pacmap]</code> individually). <code>pacmap</code> pulls <code>faiss-cpu</code> and <code>numba</code>, and numba constrains the
+numpy version — worth knowing before adding it to a pinned environment.</p>
+<h3 id="choosing-a-backend">Choosing a backend</h3>
+<p>They differ in what they try to preserve, and the difference matters here because these
+figures are read to judge clusterings.</p>
+<ul>
+<li><strong><code>umap</code></strong> preserves local neighbourhoods. Its inter-cluster distances are <em>not</em>
+  meaningful — the gap between two clouds says nothing about how different they are — so
+  reading a UMAP for "how far apart are these types" is reading something that isn't there.</li>
+<li><strong><code>pacmap</code></strong> adds mid-near pairs alongside neighbour and further pairs, and shifts the
+  weighting across three optimisation phases, specifically so global layout carries
+  information too. That is the one thing UMAP is worst at and that these figures are most
+  often used for.</li>
+<li><strong><code>localmap</code></strong> (Wang et al., AAAI 2025; shipped in pacmap ≥ 0.8) adjusts the graph
+  locally during the final stage, aimed at clearer cluster boundaries. Its benefit is on
+  <em>ambiguous</em> boundaries — on well-separated blobs it does not separate them more than
+  PaCMAP does, so do not expect it to make an easy case look easier.</li>
+<li><strong><code>pca</code></strong> is linear, cheap, and exactly reproducible. Worth keeping as the baseline: if
+  a nonlinear embedding disagrees with it about something structural, that is worth
+  understanding rather than assuming the nonlinear one is right.</li>
+</ul>
+<p>Two things to watch:</p>
+<ul>
+<li><strong><code>pacmap</code> and <code>localmap</code> default to <code>n_neighbors=10</code></strong>, against UMAP's 15 and the 30–50
+  typically used for the Leiden graphs. Out of the box they give a more local, more
+  fragmented picture than the existing UMAPs — not a like-for-like swap. Sweep it.</li>
+<li><strong>They reduce their own input, conditionally.</strong> With <code>apply_pca=True</code> (their default) and
+  more than 100 input features, they truncated-SVD to 100 dimensions before constructing
+  pairs. Below 100 features nothing happens, so on an 81-column set the flag is not a knob
+  at all. Passing <code>space=</code> sets it <code>False</code> automatically, since reducing an
+  already-reduced-and-whitened space would partly undo the weighting. Whatever is in force
+  shows in <code>graph_provenance()</code> as e.g. <code>scaled -&gt; tsvd(100)</code>, so the table never reports a
+  space that wasn't used.</li>
+</ul>
+<p>Unseeded calls are reproducible anyway: <code>seed=None</code> derives a deterministic seed from
+the table seed and the call's identity (see
+<a href="#seeds-and-reproducibility">Seeds and reproducibility</a>), so a figure made without
+thinking about seeds can still be regenerated. Pass <code>seed=</code> explicitly when you want a
+particular stream — all three optional backends accept it.</p>
+<h3 id="two-embeddings-are-better-than-one">Two embeddings are better than one</h3>
+<p>Since the backends fail differently, running two turns a single ambiguous observation into
+a comparison. A cell misplaced in <em>both</em> is more likely genuinely unusual; one misplaced in
+only one is that algorithm's artifact:</p>
+<pre><code class="language-python">ft.embed(&quot;l23&quot;, method=&quot;umap&quot;, name=&quot;umap&quot;, seed=0)
+ft.embed(&quot;l23&quot;, method=&quot;pacmap&quot;, name=&quot;pacmap&quot;, seed=0)
+
+from cellpax import neighbor_label_composition
+for name in (&quot;umap&quot;, &quot;pacmap&quot;):
+    coords = ft.embedding(&quot;l23&quot;, name=name).drop(ft.id_column).to_numpy()
+    print(name, neighbor_label_composition(coords, labels.codes)
+          .group_by(&quot;verdict&quot;).len().sort(&quot;verdict&quot;))
+</code></pre>
+<p>Compare either against <code>ft.triage_labels(labels)</code>, which runs the same check in the
+<em>clustering</em> space — that three-way comparison is what separates "the label is wrong" from
+"this embedding placed it badly".</p>
+<p>One caution worth stating plainly: a better global layout looks more decisive, with cleaner
+gaps and more convincing separation. That invites more confidence in the picture, not less
+— and global structure being better preserved is not the same as being reliable enough to
+settle whether a clustering is right. The criteria under
+<a href="#validating-a-representation">Validating a representation</a> do not use the embedding at
+all, and that is deliberate.</p>
+<h3 id="getting-at-the-coordinates">Getting at the coordinates</h3>
+<p>Coordinate columns are prefixed with the embedding's name — <code>umap_core0</code>, <code>umap_core1</code> —
+because they share a flat namespace with the metadata in <code>dataframe()</code>. Rebuilding those
+names by hand means writing the embedding's name three times in one call: twice as a
+prefix and once as <code>embedding=</code>. <code>embedding_view</code> hands back the frame <em>and</em> the names
+together, so it is written once:</p>
+<pre><code class="language-python">v = ft.embedding_view(&quot;l23&quot;, name=&quot;umap_core&quot;, labels=lbl)
+
+sns.scatterplot(**v.xy, data=v.frame, hue=lbl.name, palette=lbl.color_map())
+v.frame.filter(pl.col(v.x) &gt; 10)          # coordinates as predicates, not just axes
+</code></pre>
+<p><code>name</code> is optional when the mask holds exactly one embedding, and raises listing the
+candidates when it holds several — so a defaulted name is never a silent guess.
+<code>ft.embeddings</code> lists every stored <code>(mask, name)</code> pair, which matters because <code>embed</code>
+derives a name when you don't pass one (<code>embed(method="umap", columns="analysis")</code> stores
+<code>"umap_analysis"</code>).</p>
+<h3 id="coordinates-from-elsewhere">Coordinates from elsewhere</h3>
+<p><code>add_embedding</code> registers coordinates <code>embed</code> didn't compute, after which everything else
+treats them identically — <code>embedding_view</code>, <code>dataframe(embedding=…)</code>, persistence:</p>
+<pre><code class="language-python">xy = ft.dataframe(mask).select([&quot;soma_x_um&quot;, &quot;soma_depth_um&quot;]).to_numpy()
+ft.add_embedding(xy, mask, name=&quot;soma_xz&quot;, space=&quot;anatomical&quot;)
+
+v = ft.embedding_view(mask, name=&quot;soma_xz&quot;)
+sns.scatterplot(**v.xy, data=v.frame, hue=&quot;ct_combo&quot;)
+</code></pre>
+<p>The obvious use is a backend <code>embed</code> doesn't wrap. But <strong>soma position makes a perfectly
+good "embedding"</strong>, and registering it that way lets an anatomical plot reuse the same
+labels, joins and colour maps as a UMAP rather than being assembled separately.</p>
+<p>Coordinates may be an array in mask row order, or a frame carrying the id column — in
+which case row order doesn't matter and the ids are matched. Coverage is checked when you
+add them, not when you read them, so a mismatch fails immediately instead of surfacing
+later as silently dropped cells.</p>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>Set <code>space=</code> to something meaningful.</strong> Nothing else records where the coordinates came
+  from, and unlike a fitted model this label persists — <code>graph_provenance()</code> reports it
+  after a reload.</li>
+<li><strong>There's no model behind them</strong>, so <code>embedding_model</code> raises and <code>project</code> can't push new
+  cells in. That's the same position a reloaded embedding is in.</li>
+</ul>
+<p>On dimensionality: <code>coords</code>, <code>v[i]</code> and <code>n_components</code> describe however many components
+the embedding actually has, while <code>xy</code> names its own two-dimensionality rather than
+pretending the rest do not exist.</p>
+<pre><code class="language-python">v = ft.embedding_view(&quot;l23&quot;, name=&quot;three_d&quot;)
+v.coords          # ('three_d0', 'three_d1', 'three_d2')
+v.n_components    # 3
+v.xy              # {'x': 'three_d0', 'y': 'three_d1'}   the first two
+v.pair(0, 2)      # {'x': 'three_d0', 'y': 'three_d2'}   a stated choice
+</code></pre>
+<p><code>x</code> and <code>y</code> are aliases for <code>v[0]</code> and <code>v[1]</code>, so on a one-component embedding <code>y</code> raises
+naming the component count rather than returning something misleading.</p>
+<p>Two things to watch:</p>
+<ul>
+<li><strong>The coordinate names come from the stored frame</strong>, not from rebuilding <code>f"{name}{i}"</code>.
+  That matters after a <code>load</code>: coordinates persist while fitted models do not, so a view
+  built from the model would work in-session and break on reload.</li>
+<li><strong><code>columns</code> selects what <code>scaled</code> applies to</strong>, not what the frame carries. Every feature
+  column is present either way; <code>columns</code> narrows which ones come back scaled.</li>
+</ul>
+<p>To color a scatter by a <code>LabelSet</code> you haven't (or won't) <code>attach</code>, join it onto
+the embedding directly — both are keyed by cell id, so no attaching or row-order
+assumptions needed:</p>
+<pre><code class="language-python">plot_df = ft.embedding(&quot;l23&quot;, name=&quot;pca&quot;).join(
+    labels.to_frame(id_column=ft.id_column), on=ft.id_column
+)
+# hand straight to seaborn: x=&quot;pca0&quot;, y=&quot;pca1&quot;, hue=&quot;subclass&quot;
+</code></pre>
+<h2 id="the-anndata-bridge">The AnnData bridge</h2>
+<p>CellPax deliberately isn't AnnData — masks-as-columns and id-keyed embeddings
+remove the alignment bugs a positional index invites — but the single-cell
+ecosystem's tools live on AnnData, and re-implementing them here would be the
+wrong use of anyone's time. The bridge makes them one call away:</p>
+<pre><code class="language-python">adata = ft.to_anndata(&quot;l23&quot;, scaled=True)     # needs pip install 'cellpax[anndata]'
+
+import scanpy as sc
+sc.tl.paga(adata, groups=&quot;subclass&quot;)           # borrow the ecosystem...
+
+back = FeatureTable.from_anndata(adata)        # ...and come home
+</code></pre>
+<p>Masks travel as <code>mask_*</code> boolean obs columns, embeddings as id-aligned
+<code>obsm["X_*"]</code> entries, feature metadata as <code>var</code>, and provenance — which mask,
+scaled or raw, per-feature transforms, validity domains, the table seed —
+under <code>uns["cellpax"]</code>, which is what lets <code>from_anndata</code> restore rather than
+guess. Foreign AnnData objects import too: obs becomes metadata, obsm entries
+become registered embeddings, and you name the id column if there's no
+provenance record to read it from.</p>
+<p>The reading of the round trip is one-way-ish by design: coordinates,
+metadata, masks, transforms, and validity all survive; fitted models,
+clusterings and the consensus matrix do not cross (they are cellpax objects
+with no AnnData equivalent) — export for the ecosystem's tools, keep the
+analysis of record on the folio side.</p>
+<h2 id="joining-datasets">Joining datasets</h2>
+<p>Two volumes run through the same feature extraction still disagree about the same kind
+of cell. Synapse sizes come out in different units, a lower detection threshold enriches
+one tail, a spine/shaft classifier splits differently, sections compress by a few
+percent. Concatenate the rows and scale once, and all of that becomes geometry: the
+first thing a clustering finds is the datasets.</p>
+<p><code>join_datasets</code> removes the difference <em>before</em> the rows meet:</p>
+<pre><code class="language-python">from cellpax import FeatureTable, join_datasets, quantile_scaler_factory
+
+ft = join_datasets(
+    {&quot;minnie&quot;: minnie, &quot;v1dd&quot;: v1dd},        # FeatureTables with the same features
+    scaler_factory=quantile_scaler_factory(), # 1st/99th percentile clip, then rank
+    strata=&quot;subclass&quot;,                        # one mapping per (dataset, subclass)
+)
+ft.describe()
+</code></pre>
+<p>Each dataset gets its own scaler, fit on its own cells. Every other dataset is then
+mapped <strong>onto the reference dataset</strong> (the first, unless <code>reference=</code> says otherwise):
+forward through its own fit, back out through the reference's inverse. The joined
+values are in the reference's raw units, and the reference's cells are unchanged. After
+that the joined table is an ordinary table: it scales per mask, clusters, embeds and
+propagates exactly as before.</p>
+<h3 id="choosing-the-harmonizer">Choosing the harmonizer</h3>
+<ul>
+<li><strong>Normalize per dataset, never jointly.</strong> A scaler fit on the pooled rows measures the
+  datasets against a mixture of both and leaves the difference in place.</li>
+<li><strong>A rank transform aligns what linear scaling cannot.</strong> <code>StandardScaler</code> corrects
+  location and scale, and nothing else. When one dataset's feature is a nonlinear warp
+  of the other's (different units compounded by a threshold that enriches one tail), only
+  a quantile map removes it. On Minnie vs V1dd, clipping at the 1st/99th percentile and
+  then quantile-normalizing each dataset matched 85 of 87 features' marginals (KS &lt; 0.02),
+  including features whose raw ratios were 1000×. Clip first: <code>quantile_scaler_factory</code>
+  does by default.</li>
+<li>Anything with an <code>inverse_transform</code> works. <code>StandardScaler</code>, <code>RobustScaler</code>,
+  <code>clipped_scaler_factory()</code> and <code>quantile_scaler_factory()</code> all round-trip through
+  <code>save</code>/<code>load</code>. Any other scaler works in a session, but <code>join_datasets</code> warns that
+  <code>save</code> will refuse it.</li>
+</ul>
+<h3 id="stratifying-by-subclass">Stratifying by subclass</h3>
+<p>A single per-feature map fails when the batch effect changes direction between cell
+types. On Minnie vs V1dd, mid-layer IT cells have 0.55× the spine density while L6 cells
+have 1.1–1.6×, so no one map fixes both. Subclasses, though, are easy to match between
+datasets, and <code>strata=</code> gives every <code>(dataset, subclass)</code> its own mapping. It keeps the
+differences <em>between</em> subclasses (they are in the reference's units) and removes only
+the difference between datasets <em>within</em> each one. On excitatory cells that cut the
+mixing gap by 78%.</p>
+<p>Strata are compared as strings, so the names must already agree:</p>
+<pre><code class="language-python">minnie = minnie.add_column(
+    minnie.dataframe().select(
+        pl.col(&quot;subclass&quot;).replace({&quot;L2IT&quot;: &quot;IT&quot;, &quot;L3IT&quot;: &quot;IT&quot;, &quot;L4IT&quot;: &quot;IT&quot;, &quot;L5IT&quot;: &quot;IT&quot;})
+    ),
+    &quot;stratum_group&quot;,
+)
+</code></pre>
+<ul>
+<li><strong>Lump continua</strong> whose internal boundaries the datasets drew differently: L2–5 IT as
+  one stratum, rather than imposing an L2/L3 boundary that doesn't match.</li>
+<li><strong>Reconcile taxonomies</strong> before joining, e.g. V1dd's BPC + MPC together make up Minnie's
+  ITC.</li>
+<li><strong>Reference-only strata pass through.</strong> A population only the reference has (Minnie's
+  L2b) keeps its values. A stratum in another dataset that the reference lacks raises,
+  because there is nothing to map it onto.</li>
+<li><strong>Stratify where it pays.</strong> Inhibitory cells in the same comparison were nearly aligned
+  by a single global quantile map. Give them one stratum value, and the excitatory cells
+  their subclass groups.</li>
+<li><code>min_cells=</code> (default 50) refuses a mapping estimated from too few cells, on either
+  side. <code>fit_mask=</code> fits on a trusted subset (proofread cells, say) and applies the fit
+  to every cell.</li>
+</ul>
+<h3 id="checking-that-it-worked">Checking that it worked</h3>
+<p><code>dataset_mixing</code> asks how much more often a cell's neighbours come from its own dataset
+than its stratum's composition predicts. A gap of 0 means the datasets are
+indistinguishable in that space.</p>
+<pre><code class="language-python">ft.dataset_mixing()                  # scaled features, stratified by the join's strata
+ft.dataset_mixing(pca=True)          # ...the same in the 95%-variance PCA space
+ft.cross_dataset_classification(&quot;subclass&quot;, train=&quot;minnie&quot;, test=&quot;v1dd&quot;).by_label()
+</code></pre>
+<p><strong>Compare representations before choosing one.</strong> With a few dozen mostly informative
+features there is no noise floor to dilute a covariance difference between the datasets,
+and PCA keeps exactly the high-variance directions such a difference creates. On Minnie
+vs V1dd the gap was +0.13 in the 85-D feature space and +0.42 in 30-D PCA, and running
+Harmony on the PCA <em>after</em> stratified quantile normalization made mixing worse. If
+<code>dataset_mixing(pca=True)</code> is clearly worse than <code>dataset_mixing()</code>, cluster with
+<code>pca=False</code>.</p>
+<p>The per-label confusion in <code>cross_dataset_classification</code> shows where the datasets still
+disagree. Errors that fall on known taxonomy differences are a result about taxonomy,
+not a failed alignment. <code>accuracy_shared</code> leaves out test labels the training dataset
+doesn't have.</p>
+<p>Some residual gap is expected, around +0.02 overall and more for some subclasses.
+Per-feature maps align marginals, not covariance, and part of what's left is real:
+regional biology, or reconstruction survival that selects different cells in each
+volume.</p>
+<h3 id="getting-back-to-the-sources">Getting back to the sources</h3>
+<p>Joined ids are minted in dataset blocks and should never be parsed. Every row keeps its
+dataset and original id, and both directions of the lookup are methods:</p>
+<pre><code class="language-python">ft.source_ids(joined_ids)               # cell_id, dataset, source_cell_id
+ft.cell_ids_for(&quot;v1dd&quot;, root_ids)       # original ids -&gt; joined ids
+
+parts = ft.labels_by_dataset(&quot;joint_subclass&quot;)   # one LabelSet per dataset, original ids
+v1dd.attach(parts[&quot;v1dd&quot;])                       # write the joint labels back
+</code></pre>
+<p>New cells from any dataset reach the joined space through the same frozen mapping,
+followed by the joined table's own frozen fits:</p>
+<pre><code class="language-python">rows = ft.harmonize(new_v1dd_cells, &quot;v1dd&quot;)      # strata read from its subclass column
+ft.project_labels(rows.rename({&quot;root_id&quot;: &quot;cell_id&quot;}), &quot;joint_subclass&quot;)
+</code></pre>
+<p>Metadata, masks, collections, validity domains and attached labels carry over. A dataset
+missing a metadata column gets nulls, and one missing a mask gets <code>False</code>, with a
+warning. Same-named clusters merge. Embeddings, clusterings and spaces do not carry over,
+since they were computed in the per-dataset spaces. One caveat when viewing the result:
+a <code>root_id</code> column now mixes ids from different volumes, so a neuroglancer link needs the
+right segmentation for each dataset.</p>
+<h2 id="persistence">Persistence</h2>
+<p>Save the whole analysis under a name in a DataFolio — structured, not flattened.
+Many analyses and arbitrary user content coexist in one folio.</p>
+<pre><code class="language-python">from cellpax import list_analyses
+
+ft.save(folio, &quot;l23it&quot;)                # table, masks, collections, transforms,
+                                       # embeddings, consensus matrices, and
+                                       # attached label identities (colors, …)
+ft = FeatureTable.load(folio, &quot;l23it&quot;)
+list_analyses(folio)                   # CellPax analyses in the folio
+
+folio.add(&quot;notes/readme&quot;, {...})       # your own items live alongside, untouched
+</code></pre>
+<p>Every item <code>save</code> writes gets a content-derived description (cell/feature counts,
+mask, linkage method, …), so <code>folio.describe()</code> is legible without reloading the
+analysis.</p>
+<p>Scalers refit lazily on load (the resolved transforms and scaler choice are
+restored, so scaled values reproduce).</p>
+<p>A table built by <code>join_datasets</code> also saves its per-dataset scalers, as explicit
+parameters rather than pickles, along with the dataset and source-id bookkeeping. After
+a <code>load</code>, <code>harmonize</code>, <code>source_ids</code> and <code>labels_by_dataset</code> work exactly as before. A
+join whose scaler cannot be recorded refuses to save before anything is written.</p>
+<h2 id="plotting">Plotting</h2>
+<p>CellPax ships no plotting layer by design — <code>dataframe(...)</code>, <code>embedding(...)</code>,
+and <code>compare(...).alluvial_frame()</code> return tidy frames you hand straight to
+seaborn/matplotlib, which is easier to tailor per figure.</p>
+<p>Two figures are worth the assembly, and the frames for both come out of
+<code>ConsensusHierarchy</code>.</p>
+<p><strong>Dendrogram with merges coloured by stability.</strong> <code>dendrogram_frame()</code> returns the layout
+as line segments rather than drawing it, because <code>scipy.cluster.hierarchy.dendrogram</code>
+computes the layout and draws it in one step, which makes per-merge colouring awkward.
+Leaf positions follow <code>leaf_order</code>, the same order <code>sorted_matrix</code> uses, so the dendrogram
+lines up with the consensus block image.</p>
+<pre><code class="language-python">seg = h.dendrogram_frame()
+norm = plt.Normalize(0, 1)
+for row in seg.iter_rows(named=True):
+    ax.plot([row[&quot;x0&quot;], row[&quot;x1&quot;]], [row[&quot;y0&quot;], row[&quot;y1&quot;]],
+            color=plt.cm.viridis(norm(row[&quot;coclustering_frequency&quot;])), lw=0.8)
+</code></pre>
+<p>Merges that survive across many resolutions are types; merges appearing only at high
+resolution are subtypes. Colour by <code>coclustering_frequency</code> for overall stability, or join
+<code>merge_support()</code> on <code>merge</code> and colour by <code>resolution_min_supporting</code> to separate the two
+directly.</p>
+<p><strong>UMAP coloured by per-cell stability</strong>, as the companion to one coloured by hard labels:</p>
+<pre><code class="language-python">v = ft.embedding_view(&quot;l23&quot;, name=&quot;umap&quot;)
+frame = v.frame.join(h.cell_stability_frame(), on=&quot;cell_id&quot;)
+sns.scatterplot(**v.xy, data=frame.to_pandas(),
+                hue=&quot;stability&quot;, palette=&quot;magma&quot;, s=1, ax=ax)
+</code></pre>
+<p>The expectation to check: low-stability cells should concentrate along interdigitated
+cluster boundaries and along continuous streaks between clusters. Scattered uniformly
+instead, the instability is not about boundaries and the cut is not the thing to adjust —
+look at <code>ft.graph_provenance()</code> and <code>axis_stability</code> instead.</p>
+<p>The ordered correlation matrix uses the existing <code>SortedMatrix</code> shape, so the recipe in
+its docstring applies unchanged:</p>
+<pre><code class="language-python">sm = feature_correlation(ft.features(&quot;l23&quot;, columns=&quot;analysis&quot;),
+                         ft.collections[&quot;analysis&quot;].columns)
+ax.imshow(sm.matrix, vmin=-1, vmax=1, cmap=&quot;RdBu_r&quot;)
+ax.set_xticks(range(sm.n_cells), sm.cell_ids, rotation=90, fontsize=4)
+ax.hlines(sm.boundaries[1:-1] - 0.5, *ax.get_xlim(), lw=0.5)
+</code></pre>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.indexes", "navigation.instant", "navigation.prune", "navigation.tabs", "navigation.tabs.sticky", "toc.follow", "toc.integrate", "navigation.top", "search.suggest", "search.highlight", "search.share", "content.code.copy", "header.autohide"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

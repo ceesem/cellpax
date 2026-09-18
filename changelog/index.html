@@ -1,0 +1,1478 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://ceesem.github.io/cellpax/changelog/">
+      
+      
+        <link rel="prev" href="../migration/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Changelog - cellpax Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bitter:300,300i,400,400i,700,700i%7CInconsolata:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Bitter";--md-code-font:"Inconsolata"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changelog" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="cellpax Documentation" class="md-header__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cellpax Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  User Guide
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Function Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="cellpax Documentation" class="md-nav__button md-logo" aria-label="cellpax Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cellpax Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ceesem/cellpax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ceesem/cellpax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../reference/api/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Function Reference
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-conformal-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased — conformal assignment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-the-anndata-bridge-the-boundary-report-and-gradients" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased — the AnnData bridge, the boundary report, and gradients
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-validity-domains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased — validity domains
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-deterministic-by-default-honest-bookkeeping-choir-removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased — deterministic by default, honest bookkeeping, CHOIR removed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-swept-representation-graph-and-hierarchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased — swept representation, graph, and hierarchy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#010-featuretable-redesign" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1.0 — FeatureTable redesign
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="changelog">Changelog</h1>
+<h2 id="unreleased-conformal-assignment">Unreleased — conformal assignment</h2>
+<ul>
+<li><strong><code>join_datasets(tables, scaler_factory=..., strata=...)</code></strong> (also
+  <code>FeatureTable.join_datasets</code>) puts tables from separate datasets into one space.</li>
+<li>Each dataset, or each <code>(dataset, stratum)</code>, gets its own fit, and every other
+    dataset is mapped onto the reference's distribution through the reference's
+    <code>inverse_transform</code>. Joined values are in the reference's raw units, differences
+    between subclasses survive, and the reference's cells are unchanged.</li>
+<li>Metadata, masks, collections, validity domains and attached labels carry over.
+    Ids are freshly minted, and the original ids stay first-class: <code>source_ids</code>,
+    <code>cell_ids_for</code>, and <code>labels_by_dataset</code> for writing joint labels back to each source.</li>
+<li><code>harmonize(rows, dataset)</code> brings new cells into the joined units, ready for
+    <code>project</code>/<code>project_labels</code>.</li>
+<li>The per-dataset scalers are saved and reloaded.</li>
+<li><strong><code>quantile_scaler_factory(clip=(1, 99))</code></strong>: a percentile clip followed by a
+  <code>QuantileTransformer</code>, the per-dataset harmonizer that aligned 85 of 87 features across
+  Minnie and V1dd. Quantile scalers, with or without the clip, now also freeze into
+  <code>FittedSpace</code> and persist.</li>
+<li><strong><code>dataset_mixing</code> / <code>ft.dataset_mixing</code></strong>: how much more often a cell's neighbours
+  share its dataset than its stratum's composition predicts, overall and per
+  <code>(dataset, stratum)</code>, in scaled features, PCA or an embedding.</li>
+<li><strong><code>cross_dataset_classification</code> / <code>ft.cross_dataset_classification</code></strong>: train on one
+  dataset's labels and score another's. It returns a <code>TransferScore</code> with
+  <code>accuracy_shared</code> (only labels both datasets have), <code>confusion()</code> and <code>by_label()</code>.</li>
+<li>
+<p><strong><code>FittedScaler.inverse_transform</code></strong>, and identity inverses on <code>PercentileClipper</code> /
+  <code>SigmaClipper</code>, so clipped pipelines can be inverted. <code>PercentileClipper</code> now fits
+  NaN-aware bounds: a feature with missing values used to get NaN bounds, which turned
+  every clipped value into NaN.</p>
+</li>
+<li>
+<p><strong><code>ft.collections.names</code></strong> lists the defined feature collections, with
+  <code>len()</code>, a <code>catalog()</code> frame (name / n_features / columns) and a <code>__repr__</code>
+  that shows the names. The accessor was already iterable, but nothing said so —
+  printing it gave <code>&lt;_CollectionAccessor object at 0x…&gt;</code>.</p>
+</li>
+<li><strong><code>ft.project_labels(data, labels)</code></strong> — <code>propagate_labels</code> for cells that
+  aren't in the table. Reference and incoming rows both go through the mask's
+  frozen scaler and PCA (<code>ft.space</code>), so the reference is judged in the space it
+  was clustered in, nothing is re-fit, no mask is widened and no clustering is
+  invalidated. Ids come from the frame's id column or <code>cell_ids=</code>; the result is
+  a <code>Propagation</code> over just the new cells, with the reference's cluster ids,
+  names and colors. <code>method="spread"</code> still abstains on rows near nothing.</li>
+<li><strong><code>LabelSet.assign(cell_ids, to)</code></strong> — move individual cells between clusters,
+  the per-cell counterpart to the cluster-level relabeling verbs. <code>to</code> is a
+  cluster id or name, or <code>None</code> to unassign; an unheld <em>name</em> creates the
+  cluster, an unknown <em>id</em> raises. Cells the set doesn't cover raise rather than
+  being skipped, which is what catches root_ids handed to a cell_id-keyed set —
+  previously this took a <code>codes</code> / <code>np.isin</code> / <code>with_codes</code> round trip whose
+  failure mode was a silent no-op.</li>
+<li><strong><code>add_column</code> and <code>add_mask</code> squeeze a one-column DataFrame.</strong>
+  <code>ft.add_column(ft.dataframe().select(expr), ...)</code> used to land as an
+  <code>Array(Boolean, shape=(1,))</code> column — one length-1 row per cell — and only
+  showed up much later, wherever the values were finally read (a <code>tag_bool_cols</code>
+  segment property, say). A width-1 frame (polars, pandas) or an <code>(n, 1)</code> array
+  now squeezes to its column; anything wider raises.</li>
+<li><strong>Save/load/list now run under <code>folio.pinned()</code></strong> (when datafolio provides
+  it; a no-op otherwise): one staleness check per batch instead of two cloud
+  round trips per item. Together with lazy consensus derivation this is the
+  remote-folio load fix — the profiled 66s cloud load spent ~30s rechecking an
+  unchanged manifest ~60 times.</li>
+<li><strong>Load fetches every frame item as one concurrent batch</strong> via datafolio v2's
+  <code>get_many</code> (sequential fallback when absent, tested identical): every item
+  path is knowable from the manifest, so cellpax hands over the list and
+  datafolio owns the concurrency. Real <code>gs://</code> folio (62k cells, ~20
+  clusterings): ~150s originally → 66s (lazy consensus) → 33.8s (pinned) →
+  <strong>5.3s</strong> (batched).</li>
+<li><strong>Fixed: a cross-mask <code>space=</code> silently mixed two scalings.</strong> Every
+  <code>space=</code> consumer (<code>cluster</code>, <code>overcluster</code>, <code>embed</code>, <code>triage_labels</code>,
+  <code>boundary_report</code>, and <code>project</code> through a space-built embedding) fed the
+  space <code>transform_scaled(features(mask, scaled=True))</code> — the <em>target mask's</em>
+  scaler followed by the <em>space's</em> rotation. Correct when the space was fit on
+  that same mask (the default), a silent chimera when a parent's space was
+  passed for a child mask. All paths now call <code>space.transform(raw)</code>, so the
+  space applies its own frozen scaler — bit-identical in the same-mask case,
+  coherent in the cross-mask case, with regression tests projecting a child
+  mask through a parent space. In the same pass, <code>columns=</code> became officially
+  redundant alongside <code>space=</code> everywhere (<code>embed</code>/<code>overcluster</code>/
+  <code>triage_labels</code> now match <code>cluster</code>): the space carries its columns, and a
+  <em>conflicting</em> <code>columns=</code> raises instead of being silently discarded.</li>
+<li><strong>Fixed: loading a saved analysis re-derived every consensus matrix eagerly.</strong>
+  Manifest v2 stores the runs and derives the n×n matrix on load — right at 21k
+  cells, minutes-per-clustering at 100k (measured: 188s for one 100k-cell
+  clustering, of which IO was under a second; a notebook storing twenty of them
+  loaded in the better part of an hour). The matrix now derives <strong>lazily on
+  first use</strong>: a load stores the runs and returns immediately (measured: 0.2s
+  for the same clustering), <code>describe()</code>/<code>shape</code>/provenance never materialize,
+  and the first <code>label()</code>/<code>linkage</code>/<code>soft_labels</code> call pays the derivation it
+  actually needs. Also fixed the normalization correction inside
+  <code>coclustering_matrix</code>, which materialized an <code>(nnz, n_runs)</code> sparse
+  intermediate — gigabytes at consensus scale; it now restricts to
+  both-ever-dropped pairs and reads a precomputed M·Mᵀ by key search.</li>
+<li><strong>Added <code>ft.describe()</code></strong> — the session state at a glance, as formatted text:
+  masks with sizes and validity-domain markers, collections, validity domains,
+  stored clusterings (space, run counts, seeds), embeddings (with whether a
+  fitted model is still live or only coordinates survive), attached labels,
+  scaler rule, transforms, and the table seed. The in-memory companion to
+  <code>folio.describe()</code>.</li>
+<li><strong>Added <code>ft.set_scaler_factory</code> and a <code>scaler_factory=</code> override on
+  <code>load_feature_table</code></strong> — the second shakedown gap: reusing an existing table
+  under a different clip rule (percentile → sigma, say) meant rebuilding it and
+  losing masks, collections, and label metadata. The swap refits scalers lazily
+  and drops everything computed under the old scaling with a warning naming what
+  went; the load-time override leaves the folio untouched until saved over.
+  Deliberately no per-call factory choice — that would key every cache on the
+  factory and resurrect the combinatorial fitting the redesign removed.</li>
+<li>
+<p><strong><code>ft.cluster</code> now accepts <code>feature_weights=</code> and <code>space=</code></strong> — the gap the first
+  workflow shakedown found: block weights reached <code>embed</code>/<code>overcluster</code>/<code>project</code>
+  but not the headline consumer. <code>feature_weights</code> folds
+  :func:<code>block_weights</code> multipliers into the space the graph is built in;
+  <code>space=</code> supplies a prebuilt <code>FittedSpace</code>, so one weighted/whitened fit
+  provably serves clustering, embeddings, and the boundary report. A passed
+  space is the representation choice — combining it with <code>pca=</code>/<code>alpha=</code>/
+  <code>feature_weights=</code> raises. <code>params</code> records the weight digest (arrays don't
+  ride in a JSON manifest; the weighted space itself persists), and
+  <code>boundary_report</code> resolves weighted runs through the space cache by that
+  digest — refusing, rather than silently examining unweighted geometry, when
+  the space is unavailable (pass <code>space=</code> explicitly then).</p>
+</li>
+<li>
+<p><strong>Added <code>ft.assign</code> → <code>Assignment</code></strong>: split-conformal label assignment over a
+  curated reference, Mondrian by class so the coverage guarantee holds for rare
+  types and not just on average (engine: the <code>crepes</code> package, new core
+  dependency — numpy/pandas/scipy only). The stored object is the <em>evidence</em> — a
+  per-cell, per-label p-value matrix — and <code>alpha</code> is a read-time parameter:
+  <code>prediction_set(alpha)</code>, <code>set_sizes</code>, <code>to_labelset</code> (singletons keep their
+  label, ambiguity and no-fit both abstain), <code>coverage</code> (the per-class
+  self-check), and <code>frame()</code> all derive from it. Classes with too few
+  calibration cells to back a requested <code>alpha</code> are named in a warning instead
+  of silently borrowing a threshold; sigmoid-calibrated probabilities ride along
+  as a separate, certificate-free object. Deterministic under the derived table
+  seed, params recorded. The docstrings are explicit that an empty set is not
+  novelty detection and that the guarantee assumes exchangeability — which is
+  why <code>assign</code> warns when its columns' validity domains don't cover the target.</p>
+</li>
+<li><strong>Added shift-aware coverage, two ways, benchmarked.</strong> <code>ft.assign(...,
+  shift_covariates=["completeness"])</code> computes weighted conformal p-values
+  (Tibshirani et al. 2019; in-library, keeps the read-time-alpha evidence
+  matrix), and <code>conditional_prediction_set</code> adapts MAPIE's
+  Gibbs–Cherian–Candès conditional conformal (new <code>conditional</code> extra:
+  <code>mapie</code> + <code>cvxpy</code> — deliberately <em>not</em> MAPIE's own extra, which drags torch).
+  On the truncation-shift benchmark (features drift with completeness, core
+  curated from complete cells; nominal 90%): vanilla conformal covers the
+  truncated tier at <strong>26%</strong> — undercoverage by silent empty sets; weighted
+  restores <strong>100%</strong> by conceding both labels there (mean set size 2.0);
+  conditional restores <strong>88%</strong> at mean set size <strong>0.91</strong> — near-nominal
+  coverage while staying discriminative, at ~1s per thousand cells and a
+  construction-time alpha. Both live behind adapters pending the
+  overcomplete-then-prune review.</li>
+</ul>
+<h2 id="unreleased-the-anndata-bridge-the-boundary-report-and-gradients">Unreleased — the AnnData bridge, the boundary report, and gradients</h2>
+<p>The verification pass before this phase set the policy: own the bookkeeping and the
+consensus-derived statistics, import every algorithm with a maintained home, and
+bridge to foreign data models rather than depending on them.</p>
+<ul>
+<li><strong>Added <code>cellpax.interop</code></strong>: <code>ft.to_anndata()</code> / <code>FeatureTable.from_anndata()</code>
+  bridge the scanpy/scvi ecosystem instead of re-implementing it. Masks travel as
+  <code>mask_*</code> obs columns, embeddings as id-aligned <code>obsm["X_*"]</code>, feature metadata as
+  <code>var</code>, and provenance (mask, scaled, transforms, validity domains, seed) under
+  <code>uns["cellpax"]</code>, so a cellpax export round-trips and a foreign AnnData imports.
+  <code>anndata</code> is a new optional extra, imported lazily.</li>
+<li><strong>Added <code>boundary_report</code></strong> (module function and <code>ft.boundary_report</code>): per
+  cluster pair, four independent reads on whether the boundary is a <em>gap</em> or a
+  <em>cut through one thing</em> — Hartigan's dip on the centroid axis (via the new
+  <code>diptest</code> dependency), kNN cross-edge connectivity against the configuration
+  null (the PAGA statistic, implemented in-library), saddle-to-peak density along
+  the boundary (in-library kNN proxy, or dadapy's PAk estimator via
+  <code>density="pak"</code>), and the consensus co-clustering profile (cross mean + the
+  intermediate-frequency band — the ensemble's own read, available nowhere else).
+  Per-leg votes and a majority <code>verdict</code> (<code>discrete</code> / <code>continuous</code> /
+  <code>ambiguous</code>); the columns are the result, the verdict is a summary. The table
+  wrapper rebuilds the space the clustering was computed in from its recorded
+  parameters. This is the replacement for what CHOIR pretended to answer:
+  separability certifies every cut, so the report measures the boundary instead.</li>
+<li><strong>Added <code>ft.parametrize</code> → <code>Gradient</code></strong> — the follow-through on a <code>continuous</code>
+  verdict: a Hastie–Stuetzle principal curve (in-library; the Python ecosystem has
+  no maintained implementation) yields per-cell arc length in <code>[0, 1]</code> with
+  feature loadings, <code>ft.attach</code> support, and <code>bin()</code> back to named labels as
+  <em>declared interval cuts</em> of a persisted coordinate rather than pretended modes.
+  Two guards run inside the fit: an intrinsic-dimension gate (decimated TwoNN —
+  a structure that isn't a curve warns before being compressed into one) and a
+  nuisance tripwire (a coordinate that tracks a completeness metric warns before
+  the artifact acquires a biological name).</li>
+<li><strong>Added <code>information_imbalance</code> and <code>feature_relevance</code></strong> (Glielmo et al., PNAS
+  Nexus 2022; plain rank-based numpy, no jax — dadapy's DiffImbalance is the
+  learned-weights upgrade): does one coordinate space predict another's
+  neighbourhoods, and which features carry the full space's structure, in
+  single-feature and drop-one modes. Notes document the sharp edge the tests
+  pinned: after z-scoring, a binary cluster-separating feature carries <em>less</em>
+  neighbourhood information than a continuous coordinate — "separates my
+  clusters" and "carries neighbourhood information" are different claims.</li>
+<li><strong>Added the <code>dadapy</code> optional extra</strong>, pinned to a commit: the 0.3.4 PyPI wheel
+  still declares <code>numpy&lt;2.0</code> and an exact jax pin, while the repo has since
+  unpinned both — the extra moves to <code>dadapy&gt;=0.3.5</code> when a fixed release exists.</li>
+<li><code>diptest</code> becomes a core dependency (small, C-backed, maintained).</li>
+</ul>
+<h2 id="unreleased-validity-domains">Unreleased — validity domains</h2>
+<p>A feature can be measurable for a cell and still be uninformative about it — a
+truncated reconstruction yields an axon length that says nothing about type. That
+distinction cannot be recovered from the values, so the library now lets you declare
+it, and the declaration has teeth.</p>
+<ul>
+<li><strong>Added <code>ft.set_validity(columns=…, where=&lt;mask&gt;)</code></strong> (and <code>valid_where=</code> on
+  <code>define_features</code>): a feature's <em>validity domain</em> is a named mask — the cells it is
+  informative for. Domains persist with the analysis, compose with <code>based_on</code>, and a
+  mask backing a domain can't be dropped while it does. Read side:
+  <code>ft.validity_domains</code>, <code>ft.validity()</code> (the per-cell-per-feature boolean matrix),
+  <code>ft.fully_valid()</code> (a collection's per-cell coverage), and <code>ft.validity_patterns()</code>
+  (the distinct patterns and their sizes — truncation is positional, so expect a
+  handful).</li>
+<li><strong>Added <code>ladder=</code> to <code>propagate_labels</code></strong>: an ordered list of collections, richest
+  first; each cell is labeled with the first one whose columns are all valid <em>for it</em>.
+  Each rung runs as its own propagation (own scaler, own PCA, only participating
+  cells), so invalid values never contaminate a fit; a cell no rung covers stays
+  unassigned. The result records which rung labeled each cell (<code>result.rungs</code>, a
+  <code>{name}_rung</code> frame column) and per-rung recovery (<code>result.rung_recovery</code>) — the
+  per-rung answer to "what can this feature set still carry?". Confidence is
+  comparable within a rung, not across rungs.</li>
+<li><strong>Propagating on columns whose domain doesn't cover the target now warns</strong> — the
+  gap the audit found every safeguard silent on. <code>on_invalid="raise"</code> escalates,
+  <code>"ignore"</code> accepts.</li>
+<li><strong>Added <code>covariate_sensitivity</code></strong> (per-feature Spearman against a completeness
+  metric — the features measuring truncation rather than biology) and
+  <strong><code>stratum_shift</code></strong> (per-feature KS + <code>median_shift_iqr</code> across dataset strata —
+  the features measuring the acquisition rather than the cells). These are the
+  diagnostics that <em>build</em> validity domains instead of guessing them; the same
+  abstraction covers per-cell truncation and per-dataset portability.</li>
+<li><strong>Added <code>ft.score_cells</code></strong>: fit any per-sample-scoring estimator (sklearn's
+  detectors directly; <code>IsolationForest</code> seeded from the table by default) on a mask's
+  scaled features and store the scores as an ordinary metadata column. Scores, never
+  filters. Full-vs-safe-collection score comparison doubles as a truncation
+  diagnostic.</li>
+</ul>
+<h2 id="unreleased-deterministic-by-default-honest-bookkeeping-choir-removed">Unreleased — deterministic by default, honest bookkeeping, CHOIR removed</h2>
+<p>An audit pass: reproducibility becomes the default rather than an intention, a set of
+silently-wrong-number bugs are fixed, and CHOIR is deleted.</p>
+<p><strong>Removed: CHOIR</strong> (<code>cellpax.choir</code>, <code>ft.cluster_choir</code>, <code>choir_labels</code>). Its
+random-forest test certifies <em>separability</em>, and in morphological feature data
+separability is everywhere — a continuum sliced anywhere is stably distinguishable at
+its ends, so the test kept essentially every split and lent statistical authority to
+arbitrary cuts. A tool whose failure mode is false confidence is worth deleting rather
+than fixing. <code>ft.overcluster</code> stays (it never depended on CHOIR); the hierarchy
+machinery (<code>merge_support</code>, <code>nested_labels</code>) remains the way to reason about splits
+until the planned boundary report lands.</p>
+<p><strong>Added: deterministic-by-default seeds.</strong> <code>FeatureTable(seed=)</code> (default 0) is the
+root every stochastic verb derives from: <code>cluster</code>/<code>embed</code>/<code>overcluster</code> with
+<code>seed=None</code> now derive a stable per-call seed from the table seed and the call's
+identity (verb, mask, name) — the same call reproduces exactly, different names get
+different streams, an explicit <code>seed=</code> overrides. Derivation deliberately ignores the
+feature list, so comparing two feature sets under one run name holds the seed fixed.
+One consequence: <code>embed(method="umap")</code> now always passes a <code>random_state</code>, which
+single-threads UMAP — call the backend directly and <code>add_embedding</code> the coordinates if
+you want unseeded parallel layout.</p>
+<p><strong>Added: recorded provenance.</strong> <code>Clustering.params</code> records the full producing call
+(seed included) — replaying it reproduces the ensemble bit for bit — and persists in
+the manifest, as do embedding parameterizations and the table seed. <code>restrict(...)</code>
+records its filters on top of the parent's params. A reproducibility test now pins
+same-seed ⇒ same-consensus across <code>n_jobs</code>.</p>
+<p><strong>Fixed (silently wrong numbers):</strong></p>
+<ul>
+<li>The per-feature <code>log</code> shift was computed from whatever batch was being transformed,
+  not from the fit — the same raw value landed at different transformed values per
+  batch, breaking <code>project</code>'s core promise. Shifts are now fitted parameters
+  (persisted with frozen spaces); out-of-domain values raise instead of going NaN.</li>
+<li><code>add_column</code> could silently overwrite a feature or the id column and invalidated
+  nothing, so cached scalers served numbers from data that no longer existed. It now
+  refuses (features need <code>overwrite=True</code>, which drops the affected fits; the id
+  column always refuses in favor of <code>set_id_column</code>).</li>
+<li>Stored embeddings and clusterings were never invalidated: after <code>preprocess()</code> or a
+  mask redefinition they were served as current despite being computed in a scaled
+  space that no longer existed. Both are now dropped with a warning naming what was
+  dropped (external embeddings, which never depended on scaling, stay).</li>
+<li>Consensus normalization divided by <code>min(|A_i|, |A_j|)</code> instead of the documented
+  <code>|A_i ∩ A_j|</code>, biasing similarity low for pairs of cells dropped in <em>different</em> runs.</li>
+<li><code>subsample_stability</code> scored a draw that discarded an entire cluster as ARI 1.0 /
+  retention 1.0 — an optimistic bias, since subsampling systematically pushes small
+  clusters below <code>min_cluster_size</code>. Draw-unassigned cells now count against retention
+  and <code>Stability</code> reports per-draw assigned fractions.</li>
+<li>Saving two spaces on one mask over different feature subsets silently kept only one
+  (<code>_space_slug</code> omitted the columns); slugs now digest the column set, and the
+  <code>1</code>-component vs <code>1.0</code>-variance distinction is kept in both the cache key and
+  the manifest.</li>
+<li>Clustering <code>cell_ids</code> were re-derived from the <em>current</em> mask on load, so a
+  same-size mask redefinition between <code>cluster()</code> and <code>save()</code> silently re-paired
+  matrix rows with different cells. The ids are now stored with the clustering.</li>
+<li>Sentinel codes below <code>-1</code> wrapped around one-hot indexing in propagation,
+  corrupting votes and confidence; <code>LabelSet</code> and <code>propagate_*</code> now reject them.</li>
+<li><code>propagate_spread</code> pruned zero-distance edges, so exact-duplicate cells were
+  disconnected and abstained; duplicates now inherit their twin's label.</li>
+<li><code>cluster_labels</code> (and therefore <code>nested_labels</code>) returned scipy's 1-based codes
+  while <code>label()</code> returned 0-based — the same cut now yields <code>0..k-1</code> everywhere.</li>
+<li><code>restrict()</code> silently forced <code>normalize=True</code>; it now preserves the parent's
+  normalization, so thresholds chosen on the parent still mean the same thing.</li>
+<li><code>label_purity</code> reported the unassigned pile as the worst "cluster", burying the real
+  red flags; it is excluded and counted in an <code>n_unassigned</code> column instead.</li>
+<li><code>neighborhood_self_predictions</code> (and everything routed through it: purity, triage)
+  used the self-exclusion strategy the same module documents as unsafe with duplicate
+  rows; it now shares the safe positional exclusion.</li>
+<li><code>graph_knn_recovery</code> counted unreachable vertices as <em>wrong</em> rather than abstained.</li>
+<li><code>embed(method="pca", **kwargs)</code> silently dropped the kwargs; <code>space(1)</code> and
+  <code>space(1.0)</code> returned the same cached object; <code>preprocess(skew_screen=False,
+  method=…)</code> discarded the method and wiped every transform (it now applies the method
+  to all selected features, and <code>method=None</code> is the explicit way to clear);
+  <code>agreement_folds=0</code> was unreachable through <code>propagate_labels</code>; NaNs silently
+  zeroed <code>tie_report</code> extremes and blanked <code>clip_comparison</code> rows;
+  <code>reorder_by(ascending=False)</code> put value-less clusters first; <code>compact()</code> after
+  <code>subset()</code> discarded empty clusters' colors; <code>merge(into=)</code> could create the
+  duplicate name <code>_resolve</code> later raises on; <code>Comparison.contingency()</code> merged
+  same-named clusters (now keyed on ids); <code>compare_many</code> raised a bare <code>KeyError</code> on
+  unknown metrics; non-integer cell ids broke <code>neighborhood_purity</code>/<code>triage_labels</code>;
+  <code>n_components_for(1.0)</code> reported one more component than exists; a <code>similarity=False</code>
+  sparse matrix raised <code>NotImplementedError</code>; the manifest version was written but
+  never checked on load (an unknown version now refuses instead of misreading);
+  linkage method typos are rejected at construction instead of surfacing as a
+  nesting-violation raise; mask names may no longer contain <code>/</code> (it corrupted saved
+  item paths).</li>
+</ul>
+<p><strong>Added (smaller):</strong></p>
+<ul>
+<li><code>Clustering.soft_labels(labels_or_threshold)</code> — each cell's mean co-clustering
+  frequency with every cluster's members, the ensemble-derived soft assignment behind
+  a hard cut. Free, since the consensus matrix already holds it.</li>
+<li><code>ft.attach(propagation)</code> — attaching a <code>Propagation</code> directly writes
+  <code>{name}_confidence</code> alongside the label columns instead of dropping the confidence
+  on the floor; <code>detach</code> removes it with the pair.</li>
+<li><code>confidence_curve(truth, predicted, confidence)</code> — the kept-fraction vs error-rate
+  curve the guide's <code>min_confidence</code> calibration recipe computed by hand.</li>
+<li><code>ft.cluster(metric=…)</code> — non-Euclidean neighbour metrics were already supported by
+  the graph layer but unreachable from the table API.</li>
+<li><code>agreement()</code> now reports coverage (<code>n_a_assigned</code>, <code>n_b_assigned</code>, <code>coverage</code>), so
+  a labelling of 10% of cells no longer scores identically to one of 100%.</li>
+<li><code>set_id_column</code> re-keys stored embeddings and clusterings instead of leaving them
+  on the old ids; string cell ids work throughout the label-alignment paths.</li>
+<li><code>linkage</code> warns with a size estimate before allocating the dense condensed matrix
+  (~1.6 GB at 20k cells); <code>hierarchy()</code> no longer computes its cuts three times.</li>
+<li>Docstrings claiming partitions are session-only (they persist since manifest v2) and
+  the phantom <code>clus.axis_stability</code> method reference are fixed.</li>
+</ul>
+<h2 id="unreleased-swept-representation-graph-and-hierarchy">Unreleased — swept representation, graph, and hierarchy</h2>
+<p>The three upstream choices the pipeline used to make silently — how PCs are weighted, how
+the neighbour graph is built, and where the dendrogram is cut — become swept parameters
+with diagnostics, each defaulting to the previous behaviour so the change is inspectable.
+Plus two fixes that had made a saved analysis unloadable.</p>
+<p><strong>Fixed:</strong> <code>embed(method="pacmap"/"localmap")</code> and <code>project(embedding=…)</code> could hang
+forever, at 0% CPU and immune to <code>KeyboardInterrupt</code>. Both reach faiss, and faiss's wheel
+vendors a private <code>libomp</code>; sklearn's vendors a second; xgboost's macOS wheel links
+<code>@rpath</code> against Homebrew's. A process that has imported all three holds three OpenMP
+runtimes, and a parallel region opened in one can block on a barrier owned by another —
+master and worker pool never find each other. Observed in both directions: faiss's
+<code>IndexHNSW::add</code> from <code>embed</code>, and xgboost's <code>QuantileDMatrix</code> construction from unrelated
+SHAP code in the same kernel. <code>Ctrl-C</code> cannot clear it, because the main thread is parked
+in native code and never returns to the interpreter to notice the signal. Both call sites
+now pin faiss to one OpenMP thread and restore the previous count afterwards, which
+removes the barrier entirely; the cost is unmeasurable at these sizes (30k × 80 embeds in
+~5s either way). Restoring matters because pacmap sets the same knob itself whenever it is
+given a <code>random_state</code> and never puts it back, silently single-threading faiss for the
+rest of the session. This guard covers cellpax's own faiss use only — a session that also
+wants sklearn and xgboost protected should set <code>OMP_NUM_THREADS=1</code> before importing
+anything.</p>
+<p><strong>Fixed:</strong> a saved analysis could fail to load. <code>save_feature_table</code> wrote each consensus
+matrix as a COO triplet frame, whose size grows with the number of nonzero <em>cell pairs</em> —
+about 600 MB at 21k cells, above DataFolio's eager-load limit, so <code>load_feature_table</code>
+raised on a folio it had just written. Clusterings now persist as the runs behind them
+(<code>&lt;name&gt;/partitions/&lt;c&gt;</code> int32 plus <code>&lt;name&gt;/settings/&lt;c&gt;</code>), with the matrix derived on
+load: strictly more informative and roughly an order of magnitude smaller, growing as
+<code>n × n_runs</code> rather than <code>n²</code>. Manifest version 2; version 1 triplet clusterings still
+load, and come back without partitions exactly as before.</p>
+<p><strong>Fixed:</strong> <code>Clustering.restrict</code> was dead after a reload, because <code>Partitions</code> were
+session-only — so the expensive part of clustering was unrecoverable and the grain could
+not be revisited. The runs now persist, which also brings back <code>merge_support</code> and
+<code>axis_stability</code> on a reloaded clustering.</p>
+<p><strong>Fixed:</strong> a custom <code>scaler_factory</code> round-tripped as <code>"standard"</code>. <code>_scaler_tag</code> recorded
+anything it did not recognise as <code>"custom"</code>, which the loader then resolved to plain
+standardisation — silently changing every scaled value and therefore every downstream
+distance. <code>clipped_scaler_factory(...)</code> now carries its configuration so the actual
+percentiles or <code>n_sigma</code> persist, and a genuinely unrecognisable factory raises at save
+time instead. Failing the save is recoverable; silently changing the preprocessing is not.</p>
+<ul>
+<li>Added <code>ft.flatten_labels</code>, which collapses labels built over a diverse collection of
+  masks into one. Each cell takes its label from the first entry in the list that
+  assigned it, so listing them most-specific-first lets coarse labels fill the holes
+  the fine ones left — the way out of the recursive descent, where every round leaves
+  its own column and nothing put the leaves back together. Cluster identities merge by
+  name, so colors and descriptions come along rather than being rebuilt by hand. <code>mask</code>
+  scopes the result, <code>fill</code> names the leftovers, and <code>source_name</code> returns a second
+  <code>LabelSet</code> recording which entry won each cell.</li>
+<li><strong>Changed:</strong> <code>LabelSet.combine</code> is now n-ary and takes <code>mode</code>. The default,
+  <code>mode="disjoint"</code>, is what it always did — cell sets must not overlap, ids are offset,
+  same-named clusters stay distinct — so existing calls are unaffected. <code>mode="priority"</code>
+  is the new contract <code>flatten_labels</code> is built on: overlaps are expected, the earlier
+  set wins, a set that covers a cell without assigning it falls through, and clusters
+  are matched by name so <code>"L5IT"</code> from two sets becomes one cluster keeping the first's
+  color. Rather than a second way to union labels, since one overloaded <code>combine_labels</code>
+  is what <code>LabelSet</code> was built to replace.</li>
+<li>Added <code>LabelSet.reindex</code>, the lenient counterpart of <code>subset</code>: a new label set over
+  exactly the cells you ask for, whether this one covers them or not. <code>subset</code> raises on
+  an unknown cell because silently dropping a train/test split is worse than stopping;
+  here the missing cells are the point, coming back unassigned or in the cluster named
+  <code>fill</code>. This is how a label set computed on one population is widened to a whole mask.</li>
+<li>Added <code>LabelSet.to_series</code>, the one-column form of <code>to_frame</code> for when the rows are
+  already lined up and only the names are wanted.</li>
+<li>Added <code>FittedSpace</code> (<code>cellpax.space</code>), the missing third frozen fit alongside
+  <code>FittedScaler</code> and <code>FittedEmbedding</code>. <code>features_pca</code> used to refit PCA on every call and
+  throw it away, so the space a clustering was computed in could neither be reapplied to
+  new cells nor persisted, and a sweep over a downstream parameter refit the space
+  underneath itself. <code>ft.space(...)</code> returns it, <code>ft.features_pca</code> projects through it, and
+  it persists as explicit parameter arrays rather than a pickled estimator — the point of
+  freezing a space being to reapply it <em>unchanged</em> to a future dataset, which a pickle ties
+  to a library version.</li>
+<li>Added <code>alpha</code> to <code>ft.cluster</code> / <code>ft.features_pca</code>: partial whitening, scaling component
+  <em>j</em> by <code>λ_j ** (-alpha/2)</code>. <code>0.0</code> is the default and reproduces the previous behaviour;
+  <code>1.0</code> equalises the retained components. Truncating PCA is a rotation plus a truncation
+  and not a reweighting, so a block of features measuring one thing several ways still
+  dominates Euclidean distance exactly as much as the raw block did — which with dozens of
+  engineered features does not average out. <strong><code>alpha</code> is deliberately not part of the space
+  cache key</strong>: it is applied as a view over one fit, so a sweep across whitening strengths
+  is structurally incapable of refitting the space, rather than merely intended not to.</li>
+<li>Added <code>eigenvalue_floor</code>, and read it before using <code>alpha=1</code>. Whitening amplifies the
+  <em>smallest retained</em> component most, so a truncation chosen by cumulative variance becomes
+  a discontinuity — the last kept component gets full weight and the first dropped one gets
+  none. <code>ft.space(mask).noise_floor</code> (the median discarded eigenvalue) bounds that. A
+  near-degenerate retained direction now raises rather than being inflated into the metric
+  by a factor of round-off.</li>
+<li>Added <code>FittedSpace.spectrum()</code>: the full eigenvalue spectrum with, per component, excess
+  kurtosis and a tail-cell count. Fitting <em>all</em> components and treating the truncation as a
+  view is what makes this free. A discarded component with high excess kurtosis is not
+  noise — it is a small group separating along a low-variance direction, which a
+  cumulative-variance cut discards <em>because</em> few cells are involved.</li>
+<li>Added <code>SigmaClipper</code> and <code>mode="sigma"</code> on <code>make_clipped_scaler</code> /
+  <code>clipped_scaler_factory</code>, clipping at <code>±n_sigma</code> in <code>RobustScaler</code> (IQR) units.
+  <code>mode="percentile"</code> remains the default. The percentile rule defines its bound by rank,
+  which costs twice: at a few hundred cells the 99.9th percentile has a breakdown point
+  below one cell, so <code>np.percentile</code> interpolates between the top two observations and <em>the
+  outlier partly sets the bound meant to clip it</em> — one cell at 40 robust units yields a
+  bound near 15, the same cell at 400 yields one near 165, so the more extreme the cell the
+  weaker its own clipping. And <code>f × n</code> cells are clipped however clean the data is, which
+  pulls a rare-and-extreme population toward the bulk by construction. The sigma rule has
+  neither property, and has no fitted parameters at all, so a frozen transform carries no
+  clip bounds for a future dataset to shift. Note <code>n_sigma</code> is in <strong>IQR units, not standard
+  deviations</strong> — IQR ≈ 1.349σ, so <code>5.0</code> is about ±6.7 Gaussian σ.</li>
+<li>Added <code>graph_type</code> as a third consensus axis on <code>kneighbor_graph</code>,
+  <code>fauxnograph_coclustering</code> and <code>ft.cluster</code>: <code>"knn"</code> (the default, unchanged and pinned
+  byte-for-byte), <code>"knn_distance"</code>, <code>"snn_jaccard"</code>, and <code>"umap_fuzzy"</code>. The three
+  weightings have known and different failure modes — the fuzzy set subtracts each cell's
+  distance to its nearest neighbour so nothing is ever fully disconnected, while Jaccard
+  offers no such guarantee and can strand cells in sparse regions — so the choice is worth
+  marginalising over rather than defending. <code>umap_fuzzy</code> is implemented in-library rather
+  than imported from <code>umap-learn</code>, which keeps the dependency optional and makes the Leiden
+  graph a separate object from any UMAP <em>embedding</em>'s graph by construction, so comparing
+  feature-space with embedding-space neighbourhoods cannot become circular.</li>
+<li><strong>Changed:</strong> <code>cluster_leiden</code> now passes edge weights when the graph carries them.
+  Ignoring them would quietly turn every weighting back into an unweighted graph.
+  <code>graph_type="knn"</code> carries none, so its behaviour is unchanged.</li>
+<li><strong>Changed:</strong> <code>Partitions</code> gained <code>graph_type</code> (defaulting to <code>"knn"</code>, so older runs and
+  reloads still describe themselves) and its <code>filter</code> gained <code>graph_type=</code>,
+  <code>n_clusters_min=</code> and <code>n_clusters_max=</code>; <code>Clustering.restrict</code> forwards all three. The
+  cluster-count filters exist because <strong>resolution is not comparable across graph types</strong> —
+  fuzzy weights, Jaccard values in <code>[0, 1]</code> and unit weights put RBConfiguration's null on
+  three different scales, so one geomspaced grid samples very different granularities per
+  type and pooling raw lets whichever type landed mid-range dominate the consensus.
+  Selecting on realised grain costs nothing, since the runs already exist.</li>
+<li>Added <code>axis_stability</code>, reporting per-graph-type (or per-<code>n_neighbors</code>, or
+  per-resolution) ARI against the pooled consensus. Marginalising over a choice is only
+  honest if the contributions are comparable; a weighting that systematically disagrees is
+  evidence about that weighting, not noise to dilute.</li>
+<li>Added <code>ft.graph_provenance()</code>, one row per clustering and embedding with its mask, space,
+  graph type and neighbourhood size — and a warning when a clustering and an embedding on
+  the same mask share both. Checking embedding-space neighbourhoods against feature-space
+  neighbourhoods is a real diagnostic only while the two are built separately; build them
+  from one graph and the comparison becomes a tautology that still produces agreeable
+  numbers.</li>
+<li>Added <code>Clustering.hierarchy()</code> → <code>ConsensusHierarchy</code>, with <code>merge_table()</code>,
+  <code>nested_labels</code> / <code>nested_levels</code>, <code>cell_stability</code>, and <code>dendrogram_frame()</code>. The
+  resolution sweep is geomspaced because structure exists at more than one scale, and a
+  single <code>fcluster</code> cut discards that — in practice producing a hand-tuned
+  <code>distance_threshold</code> per cohort. Worth knowing where the merge annotation comes from:
+  distance <em>is</em> <code>max_value - similarity</code>, so under average linkage
+  <code>coclustering_frequency</code> is exactly <code>max_value - height</code>, not a separate measurement.
+  Likewise per-cell stability is the existing <code>consensus_strength()</code>, now also reachable as
+  <code>cell_stability()</code> and <code>cell_stability_frame()</code>.</li>
+<li>Added <code>Clustering.merge_support()</code>, which is the genuinely new part: per merge, the
+  fraction of runs <em>per resolution band</em> that kept the two groups together. A merge holding
+  across coarse and fine runs alike is a type; one appearing only in the runs fine enough
+  to create it is a subtype. Both of its caps (<code>max_merges</code>, <code>max_block</code>) are logged rather
+  than silent, since a bounded diagnostic that does not say what it bounded reads as
+  complete.</li>
+<li><strong>Changed:</strong> <code>nested_labels</code> asserts nesting rather than assuming it. Average, complete
+  and single linkage are monotone, so cuts at decreasing thresholds <em>are</em> nested and a
+  violation means the linkage method is wrong — that raises. Above <code>min_cluster_size=1</code> it
+  cannot hold strictly, since a cell in a cluster too small to keep is <code>-1</code> at that level
+  and assigned at others, so the check runs over cells assigned in both and any residual
+  warns with a count. A cut where <code>min_cluster_size</code> dropped <em>every</em> cluster is skipped
+  instead of emitted, since an all-unassigned column reads as a granularity.</li>
+<li>Added <code>neighbor_label_composition</code> and <code>ft.triage_labels</code>, classifying each cell by what
+  its feature-space neighbours are labelled: <code>own</code> (the embedding misplaced it), <code>other</code>
+  (the label is wrong or it is a real outlier), or <code>mixed</code> (the consensus was ambiguous —
+  cross-check <code>cell_stability</code>). Turns "some dots scattered here and there" into three
+  countable groups.</li>
+<li>Added <code>cellpax.diagnostics</code>: <code>feature_correlation</code> (returning a <code>SortedMatrix</code>, so the
+  existing imshow recipe applies and redundant blocks are contiguous), <code>tie_report</code>,
+  <code>duplicate_rows</code>, and <code>clip_comparison</code>. Expect <code>duplicate_rows</code> to find nothing across a
+  few dozen continuous morphometrics — that answer is worth pinning rather than assuming,
+  and it changes on a small subset of discrete features. <code>clip_comparison</code> is the one to
+  read: it says how many cells each clipping rule takes at <em>this</em> cohort's size.</li>
+<li>Added <code>cellpax.validate</code>. <code>subsample_stability</code> is the primary criterion — cluster
+  repeated subsamples under a frozen representation and measure agreement with the
+  full-data labels — because it needs no ground truth and measures the property actually
+  wanted. It takes coordinates rather than a table precisely so the representation cannot
+  be refit inside a draw, which would confound preprocessing stability with clustering
+  stability. <code>loo_knn_recovery</code> (built on the existing <code>propagate_knn</code>, so the
+  leave-one-out vote is not reimplemented), <code>graph_knn_recovery</code>, and <code>paired_recovery</code>
+  cover external-label recovery, reported as paired differences with an exact McNemar test
+  — absolute recovery is often not well defined, and the paired test is what keeps a
+  difference of a handful of cells from reading as a result. <code>label_purity</code> is the tripwire.
+  Design weights are supported and documented with their catch: a design that oversamples
+  the cells where two classifiers disagree gives those cells <em>small</em> weights, so the
+  population estimate is dominated by the easy stratum; <code>RecoveryScore.by_stratum()</code> is the
+  informative view when that happens.</li>
+<li><strong>Changed:</strong> <code>ft.overcluster</code> and <code>ft.cluster_choir</code> take an explicit <code>space=</code>. They run
+  on raw scaled features while <code>ft.cluster</code> reduces to <code>pca(0.95)</code>, which used to be an
+  undocumented asymmetry; passing <code>ft.space(mask)</code> puts them in the clustering space
+  instead. Named <code>space=</code> rather than <code>alpha=</code> because <code>cluster_choir.alpha</code> is already
+  CHOIR's significance level. <code>ft.embed</code> takes <code>space=</code> for the same reason, so a whitened
+  UMAP is available under its own name without displacing the separately-built default.</li>
+<li>Added <code>feature_weights</code> to <code>FittedSpace</code> and <code>ft.space(...)</code>, plus
+  <code>block_weights</code> — per-feature multipliers applied before the PCA, so a block of eleven
+  columns measuring one thing counts once rather than eleven times. This is the
+  better-targeted instrument for the redundancy that motivated <code>alpha</code>: whitening flattens
+  the whole spectrum and pays for it by amplifying low-variance components, whose
+  <em>directions</em> a finite sample barely determines, whereas weighting acts on the features
+  and never touches those directions. Default <code>method="mfa"</code> divides each block by the
+  scale of its own leading direction (Escofier &amp; Pagès), an adaptive <code>1/√k</code> that leaves a
+  loosely correlated block nearly alone. The weights live <em>inside</em> the space — applied by
+  <code>transform</code>, carried through <code>to_records</code>, reflected in <code>label</code> — because weights applied
+  outside it are invisible to <code>embed(space=…)</code> and <code>project</code>, which would then silently
+  build a different space with matching shapes and no error.</li>
+<li>Added <code>ft.add_embedding(coords, mask, name=…, space=…)</code>, registering coordinates
+  computed elsewhere so <code>embedding_view</code>, <code>dataframe(embedding=…)</code> and persistence treat
+  them like any other embedding. Beyond backends <code>embed</code> doesn't wrap, <strong>soma position
+  makes a perfectly good embedding</strong> — registering it that way lets an anatomical plot
+  reuse the same labels, joins and colour maps as a UMAP. Accepts an array in mask row
+  order or a frame matched on the id column, and validates coverage at add time rather than
+  letting a mismatch surface later as silently dropped cells. The <code>space</code> label persists,
+  unlike a fitted model, since it is provenance the caller supplied and nothing else
+  records it.</li>
+<li><strong>Fixed:</strong> the diagnostics functions silently accepted a collection <em>name</em>. They take a
+  feature matrix rather than a <code>FeatureTable</code>, so they cannot resolve <code>"analysis"</code> — and
+  <code>list("analysis")</code> becomes eight one-character "names", which the width check catches
+  only when the widths happen to differ. Now a <code>TypeError</code> naming the mistake.</li>
+<li><strong>Fixed:</strong> the space cache key used <code>hash()</code> on the weight bytes, which is salted per
+  process, so a reloaded weighted space would never match a fresh request for the same
+  weights. Uses a stable digest instead.</li>
+<li>Added <code>ft.embedding_view(...)</code> returning an <code>EmbeddingView</code> — the tidy frame <em>and</em> the
+  coordinate column names inside it. Coordinate columns are prefixed with the embedding's
+  name because they share a flat namespace with the metadata in <code>dataframe()</code>, so
+  reconstructing them by hand meant writing that name three times in one call: twice as a
+  string prefix and once as <code>embedding=</code>. Now once. <code>xy</code> splats into any call taking
+  <code>x=</code>/<code>y=</code>, and <code>v.frame.filter(pl.col(v.x) &gt; 10)</code> covers the sites that use coordinates
+  as predicates rather than as axes. <code>name</code> is optional when a mask holds exactly one
+  embedding and raises listing the candidates otherwise, so a defaulted name is never a
+  silent guess.</li>
+</ul>
+<p>Dimensionality is described rather than assumed: <code>coords</code>, <code>v[i]</code> and <code>n_components</code>
+  cover however many components exist, <code>xy</code> names its own two-dimensionality, and
+  <code>pair(i, j)</code> makes any other projection a stated choice — <code>embed(n_components=3)</code> already
+  worked and was silently plotted as its first two axes. <code>x</code>/<code>y</code> are aliases for <code>v[0]</code>/
+  <code>v[1]</code>, so a one-component embedding raises on <code>y</code> naming the count rather than
+  returning something misleading. The names come from the stored coordinate frame rather
+  than being rebuilt as <code>f"{name}{i}"</code>, which is what makes the view survive a reload:
+  coordinates persist, fitted models do not.
+- Added the <code>ft.embeddings</code> property, listing stored <code>(mask, name)</code> pairs. <code>masks</code>,
+  <code>collections</code> and <code>transforms</code> were already properties, and its absence mattered because
+  <code>embed</code> derives a name when one is not given — so that name previously had to be guessed
+  from how <code>embed</code> built it before anything could read the coordinates back.
+- <strong>Fixed:</strong> <code>graph_provenance()</code> reported no embeddings at all on a reloaded table. It
+  iterated the fitted models, which are session-only, rather than the coordinate frames,
+  which persist — the same root cause as the ergonomics problem above. Embeddings now
+  always appear; <code>space</code>, <code>graph_type</code> and <code>n_columns</code> are null after a reload, since the
+  fit that knew them is gone and null is the honest answer.
+- Added <code>method="pacmap"</code> and <code>method="localmap"</code> to <code>ft.embed</code>, alongside the existing
+  <code>"pca"</code> and <code>"umap"</code>. PaCMAP (Wang et al., JMLR 2021) weights mid-near pairs against
+  neighbour and further pairs across three optimisation phases so that <em>global</em> layout
+  carries information — which is the one thing UMAP is worst at and, in practice, exactly
+  what these figures get read for. LocalMAP (AAAI 2025, shipped in pacmap ≥ 0.8) adjusts
+  the graph locally in the final stage for clearer boundaries; measured on well-separated
+  blobs it does <em>not</em> separate them more than PaCMAP, so its benefit is on ambiguous
+  boundaries rather than easy ones. Both accept <code>seed=</code> for exact reproducibility, which
+  matters more than it sounds: an embedding nobody can regenerate cannot be compared
+  against anything.
+- Added <code>[project.optional-dependencies]</code>, which did not exist — <code>umap-learn</code> was a lazy
+  import declared nowhere at all. Now <code>cellpax[umap]</code>, <code>cellpax[pacmap]</code> and
+  <code>cellpax[embeddings]</code>, with the ImportErrors naming the extra to install. Note <code>pacmap</code>
+  pulls <code>faiss-cpu</code> and <code>numba</code>, and numba constrains the numpy version, so it is a real
+  cost to a pinned environment rather than a free addition.
+- <strong>Changed:</strong> <code>FittedEmbedding</code> gained <code>internal_reduction</code>, and <code>graph_provenance()</code>
+  reports it. This exists because pacmap and localmap <strong>reduce their own input</strong>: with
+  <code>apply_pca=True</code> (their default) and more than 100 features they truncated-SVD to 100
+  before constructing pairs, so the space they built pairs in is not the space they were
+  handed. Reporting only the latter would have made the provenance table state something
+  untrue. Below 100 features the flag does nothing at all, so on an 81-column set it is not
+  a knob. Passing <code>space=</code> sets it <code>False</code> automatically, since reducing an
+  already-reduced-and-whitened space partly undoes the weighting — an explicit
+  <code>apply_pca=True</code> still wins.
+- pacmap and localmap are constructed with <code>save_tree=True</code> so <code>ft.project(...,
+  embedding=name)</code> works. Their <code>transform</code> otherwise raises, requiring the original
+  training matrix to be passed back as <code>basis=</code>, which <code>FittedEmbedding.transform</code> has no
+  way to supply. The cost is keeping the neighbour index in memory.
+- <strong>Documented:</strong> <code>umap-learn</code> does <strong>not</strong> reduce its input before the neighbour search —
+  the graph is built on whatever matrix it is handed, and PCA enters only as an optional
+  layout initialisation (<code>init="pca"</code>; the default is <code>"spectral"</code>). The impression that it
+  does comes from scanpy, where <code>sc.pp.neighbors</code> computes the graph in PCA space first. At
+  <code>alpha=0</code> the clustering and embedding spaces are metrically close anyway; at <code>alpha &gt; 0</code>
+  they diverge, so <strong>labels will look worse on an existing UMAP even when the clustering
+  improved.</strong> That divergence is exactly why the parameter choice has to be scored on
+  <code>cellpax.validate</code> rather than on the figure.
+- <strong>Fixed:</strong> <code>__version__</code> in <code>__init__.py</code> disagreed with <code>pyproject.toml</code>, which would
+  have made <code>poe bump</code> fail its version search under <code>ignore_missing_version = false</code>.</p>
+<h2 id="010-featuretable-redesign">0.1.0 — FeatureTable redesign</h2>
+<p>CellPax was rebuilt around a flexible, polars-native <code>FeatureTable</code> container as
+the successor to <code>dendritic_feature_clustering</code> (dfc), replacing the earlier
+immutable content-addressed <code>Study</code> design (preserved on the <code>master</code> baseline).</p>
+<ul>
+<li>Added the <code>FeatureTable</code> container: polars-native construction, named
+  hierarchical masks (<code>add_mask</code>, <code>based_on</code>), <code>add_column</code>, and a
+  <code>dataframe(mask, scaled=…)</code> view backed by lazy, single, per-mask scalers.</li>
+<li>Added composable <code>FeatureCollection</code>s (set algebra; <code>define_features</code> by
+  columns / family / modality / predicate over feature metadata).</li>
+<li>Added a unified <code>preprocess()</code> layer: heavy-tail (<code>ihs</code>) skew screening applied
+  before per-mask scaling, replacing dfc's dual skew paths.</li>
+<li>Ported the fauxnograph kNN/Leiden consensus library and <code>SimilarityMatrix</code>
+  (hierarchical linkage, cluster labels at a distance threshold, count curve);
+  wired <code>ft.cluster(...)</code>.</li>
+<li>Added <code>LabelSet</code> — clear named clusters with <code>rename</code> / <code>merge</code> / <code>reorder</code> /
+  <code>set_colors</code> / <code>combine</code>, <code>ft.label</code> / <code>ft.attach</code>, and <code>IntEnum</code> bindings
+  (<code>to_enum</code> / <code>apply_enum</code>) for number- and name-free filtering with autocomplete.</li>
+<li>Added <code>ft.embed</code> (PCA-native, UMAP optional) and <code>dataframe(embedding=…)</code>.</li>
+<li><strong>Changed:</strong> <code>ft.cluster</code> now returns a <code>Clustering</code> — a <code>SimilarityMatrix</code> that
+  also carries the <code>mask</code> it covers, that mask's <code>cell_ids</code> in row order, the
+  <code>columns</code> compared and the <code>space</code> (<code>'pca(0.95)'</code> / <code>'scaled'</code>). It cuts itself
+  into labels with <code>clus.label(distance_threshold=…)</code>, completing the chain
+  <code>ft.cluster</code> → <code>Clustering</code> → <code>LabelSet</code> → <code>ft.attach</code>. Because it subclasses
+  <code>SimilarityMatrix</code>, existing use (<code>linkage</code>, <code>cluster_labels</code>,
+  <code>cluster_count_curve</code>, <code>cluster_choir</code>, persistence) is unaffected, and
+  <code>ft.label(sim, mask=…)</code> still works for matrices built outside the table.
+  Clustering rows are matched to mask members positionally, so <code>ft.label</code> and
+  <code>ft.cluster_choir</code> now take the mask from a <code>Clustering</code> and raise on a
+  conflicting <code>mask=</code> instead of silently mislabeling. Provenance survives
+  <code>save</code>/<code>load</code>; analyses saved before it existed load as <code>mask="all"</code>, matching
+  what they previously assumed.</li>
+<li><strong>Changed:</strong> <code>ft.cluster</code> now reduces with PCA before building the kNN/Leiden
+  graph, <code>pca=0.95</code> by default (matching <code>propagate_labels</code>, so clusters and their
+  propagation share one space). This is the space phenograph-style clustering is
+  conventionally run in. Pass <code>pca=False</code> for the previous full-dimensional
+  behavior. Existing clusterings will shift and a pinned distance threshold may cut
+  differently — re-read <code>cluster_count_curve()</code>. Note the reduction is degenerate
+  when features are near-perfectly correlated (all separating groups the same way):
+  0.95 collapses to one component and Leiden over-splits along it, so check
+  <code>features_pca(...).shape[1]</code> and prefer <code>pca=False</code> there.</li>
+<li>Added projection of new cells into an existing space: <code>ft.project(data, mask,
+  embedding=…)</code> runs a mask's frozen transforms/scaler (and optionally its fitted
+  embedding) over rows that were never in the fit, plus the accessors behind it —
+  <code>ft.scaler(mask, columns=…)</code> → <code>FittedScaler</code> and <code>ft.embedding_model(mask,
+  name=…)</code> → <code>FittedEmbedding</code>. Embedding coordinates persist but their estimators
+  are session-only, and are dropped rather than left stale when a mask or the
+  preprocessing changes.</li>
+<li>Added cross-approach comparison (<code>compare</code> / <code>compare_many</code>): contingency,
+  ARI / NMI / FMI / Jaccard, and alluvial frames.</li>
+<li>Added CHOIR-style statistically-validated cluster resolution (<code>ft.cluster_choir</code>,
+  <code>cellpax.choir</code>): keep each split only where the children pass a random-forest
+  permutation test (variance-adjusted); optional per-node feature reselection; and
+  <code>ft.overcluster</code> (high-res Leiden) so any over-clustering can be pruned, not just
+  the consensus tree.</li>
+<li>Added first-class DataFolio persistence: <code>ft.save</code> / <code>FeatureTable.load</code> store
+  many analyses per folio under a <code>&lt;name&gt;/…</code> namespace, structured (not
+  flattened) and coexisting with arbitrary user content; <code>list_analyses</code>.</li>
+<li>Added <code>ft.cluster(..., order_by="soma_depth_um")</code>: the column is carried onto the
+  <code>Clustering</code>, so every <code>clus.label(distance_threshold=…)</code> cut comes back with
+  cluster ids already ordered by that column's per-cluster aggregate (<code>order_agg</code>,
+  <code>order_ascending</code>; <code>order=False</code> at cut time for raw dendrogram order). Ordering
+  at cut time rather than after the fact is what keeps two thresholds of one
+  clustering numbered consistently. <code>ft.label</code> routes through it, and the ordering
+  survives <code>save</code>/<code>load</code> (the column name is stored and re-read, so values can't
+  drift). <code>reorder_by</code> now ignores nulls instead of poisoning the aggregate with
+  <code>NaN</code>, and sorts a value-less cluster to the end.</li>
+<li>Added <code>clus.sorted_matrix(...)</code> → <code>SortedMatrix</code>: the co-clustering matrix
+  permuted into cluster blocks, which is the picture the consensus matrix is for.
+  Blocks come from a <code>LabelSet</code>, a plain code array, or a fresh <code>distance_threshold</code>
+  cut; rows keep dendrogram leaf order within a block so substructure stays visible;
+  unassigned cells form a trailing block. Carries <code>order</code>, <code>codes</code>, <code>cell_ids</code>,
+  <code>names</code>, <code>boundaries</code>/<code>centers</code> for tick and divider placement, and
+  <code>block_means()</code> — the <code>(k, k)</code> cohesion/confusion summary that names which two
+  clusters a higher threshold would merge first. Dense, so <code>max_cells</code> refuses to
+  silently allocate a huge array and <code>subsample</code> samples proportionally across
+  blocks.</li>
+<li>Added <code>clus.threshold_scan(...)</code>, a per-threshold table of <code>n_clusters</code>,
+  <code>n_assigned</code> / <code>n_unassigned</code> and the largest/median cluster size. Choosing a cut
+  on cluster count alone hides how many cells the cut keeps.
+  <strong>Read it at the <code>min_cluster_size</code> you intend to cut at</strong>: at the default of 1
+  nothing is dropped and every singleton counts as a cluster, so a curve read at 1
+  and a cut made at 10 routinely disagree threefold. <code>cluster_count_curve</code> takes the
+  same argument and always did.</li>
+<li>Added <code>clus.consensus_strength()</code>: each cell's strongest co-clustering with any
+  other cell. Cells scoring ~0 never grouped with anything in any kNN/Leiden run, so
+  they sit at maximum distance from everything and can only merge in the dendrogram's
+  final collapse — no <code>distance_threshold</code> folds them into a neighbour, and they are
+  what <code>min_cluster_size</code> drops.</li>
+<li>Added <code>Partitions</code> — the individual kNN/Leiden runs behind a consensus, kept on
+  <code>clus.partitions</code> (session-only; recomputing them <em>is</em> the cost of clustering, so
+  they aren't persisted and a reloaded <code>Clustering</code> has <code>None</code>). Restores what dfc
+  exposed as <code>return_dataframe=True</code> and the port had dropped, plus <code>summary()</code> per
+  run and <code>by_setting()</code> per <code>(n_neighbors, resolution)</code>. The consensus can never be
+  coarser than the runs it averages, so when a matrix comes out sparser or more
+  finely split than expected this is where the answer is — and it is not visible in
+  the consensus itself.</li>
+<li>Added <code>clus.restrict(resolution_max=…, resolution_min=…, n_neighbors=…)</code>, which
+  re-consenses from a subset of the existing runs and returns a new <code>Clustering</code>
+  (mask, cell ids, columns, space and <code>order_by</code> carried over). Sweeping a wide
+  resolution range does <strong>not</strong> give you both grains: cells of one broad group
+  co-cluster only in the runs coarse enough to hold them together, so the broad
+  blocks arrive at that fraction rather than at 1.0, the threshold needed to recover
+  them sits against the point where the dendrogram collapses, and low thresholds
+  strand cells in small clusters. Narrowing to the coarse runs puts the structure
+  back at full strength for free. Also <code>Partitions.filter(...)</code> /
+  <code>Partitions.coclustering(...)</code> for the same thing at the array level, and
+  <code>fauxnograph_coclustering(..., return_partitions=True)</code>.</li>
+<li>Added <code>p_adjust</code> to <code>ft.cluster_choir</code> / <code>choir_labels</code>, defaulting to
+  <code>"bonferroni"</code> to match upstream CHOIR. The port previously tested every split at
+  an uncorrected <code>alpha</code>, where upstream re-decides all of them against
+  <code>alpha / n_comparisons</code> once the tree walk has fixed the denominator
+  (<code>combineTrees.R</code>). Implemented as upstream does it, in two passes: walk at the
+  unadjusted alpha to enumerate the comparisons, then re-decide from cached
+  statistics, so no forests are refit. <code>p_adjust="none"</code> restores the old behavior.
+  Expect fewer clusters than before by default.</li>
+<li><strong>Documented</strong> a property of CHOIR worth knowing before trusting a fine split: the
+  null permutes cluster <em>labels</em>, so it sits at chance for any spatially contiguous
+  pair, and the test measures whether two groups are <em>distinguishable</em> rather than
+  whether a boundary separates them. Two halves of a gradient — or of an isotropic
+  Gaussian — are distinguishable and are kept. Upstream's remedy, <code>countsplit</code>, is
+  off by default there and relies on Poisson thinning of counts, so it has no
+  analogue for continuous features. Pinned in <code>test_choir.py</code> so a future change to
+  the null shows up rather than passing silently.</li>
+<li>Added <code>ft.attach(labels, overwrite=True)</code>, which swaps an attached label pair in
+  place. <code>LabelSet</code>'s default name is <code>"label"</code>, so re-cutting a clustering collides
+  with the previous cut immediately, and a <code>detach</code> every time round the loop is
+  friction with no safety value once you've said you mean it. Without <code>overwrite</code> it
+  still refuses.</li>
+<li><strong>Fixed:</strong> <code>attach</code>'s clash error advised <code>detach(name)</code> even when <code>detach</code> would
+  refuse — it required <em>both</em> <code>{name}</code> and <code>{name}_id</code>, so a half-written pair (or a
+  column of your own that happened to collide) left no way forward. <code>detach</code> now
+  drops whichever of the pair exists, and the error distinguishes an attached label
+  from a foreign column instead of calling both the same thing.</li>
+<li><strong>Fixed:</strong> <code>dataframe(labels=…)</code> silently lost to an attached column of the same
+  name. Polars suffixes a colliding join column <code>_right</code>, so the frame came back with
+  the <em>attached</em> column under <code>labels.name</code> and the <code>LabelSet</code> you passed hidden in
+  <code>{name}_right</code>. Every plotting helper reads <code>labels.name</code>, so previewing a new cut
+  under a name already attached — cut, look, re-cut, the normal loop — drew the old
+  labelling and silently dropped every cell it didn't cover, while the <code>LabelSet</code>
+  itself checked out perfectly. What you pass now wins its own name in the view
+  (the table is untouched; <code>attach</code> still refuses to overwrite). Same for
+  <code>embedding=</code>.</li>
+<li><strong>Fixed:</strong> <code>dataframe(embedding=…)</code> left-joined stored coordinates onto the mask,
+  so an embedding computed before its mask was redefined gave the uncovered cells
+  null coordinates. Nothing complained — but every plotting path drops null
+  coordinates silently, producing a figure missing most of its cells while the
+  <code>LabelSet</code> behind it looked perfectly healthy. Redefining a mask already dropped
+  the embedding <em>model</em> as stale; the coordinates were left behind. It now raises,
+  naming both counts and the <code>ft.embed(...)</code> call that fixes it.</li>
+<li><strong>Fixed:</strong> the condensed-distance index in <code>SimilarityMatrix.linkage</code> was computed
+  in scipy's int32 index dtype, which overflows past ~46k cells and would scatter
+  distances onto the wrong pairs rather than raising. Now computed in int64.</li>
+<li>Dropped, relative to dfc/the old design: versioned taxonomies, decision
+  ledgers, immutable releases, regress-out, and the bundled plotting layer.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.indexes", "navigation.instant", "navigation.prune", "navigation.tabs", "navigation.tabs.sticky", "toc.follow", "toc.integrate", "navigation.top", "search.suggest", "search.highlight", "search.share", "content.code.copy", "header.autohide"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
