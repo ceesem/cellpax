@@ -864,15 +864,46 @@ result.self_agreement()     # how well the reference recovers itself in this spa
 `new_rows` is a polars frame matched on column name (extra columns ignored) or a raw
 array in the resolved column order; ids come from its id column or from `cell_ids=`,
 and without either it raises rather than inventing ids that could collide with real
-ones. `mask=` defaults to the reference's own. The result covers **just the new
-cells** — the reference votes, it doesn't come back — and its `LabelSet` has no mask,
-since these cells are in no mask of this table.
+ones. `mask=` names the frozen space and defaults to the reference's own. A *column
+name* is rebuilt over it — `ft.project_labels(rows, "subclass_nn", mask="exc_core")`
+votes with only the core rows of a column that has since spread past the core, keeping
+the ids, names and colors `attach` recorded and dropping only clusters with no member
+inside the mask — while a `LabelSet` is taken as handed over and raises if its cells
+reach outside `mask=`. (Contrast `propagate_labels`, whose `to=` is the target the
+reference is drawn from, and so is validated rather than narrowed.) The result covers
+**just the new cells** — the reference votes, it doesn't come back — and its `LabelSet`
+has no mask, since these cells are in no mask of this table.
 
 The difference from adding the rows and propagating over a widened mask is that
 nothing is re-fit: no scaler moves, no clustering is invalidated, and repeated calls
 on different batches all land in one comparable space. The cost is that the incoming
 cells get no say in the space they're measured in — which is the right trade when the
 reference is the thing you trust.
+
+One thing the default does **not** know: `mask=`'s plain `pca(0.95)` is the space the
+reference was clustered in only if the clustering used that same fit. A clustering built
+with `feature_weights` (from `block_weights`) or its own `space=` lives in a different
+geometry, and a `LabelSet` records no provenance to catch the mismatch — so pass the same
+fit through `space=`:
+
+```python
+w = block_weights(ft.features("core", scaled=True, columns=cols), cols)
+fitted = ft.space("core", columns=cols, feature_weights=w)   # the clustering's geometry
+ft.project_labels(new_rows, sub, mask="core", space=fitted)
+ft.propagate_labels(sub, to="core", space=fitted)            # same knob, same object
+```
+
+The weights are mask- *and* column-relative: `block_weights` reads the correlation
+structure off the matrix you hand it, so compute them on the same mask and the same
+column subset you will fit the space on. Slicing a weight vector down to fewer columns is
+not the same as recomputing it — drop a member of a correlated block and the surviving
+members' weights change.
+
+A space records the mask it was fit on (`fitted.mask`, and its `repr`), and both
+methods **raise** if that disagrees with the population the reference comes from —
+a PCA rotates to its own population's correlation structure, so borrowing another's
+is not a shortcut. Rows from outside the population are what `project_labels`' `data`
+argument is for.
 
 `propagate_labels`' caveats apply, sharpened by distance. `"vote"` casts exactly
 `n_neighbors` votes, so *every* incoming cell gets a label however far it sits from

@@ -450,6 +450,40 @@ def _directed_from_neighbors(
     return coo_matrix((weights.ravel(), (rows, indices.ravel())), shape=(n, n)).tocsr()
 
 
+def neighbor_mutual_fraction(indices: np.ndarray) -> np.ndarray:
+    """Share of each row's neighbours that name it back, from a neighbour-index matrix.
+
+    kNN is directed: cell *i* can hold *j* among its nearest without *j* holding *i*,
+    and in high dimensions that asymmetry is systematic rather than incidental. A cell
+    in a dense region is named back by nearly all of its neighbours; a cell alone in a
+    sparse region names the nearest dense cluster and is named back by none of it.
+
+    That is what separates the two readings of a cell whose neighbours carry another
+    label: reciprocated means it really does sit inside that population, unreciprocated
+    means it sits *near* that population because there was nothing closer. Derived from
+    an index matrix that has already been computed, so it costs no second search.
+
+    Parameters
+    ----------
+    indices : numpy.ndarray
+        ``(n_rows, n_neighbors)`` neighbour indices, self excluded, as
+        :func:`_neighbor_arrays` returns.
+
+    Returns
+    -------
+    numpy.ndarray
+        Fraction in ``[0, 1]`` per row; ``0.0`` when nothing reciprocates.
+    """
+    indices = np.asarray(indices)
+    n, k = indices.shape
+    if k == 0:
+        return np.zeros(n, dtype=float)
+    directed = _directed_from_neighbors(indices, np.ones_like(indices, dtype=float), n)
+    # the same reciprocity test propagate's mutual graph uses
+    mutual = directed.multiply(directed.T)
+    return np.asarray(mutual.sum(axis=1)).ravel() / float(k)
+
+
 def _distance_weights(distances: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Locally-scaled kernel weights ``exp(-d / mean_i(d))``, plus a degenerate mask.
 
@@ -3425,7 +3459,9 @@ def neighborhood_purity(
     features: np.ndarray,
     labels: np.ndarray,
     n_neighbors: int = 20,
-) -> np.ndarray:
+    *,
+    with_mutual: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Fraction of each point's self-excluded nearest neighbors sharing its label.
 
     Ported from dfc's ``compute_neighborhood_purity``: a per-cell diagnostic
@@ -3441,17 +3477,24 @@ def neighborhood_purity(
         Label value for each row.
     n_neighbors : int, default 20
         Number of self-excluded neighbours to compare.
+    with_mutual : bool, default False
+        Also return :func:`neighbor_mutual_fraction`, off the same neighbour
+        search. Purity alone cannot tell a cell surrounded by another label
+        from one that merely has nothing close by; the reciprocity can.
 
     Returns
     -------
     numpy.ndarray
-        Per-row fraction of neighbours sharing its label.
+        Per-row fraction of neighbours sharing its label — or, with
+        ``with_mutual``, that array and the per-row mutual fraction.
     """
     labels = np.asarray(labels)
-    neighbor_labels = neighborhood_self_predictions(
-        features, labels, n_neighbors=n_neighbors
-    )
-    return (neighbor_labels == labels[:, None]).mean(axis=1)
+    _, indices = _neighbor_arrays(features, n_neighbors, "minkowski")
+    neighbor_labels = np.asarray(labels)[indices]
+    purity = (neighbor_labels == labels[:, None]).mean(axis=1)
+    if not with_mutual:
+        return purity
+    return purity, neighbor_mutual_fraction(indices)
 
 
 def neighbor_label_composition(
@@ -3491,7 +3534,8 @@ def neighbor_label_composition(
     -------
     pl.DataFrame
         One row per cell with ``own_fraction``, ``top_other_label``,
-        ``top_other_fraction``, ``verdict`` and ``n_neighbors``.
+        ``top_other_fraction``, ``verdict``, ``mutual_fraction`` and
+        ``n_neighbors``.
 
     Notes
     -----
@@ -3506,6 +3550,9 @@ def neighbor_label_composition(
     ``verdict="other"``
         Most neighbours carry one other label. Either the label is wrong, or this is a
         genuine rare cell that sits inside another population in feature space too.
+        ``mutual_fraction`` is what separates them: reciprocated, the cell really is
+        inside that population; unreciprocated, it is merely nearer to it than to
+        anything else, which is a statement about sparsity rather than about label.
     ``verdict="mixed"``
         No label reaches ``majority``. The consensus had nothing clear to say here —
         cross-check ``Clustering.cell_stability`` for that cell.
@@ -3523,9 +3570,11 @@ def neighbor_label_composition(
             f"labels cover {labels.shape[0]} cells but features has "
             f"{np.asarray(features).shape[0]} rows"
         )
-    neighbor_labels = neighborhood_self_predictions(
-        features, labels, n_neighbors=n_neighbors
-    )
+    # one search, both readings: labels for the verdict, reciprocity to say
+    # whether the neighbourhood the verdict rests on is really a neighbourhood
+    _, neighbor_index = _neighbor_arrays(features, n_neighbors, "minkowski")
+    neighbor_labels = np.asarray(labels)[neighbor_index]
+    mutual_fraction = neighbor_mutual_fraction(neighbor_index)
 
     assigned = neighbor_labels >= 0
     n_assigned = assigned.sum(axis=1)
@@ -3561,6 +3610,7 @@ def neighbor_label_composition(
             "top_other_label": top_other,
             "top_other_fraction": top_other_fraction,
             "verdict": verdict,
+            "mutual_fraction": mutual_fraction,
             "n_neighbors": np.full(labels.shape[0], n_neighbors, dtype=np.int64),
         }
     )

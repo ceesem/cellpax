@@ -506,6 +506,76 @@ def test_propagate_labels_accepts_an_attached_column_name() -> None:
     assert result.n_reference() == 90  # resolved back to the core mask it came from
 
 
+# -- reusing a prebuilt space ----------------------------------------------------
+
+
+def test_propagate_labels_runs_in_a_passed_space() -> None:
+    """A weighted fit must be reusable: a LabelSet cannot carry its own provenance."""
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    fitted = ft.space("exc", feature_weights=np.array([0.5, 0.5, 1.0, 1.0]))
+
+    default = ft.propagate_labels(labels, to="exc", n_neighbors=20)
+    passed = ft.propagate_labels(labels, to="exc", n_neighbors=20, space=fitted)
+
+    assert default.space == "pca(0.95)"
+    assert passed.space == fitted.label != default.space
+    assert passed.params is not None and passed.params["pca"] is None  # space marker
+    assert len(passed.labels) == len(default.labels)
+
+
+def test_project_labels_runs_in_a_passed_space() -> None:
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    fitted = ft.space("exc_core", feature_weights=np.array([0.5, 0.5, 1.0, 1.0]))
+
+    result = ft.project_labels(
+        np.array([[0.0, 0.0, 0.0, 0.0]]), labels, cell_ids=[9001], space=fitted
+    )
+    assert result.space == fitted.label
+    assert result.params is not None and result.params["pca"] is None
+
+
+def test_a_passed_space_refuses_another_populations_geometry() -> None:
+    """The correlation structure a PCA rotates to belongs to the mask it was fit on."""
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    ft.attach(ft.propagate_labels(labels, to="exc", n_neighbors=20).labels)
+    core_fit = ft.space("exc_core", feature_weights=np.array([0.5, 0.5, 1.0, 1.0]))
+    stray = np.array([[0.0, 0.0, 0.0, 0.0]])
+
+    assert core_fit.mask == "exc_core"
+    assert core_fit.with_alpha(0.5).mask == "exc_core"  # survives a whitening view
+
+    # the reference resolves to "exc", the space was fit on "exc_core"
+    with pytest.raises(ValueError, match="was fit on mask 'exc_core'"):
+        ft.project_labels(stray, "subclass_nn", cell_ids=[9001], space=core_fit)
+    with pytest.raises(ValueError, match="was fit on mask 'exc_core'"):
+        ft.propagate_labels(labels, to="exc", space=core_fit)
+
+    # naming the matching mask is all it takes
+    result = ft.project_labels(
+        stray, "subclass_nn", cell_ids=[9001], mask="exc_core", space=core_fit
+    )
+    assert result.space == core_fit.label
+    assert result.n_reference() == 90
+
+
+def test_a_passed_space_refuses_to_share_the_representation_choice() -> None:
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    fitted = ft.space("exc")
+
+    with pytest.raises(ValueError, match="space= already fixes the representation"):
+        ft.propagate_labels(labels, to="exc", space=fitted, pca=0.8)
+    with pytest.raises(ValueError, match="each ladder rung is its own space"):
+        ft.propagate_labels(labels, to="exc", space=fitted, ladder=["stable"])
+    with pytest.raises(ValueError, match="space= already fixes the representation"):
+        ft.project_labels(
+            np.zeros((1, 4)), labels, cell_ids=[9001], space=fitted, pca=0.8
+        )
+
+
 # -- projecting labels onto rows that were never in the table --------------------
 
 
@@ -572,6 +642,47 @@ def test_project_labels_spread_abstains_where_the_vote_cannot() -> None:
     assert spread.labels.n_unassigned == 1  # nothing is mutually near it
 
 
+def test_project_labels_narrows_a_column_reference_to_the_mask() -> None:
+    """A column that has spread past the core still projects in the core's space."""
+    ft = _core_and_periphery()
+    labels = _core_labels(ft)
+    # subclass_nn covers all 180 cells; its core rows are still the curated ones
+    ft.attach(ft.propagate_labels(labels, to="exc", n_neighbors=20).labels)
+
+    outside = pl.DataFrame(
+        {
+            "cell_id": [9001, 9002, 9003],
+            **{
+                f"m{i}": col
+                for i, col in enumerate(
+                    np.array([[0, 0, 0, 0], [6, 6, 0, 0], [0, 0, 6, 6]], dtype=float).T
+                )
+            },
+        }
+    )
+
+    # the column is rebuilt over exc_core instead of raising "outside mask"
+    result = ft.project_labels(outside, "subclass_nn", mask="exc_core", n_neighbors=20)
+    explicit = ft.project_labels(
+        outside,
+        ft.labelset("subclass_nn", mask="exc_core"),
+        mask="exc_core",
+        n_neighbors=20,
+    )
+
+    assert result.n_reference() == 90  # the core rows, not all 180
+    assert result.labels.codes.tolist() == explicit.labels.codes.tolist()
+    assert result.confidence.tolist() == explicit.confidence.tolist()
+    # narrowing keeps the identities attach recorded, ids and colors included
+    assert result.labels.names == labels.names
+    assert result.labels.color_map() == {"C0": "#f00"}
+    assert len(set(result.labels.to_names())) == 3
+
+    # without mask=, nothing narrows: the column's recorded mask is the space
+    widest = ft.project_labels(outside, "subclass_nn", n_neighbors=20)
+    assert widest.n_reference() == 180
+
+
 def test_project_labels_argument_errors() -> None:
     ft = _core_and_periphery()
     labels = _core_labels(ft)
@@ -589,6 +700,7 @@ def test_project_labels_argument_errors() -> None:
         ft.project_labels(raw, labels, cell_ids=[1, 2, 3], method="knn")
 
     # the reference has to live in the mask whose space is being reused
+    # (a LabelSet is taken as given — only a column name is narrowed to mask=)
     with pytest.raises(ValueError, match="reference cells are outside mask"):
         ft.add_mask("half", pl.col("cell_id") <= 30)
         ft.project_labels(raw, labels, cell_ids=[1, 2, 3], mask="half")

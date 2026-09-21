@@ -39,7 +39,35 @@
   was clustered in, nothing is re-fit, no mask is widened and no clustering is
   invalidated. Ids come from the frame's id column or `cell_ids=`; the result is
   a `Propagation` over just the new cells, with the reference's cluster ids,
-  names and colors. `method="spread"` still abstains on rows near nothing.
+  names and colors. A string `labels` is rebuilt over `mask=` (a `LabelSet` is
+  not), so a `*_nn` column from an earlier propagation can be reused as the
+  reference for the core mask it was fit on. `method="spread"` still abstains on
+  rows near nothing.
+- **`space=` on `ft.propagate_labels` and `ft.project_labels`** — propagate or
+  project in a prebuilt `FittedSpace`, the same object `cluster`, `embed` and
+  `overcluster` accept. Both previously hardcoded an unweighted `pca(0.95)`, so
+  labels from a clustering built with `feature_weights` (or its own `space=`)
+  were carried outward in a geometry that was not the one they came from — and
+  unlike `boundary_report`, which finds the weighted space by the digest a
+  clustering records, a `LabelSet` carries no provenance to catch it. It cannot
+  be combined with `pca=` (or, for propagation, `ladder=`, whose rungs are each
+  their own space). A `FittedSpace` now records the mask it was fit on
+  (`space.mask`, shown in its `repr`, persisted and restored), and both methods
+  raise when that disagrees with the population the reference comes from — a PCA
+  rotates to its own population's correlation structure, and any
+  `feature_weights` derived from it are that population's too.
+- **`space=` on `ft.neighborhood_purity`** — the same knob, for the same
+  reason: purity read off the unweighted space is a verdict about a geometry
+  the clustering never used. The default is unchanged (raw scaled features at
+  full dimensionality, as `overcluster`), and a space fit on another mask
+  raises.
+- **`mutual_fraction`** on `ft.triage_labels` and `ft.neighborhood_purity`, and
+  the `neighbor_mutual_fraction` primitive behind it. kNN is directed, so a cell
+  alone in a sparse region names the nearest dense cluster and is named back by
+  none of it — indistinguishable, on purity or verdict alone, from a cell that
+  genuinely sits inside another population. The reciprocity separates them, and
+  comes off the neighbour search that was already being run. Additive: no
+  existing verdict or purity value changes.
 - **`LabelSet.assign(cell_ids, to)`** — move individual cells between clusters,
   the per-cell counterpart to the cluster-level relabeling verbs. `to` is a
   cluster id or name, or `None` to unassign; an unheld *name* creates the

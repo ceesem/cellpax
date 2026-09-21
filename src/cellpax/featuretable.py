@@ -2291,6 +2291,7 @@ class FeatureTable:
         mask: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         n_neighbors: int = 20,
+        space: FittedSpace | None = None,
     ) -> pl.DataFrame:
         """Per-cell label purity among self-excluded nearest feature-space neighbors.
 
@@ -2311,11 +2312,24 @@ class FeatureTable:
             Feature space used to find neighbors.
         n_neighbors : int, default=20
             Number of self-excluded neighbors per cell.
+        space : FittedSpace, optional
+            The representation neighbors are found in, from :meth:`space`. ``None``
+            — the default — uses the **raw scaled features at full
+            dimensionality**, unlike ``cluster``, which reduces to ``pca(0.95)``.
+            Pass ``ft.space(mask, columns=…, feature_weights=w)`` to measure purity
+            in the space the labels were actually built in: purity read off an
+            unweighted space is a verdict about a geometry the clustering never
+            used. Must have been fit on the mask being evaluated.
 
         Returns
         -------
         polars.DataFrame
-            Cell identifiers and per-cell purity values.
+            Cell identifiers, per-cell purity, and ``mutual_fraction`` — the share
+            of each cell's neighbours that name it back. Low purity reads two ways,
+            and the reciprocity separates them: reciprocated, the cell really is
+            among cells of another label; unreciprocated, it is in a sparse region
+            and merely has nothing closer, which indicts the reconstruction rather
+            than the label.
         """
         from cellpax.clustering import neighborhood_purity as _neighborhood_purity
 
@@ -2323,9 +2337,37 @@ class FeatureTable:
         name = mask or (labels.mask if labels is not None else None) or _DEFAULT_MASK
         cell_ids = self._cell_ids(name)
         label_array = self._align_over_clustering(labels, cell_ids)
-        features = self.features(name, scaled=True, columns=columns)
-        purity = _neighborhood_purity(features, label_array, n_neighbors=n_neighbors)
-        return pl.DataFrame({self._id_column: cell_ids, "purity": purity})
+        if space is None:
+            features = self.features(name, scaled=True, columns=columns)
+        else:
+            if columns is not None and self._resolve_columns(columns) != list(
+                space.columns
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            if space.mask is not None and space.mask != name:
+                raise ValueError(
+                    f"space= was fit on mask {space.mask!r}, but purity is being "
+                    f"evaluated on {name!r}; a PCA rotates to its own population's "
+                    f"correlation structure (and any feature_weights with it), so "
+                    f"the two have to be the same mask"
+                )
+            # the space's own frozen scaler, so a cross-mask space stays coherent
+            features = space.transform(
+                self.features(name, scaled=False, columns=list(space.columns))
+            )
+        purity, mutual = _neighborhood_purity(
+            features, label_array, n_neighbors=n_neighbors, with_mutual=True
+        )
+        return pl.DataFrame(
+            {
+                self._id_column: cell_ids,
+                "purity": purity,
+                "mutual_fraction": mutual,
+            }
+        )
 
     def propagate_labels(
         self,
@@ -2337,6 +2379,7 @@ class FeatureTable:
         ladder: Sequence[str | FeatureCollection] | None = None,
         n_neighbors: int = 30,
         pca: bool | float = 0.95,
+        space: FittedSpace | None = None,
         weights: Literal["uniform", "distance"] | None = None,
         preserve_labeled: bool = True,
         min_confidence: float | None = None,
@@ -2382,6 +2425,14 @@ class FeatureTable:
         built from uninformative values; ``on_invalid`` escalates that to a
         raise or silences it.
 
+        The vote happens in the target mask's ``pca(0.95)`` fit by default, which
+        matches ``cluster``'s default and so is the space the labels came from —
+        unless the clustering was built with ``feature_weights`` or its own
+        ``space=``, in which case pass that same
+        :class:`~cellpax.space.FittedSpace` as ``space=`` here. A ``LabelSet``
+        carries no provenance, so an unweighted default cannot be caught for you
+        the way ``boundary_report`` catches it from a clustering's recorded digest.
+
         ``ladder`` replaces the single global column choice with a per-cell
         fallback: an ordered list of collections, richest first, and each cell
         is labeled with the first one whose columns are all *valid for it*.
@@ -2418,7 +2469,10 @@ class FeatureTable:
         labels : LabelSet or str
             Reference labels or an attached label-column name.
         to : str, optional
-            Target mask, defaulting to all cells.
+            Target mask, defaulting to all cells. The population the reference is
+            drawn from, so a label column is resolved over its own recorded mask
+            and then validated against this one — unlike ``project_labels``, whose
+            ``mask`` is the space the reference must sit in and so narrows it.
         method : {"vote", "spread"}, default="vote"
             Nearest-neighbor voting or graph diffusion.
         columns : str, FeatureCollection, sequence of str, or None
@@ -2429,6 +2483,11 @@ class FeatureTable:
             Neighborhood size.
         pca : bool or float, default=0.95
             PCA switch or explained-variance target.
+        space : FittedSpace, optional
+            Pre-fitted representation to propagate in, replacing the target
+            mask's default fit; required to match a clustering built with
+            ``feature_weights`` or its own space. Must have been fit on ``to``.
+            Cannot be combined with ``pca`` or ``ladder``.
         weights : {"uniform", "distance"}, optional
             Neighbor weighting; defaults depend on ``method``.
         preserve_labeled : bool, default=True
@@ -2479,6 +2538,11 @@ class FeatureTable:
                     "pass either columns= (one feature set for every cell) or "
                     "ladder= (per-cell fallback through several), not both"
                 )
+            if space is not None:
+                raise ValueError(
+                    "space= fixes one representation, but each ladder rung is "
+                    "its own space; pass one or the other"
+                )
             return self._propagate_ladder(
                 labels,
                 target=target,
@@ -2520,15 +2584,43 @@ class FeatureTable:
             if on_invalid == "raise":
                 raise ValueError(message)
             warnings.warn(message)
-        if pca is False:
+        if space is not None:
+            if pca is not True and pca != 0.95:
+                raise ValueError(
+                    "space= already fixes the representation; drop pca= (it would "
+                    "be silently ignored otherwise)"
+                )
+            if columns is not None and list(space.columns) != self._resolve_columns(
+                columns
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            if space.mask is not None and space.mask != target:
+                raise ValueError(
+                    f"space= was fit on mask {space.mask!r}, but the target mask is "
+                    f"{target!r}; a PCA rotates to its own population's correlation "
+                    f"structure (and any feature_weights with it), so the two have "
+                    f"to be the same mask — refit with ft.space({target!r}, ...)"
+                )
+            # the space applies ITS OWN frozen scaler (transform, not
+            # transform_scaled), so a weighted or whitened fit built elsewhere
+            # stays the geometry the labels were clustered in
+            features = space.transform(
+                self.features(target, scaled=False, columns=list(space.columns))
+            )
+            space_label = space.label
+            pca = None  # params marker: representation came from a passed space
+        elif pca is False:
             features = self.features(target, scaled=True, columns=columns)
-            space = "scaled"
+            space_label = "scaled"
         else:
             variance = 0.95 if pca is True else float(pca)
             features = self.features_pca(
                 target, columns=columns, explained_variance=variance, seed=seed
             )
-            space = f"pca({variance:g})"
+            space_label = f"pca({variance:g})"
         reference_codes = labels.codes_for(target_ids)
         if method == "vote":
             codes, confidence, recovery = propagate_knn(
@@ -2564,7 +2656,7 @@ class FeatureTable:
             recovery,
             method=method,
             n_neighbors=n_neighbors,
-            space=space,
+            space=space_label,
             params={
                 "method": method,
                 "columns": self._resolve_columns(columns),
@@ -2626,6 +2718,7 @@ class FeatureTable:
         method: Literal["vote", "spread"] = "vote",
         n_neighbors: int = 30,
         pca: bool | float = 0.95,
+        space: FittedSpace | None = None,
         weights: Literal["uniform", "distance"] | None = None,
         min_confidence: float | None = None,
         mutual: bool = True,
@@ -2638,17 +2731,40 @@ class FeatureTable:
 
         ``propagate_labels`` for rows from elsewhere: ``project`` pushes ``data``
         through ``mask``'s frozen scaler and PCA, and the reference votes on the
-        result. Nothing is re-fit and nothing is stored, so the space the reference
-        was clustered in is exactly the space the new cells are judged in — and the
-        table is untouched, which is the difference from adding the rows and running
-        ``propagate_labels`` over a widened mask.
+        result. Nothing is re-fit and nothing is stored, and the table is untouched
+        — the difference from adding the rows and running ``propagate_labels`` over
+        a widened mask.
+
+        The default fit is ``mask``'s plain ``pca(0.95)``, which is the space the
+        reference was clustered in **only if the clustering used that same fit**. A
+        clustering built with ``feature_weights`` or its own ``space=`` lives in a
+        different geometry, and judging new cells in the unweighted one quietly asks
+        a different question — so pass that fit here as ``space=``
+        (``ft.space(mask, columns=…, feature_weights=w)``), the same
+        :class:`~cellpax.space.FittedSpace` ``cluster`` and ``embed`` accept. Unlike
+        a clustering, a ``LabelSet`` records no provenance, so *that* cannot be
+        checked for you: if the labels came from a weighted space and you leave
+        ``space=`` off, nothing will complain. What *is* checked is the
+        population — a space carries the mask it was fit on, and one fit
+        elsewhere raises, since a PCA rotates to its own population's
+        correlation structure.
 
         ``data`` is a polars frame carrying the feature columns by name (extra
         columns ignored, order irrelevant) or a raw ``(n, len(columns))`` array in
         the resolved column order. Cell ids come from ``data``'s id column or from
         ``cell_ids``; without either this raises, since a ``LabelSet`` with invented
-        ids would silently collide with real ones. ``mask`` defaults to the
-        reference's own, and the reference must live inside it.
+        ids would silently collide with real ones. ``mask`` names the frozen space
+        and the reference has to live in it, which a column name and a ``LabelSet``
+        reach from opposite ends: a *column* is rebuilt over ``mask``, keeping the
+        cluster ids, names and colors ``attach`` recorded and dropping only clusters
+        with no member inside it — that is how a ``*_nn`` column from an earlier
+        propagation votes with its core rows and not the periphery it has since
+        spread to. A ``LabelSet`` is taken as handed over, so one whose assigned
+        cells reach outside ``mask`` raises rather than being quietly trimmed.
+        Without ``mask``, nothing narrows: the column's recorded mask, or the label
+        set's own, is the space. Contrast ``propagate_labels``, where ``to`` is the
+        target population the reference is drawn from and so is validated, never
+        narrowed.
 
         Returns a :class:`~cellpax.propagate.Propagation` over **just the new
         cells** — the reference is in the vote, not in the result — carrying the
@@ -2673,7 +2789,8 @@ class FeatureTable:
         labels : LabelSet or str
             Reference labels or an attached label-column name.
         mask : str, optional
-            Mask whose frozen feature space supplies the reference.
+            Mask whose frozen feature space supplies the reference; a column name
+            is rebuilt over it, a ``LabelSet`` must already fit inside it.
         cell_ids : sequence, optional
             Identifiers for array input or frames without the id column.
         columns : str, FeatureCollection, sequence of str, or None
@@ -2684,6 +2801,11 @@ class FeatureTable:
             Neighborhood size.
         pca : bool or float, default=0.95
             PCA switch or explained-variance target.
+        space : FittedSpace, optional
+            Pre-fitted representation both populations go through, replacing
+            the mask's default fit; required to match a clustering built with
+            ``feature_weights`` or its own space. Must have been fit on the
+            same mask the reference comes from. Cannot be combined with ``pca``.
         weights : {"uniform", "distance"}, optional
             Neighbor weighting; defaults depend on ``method``.
         min_confidence : float, optional
@@ -2713,7 +2835,7 @@ class FeatureTable:
 
         if method not in ("vote", "spread"):
             raise ValueError(f"method must be 'vote' or 'spread', got {method!r}")
-        labels = self._resolve_labels(labels)
+        labels = self._resolve_labels(labels, mask=mask)
         source = mask or labels.mask or _DEFAULT_MASK
         source_ids = self._cell_ids(source)
         outside = np.setdiff1d(labels.cell_ids[labels.assigned], source_ids)
@@ -2722,19 +2844,46 @@ class FeatureTable:
                 f"{outside.size} reference cells are outside mask {source!r}; the "
                 f"space is fit on that mask, so the reference must live in it"
             )
-        cols = self._resolve_columns(columns)
+        if space is not None:
+            if pca is not True and pca != 0.95:
+                raise ValueError(
+                    "space= already fixes the representation; drop pca= (it would "
+                    "be silently ignored otherwise)"
+                )
+            if columns is not None and list(space.columns) != self._resolve_columns(
+                columns
+            ):
+                raise ValueError(
+                    f"space= was fit on {list(space.columns)}, which disagrees "
+                    f"with columns=; omit columns= to use the space's own"
+                )
+            if space.mask is not None and space.mask != source:
+                raise ValueError(
+                    f"space= was fit on mask {space.mask!r}, but the "
+                    f"reference's mask is {source!r}; a PCA rotates to its own "
+                    f"population's correlation "
+                    f"structure (and any feature_weights with it), so the two have "
+                    f"to be the same mask — refit with ft.space({source!r}, ...)"
+                )
+            cols = list(space.columns)
+        else:
+            cols = self._resolve_columns(columns)
         matrix, new_ids = self._incoming_rows(data, cols, cell_ids)
 
         # both populations go through one frozen fit — that is the whole point
-        if pca is False:
-            fitted: Any = self.scaler(source, columns=cols)
-            space = "scaled"
+        if space is not None:
+            fitted: Any = space
+            space_label = space.label
+            pca = None  # params marker: representation came from a passed space
+        elif pca is False:
+            fitted = self.scaler(source, columns=cols)
+            space_label = "scaled"
         else:
             variance = 0.95 if pca is True else float(pca)
             fitted = self.space(
                 source, columns=cols, explained_variance=variance, seed=seed
             )
-            space = f"pca({variance:g})"
+            space_label = f"pca({variance:g})"
         source_codes = labels.codes_for(source_ids)
         voting = source_codes != -1
         reference = fitted.transform(self.features(source, columns=cols))[voting]
@@ -2779,7 +2928,7 @@ class FeatureTable:
             recovery,
             method=method,
             n_neighbors=n_neighbors,
-            space=space,
+            space=space_label,
             params={
                 "method": method,
                 "columns": cols,
@@ -4971,7 +5120,9 @@ class FeatureTable:
 
         Notes
         -----
-        Cached per ``(mask, columns, explained_variance, seed)``. **``alpha`` and
+        Cached per ``(mask, columns, explained_variance, seed, feature_weights)`` — the
+        weights as a ``blake2b`` digest, since an array cannot be a key and ``hash()`` is
+        salted per process, so the key would not survive a save/load. **``alpha`` and
         ``eigenvalue_floor`` are deliberately not part of that key** — they are applied as
         a view over the cached fit, so a sweep across whitening strengths is guaranteed by
         construction to share one PCA rather than refitting it underneath itself. That is
@@ -5013,6 +5164,7 @@ class FeatureTable:
                 explained_variance=explained_variance,
                 feature_weights=feature_weights,
                 seed=seed,
+                mask=mask or _DEFAULT_MASK,
             )
         fitted = self._space_cache[key]
         if alpha or eigenvalue_floor:

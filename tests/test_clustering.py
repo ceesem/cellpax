@@ -220,13 +220,90 @@ def test_ft_neighborhood_purity_with_labelset_and_column_name() -> None:
 
     labels = LabelSet(np.arange(1, 61), np.array([0] * 30 + [1] * 30), name="blob")
     result = ft.neighborhood_purity(labels, n_neighbors=5)
-    assert result.columns == ["cell_id", "purity"]
+    assert result.columns == ["cell_id", "purity", "mutual_fraction"]
     assert np.allclose(result["purity"].to_numpy(), 1.0)
 
     # same result when the labels are already attached and referenced by name
     ft.attach(labels)
     by_column = ft.neighborhood_purity("blob", n_neighbors=5)
     assert np.allclose(by_column["purity"].to_numpy(), 1.0)
+
+
+def test_ft_neighborhood_purity_reads_a_passed_space() -> None:
+    """Purity is a verdict about a geometry, so it must be able to use the right one."""
+    rng = np.random.default_rng(0)
+    n = 120
+    side = np.repeat([0.0, 1.0], n // 2)
+    # the only separating signal is `lone`; three correlated columns carry noise
+    shared = rng.normal(0, 3.0, n)
+    frame = pl.DataFrame(
+        {
+            "cell_id": np.arange(1, n + 1),
+            **{f"blk{i}": shared + rng.normal(0, 0.1, n) for i in range(3)},
+            "lone": 4.0 * side + rng.normal(0, 0.3, n),
+        }
+    )
+    from cellpax.labels import LabelSet
+
+    ft = FeatureTable(frame, features=["blk0", "blk1", "blk2", "lone"])
+    labels = LabelSet(np.arange(1, n + 1), side.astype(int), name="side")
+
+    weights = np.array([0.4, 0.4, 0.4, 1.0])
+    weighted = ft.space("all", feature_weights=weights)
+
+    plain = ft.neighborhood_purity(labels, n_neighbors=10)["purity"].to_numpy()
+    scored = ft.neighborhood_purity(labels, n_neighbors=10, space=weighted)[
+        "purity"
+    ].to_numpy()
+
+    assert weighted.mask == "all"
+    # down-weighting the redundant block lets the separating column be heard
+    assert scored.mean() > plain.mean()
+
+    ft.add_mask("half", pl.col("cell_id") <= 60)
+    with pytest.raises(ValueError, match="was fit on mask 'all'"):
+        ft.neighborhood_purity(labels, mask="half", space=weighted)
+
+
+def test_mutual_fraction_separates_an_intruder_from_an_outlier() -> None:
+    """Both look like low purity; only one is really inside the other population."""
+    from cellpax.labels import LabelSet
+
+    rng = np.random.default_rng(0)
+    blob = rng.normal([0.0, 0.0], 0.3, (60, 2))
+    other = rng.normal([6.0, 0.0], 0.3, (60, 2))
+    intruder = np.array([[6.0, 0.0]])  # sits *inside* the other blob
+    outlier = np.array([[40.0, 40.0]])  # far from everything
+    coords = np.vstack([blob, other, intruder, outlier])
+
+    frame = pl.DataFrame(
+        {
+            "cell_id": np.arange(1, len(coords) + 1),
+            "m0": coords[:, 0],
+            "m1": coords[:, 1],
+        }
+    )
+    ft = FeatureTable(frame, features=["m0", "m1"])
+    codes = np.array([0] * 60 + [1] * 60 + [0, 0])  # both strays labelled 0
+    labels = LabelSet(np.arange(1, len(coords) + 1), codes, name="ct")
+
+    out = ft.neighborhood_purity(labels, n_neighbors=10)
+    by_id = dict(zip(out["cell_id"].to_list(), out["mutual_fraction"].to_list()))
+    purity = dict(zip(out["cell_id"].to_list(), out["purity"].to_list()))
+    intruder_id, outlier_id = len(coords) - 1, len(coords)
+
+    # indistinguishable on purity alone: neither has neighbours of its own label
+    assert purity[intruder_id] == 0.0
+    assert purity[outlier_id] == 0.0
+    # but the intruder is embedded in the other blob, and the outlier is not
+    assert by_id[intruder_id] > 0.5
+    assert by_id[outlier_id] == 0.0
+
+    t = ft.triage_labels(labels, n_neighbors=10)
+    assert "mutual_fraction" in t.columns
+    verdicts = dict(zip(t["cell_id"].to_list(), t["verdict"].to_list()))
+    assert verdicts[intruder_id] == "other"
+    assert verdicts[outlier_id] == "other"  # same verdict, different mutual_fraction
 
 
 # -- clipping rules -------------------------------------------------------------

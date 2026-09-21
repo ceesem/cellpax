@@ -80,6 +80,8 @@ Tables from separate datasets, harmonized into one space (see the guide's
 
 ::: cellpax.clustering.neighbor_label_composition
 
+::: cellpax.clustering.neighbor_mutual_fraction
+
 ## Diagnostics
 
 ::: cellpax.diagnostics.feature_correlation

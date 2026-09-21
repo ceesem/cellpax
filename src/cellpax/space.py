@@ -87,6 +87,12 @@ class FittedSpace:
         ``None`` when the count was set directly.
     feature_weights : numpy.ndarray, optional
         Per-feature multipliers applied before PCA, in ``columns`` order.
+    mask : str, optional
+        Name of the mask this was fit on. The correlation structure a PCA rotates
+        to — and any ``feature_weights`` derived from it — is a property of that
+        population, so consumers that must not silently compare cells in another
+        population's geometry check it. ``None`` for a space built directly rather
+        than through ``ft.space``, which those consumers cannot check.
     """
 
     scaler: Any
@@ -114,6 +120,9 @@ class FittedSpace:
     a projection built on a weighted space cannot silently skip the weighting.
     """
 
+    mask: str | None = None
+    """The mask this space was fit on, or ``None`` if it was built directly."""
+
     # -- construction ---------------------------------------------------------
 
     @classmethod
@@ -128,6 +137,7 @@ class FittedSpace:
         eigenvalue_floor: float = 0.0,
         feature_weights: np.ndarray | None = None,
         seed: int | None = None,
+        mask: str | None = None,
     ) -> "FittedSpace":
         """Fit PCA on already-scaled features, keeping every component.
 
@@ -155,6 +165,9 @@ class FittedSpace:
             Per-feature multipliers applied to ``scaled`` before the PCA is fit, and
             re-applied by :meth:`transform` thereafter. See
             :func:`cellpax.diagnostics.block_weights`.
+        mask : str, optional
+            Name of the population ``scaled`` came from, recorded for provenance so
+            consumers can refuse to judge another population in this geometry.
         seed : int, optional
             Random state for the PCA.
 
@@ -203,6 +216,7 @@ class FittedSpace:
             eigenvalue_floor=float(eigenvalue_floor),
             explained_variance=None,
             feature_weights=feature_weights,
+            mask=mask,
         )
         if isinstance(explained_variance, (int, np.integer)) and not isinstance(
             explained_variance, bool
@@ -577,6 +591,7 @@ class FittedSpace:
             "alpha": float(self.alpha),
             "eigenvalue_floor": float(self.eigenvalue_floor),
             "explained_variance": self.explained_variance,
+            "mask": self.mask,
         }
         arrays: dict[str, np.ndarray] = {
             "mean_": self.mean_,
@@ -627,11 +642,13 @@ class FittedSpace:
                 if "feature_weights" in arrays
                 else None
             ),
+            mask=meta.get("mask"),
         )
 
     def __repr__(self) -> str:
+        where = "" if self.mask is None else f" on {self.mask!r}"
         return (
-            f"FittedSpace({self.label}, {self.n_components}/"
+            f"FittedSpace({self.label}{where}, {self.n_components}/"
             f"{self.n_total_components} components, {self.n_features} features, "
             f"cumulative_ev={self.cumulative_explained_variance:.3f})"
         )
