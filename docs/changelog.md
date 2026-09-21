@@ -68,6 +68,12 @@
   genuinely sits inside another population. The reciprocity separates them, and
   comes off the neighbour search that was already being run. Additive: no
   existing verdict or purity value changes.
+- `ft.triage_labels` gained the same population check as the other `space=`
+  consumers, and all eight now route through one `_validated_space` helper
+  rather than hand-rolling the checks — five spellings of the column test had
+  accumulated, and triage was the one that never got the mask test. `cluster`,
+  `overcluster`, `embed` and `parametrize` opt out of the population check,
+  where a parent's space serving a child mask is documented behaviour.
 - **`LabelSet.assign(cell_ids, to)`** — move individual cells between clusters,
   the per-cell counterpart to the cluster-level relabeling verbs. `to` is a
   cluster id or name, or `None` to unassign; an unheld *name* creates the

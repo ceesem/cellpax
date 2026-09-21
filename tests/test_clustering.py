@@ -306,6 +306,51 @@ def test_mutual_fraction_separates_an_intruder_from_an_outlier() -> None:
     assert verdicts[outlier_id] == "other"  # same verdict, different mutual_fraction
 
 
+def test_space_population_check_applies_to_every_diagnostic() -> None:
+    """The four consumers that judge labels all refuse another population's geometry."""
+    from cellpax.labels import LabelSet
+
+    rng = np.random.default_rng(0)
+    coords = rng.normal(size=(80, 3))
+    frame = pl.DataFrame(
+        {
+            "cell_id": np.arange(1, 81),
+            **{f"m{i}": coords[:, i] for i in range(3)},
+        }
+    )
+    ft = FeatureTable(frame, features=["m0", "m1", "m2"])
+    ft.add_mask("half", pl.col("cell_id") <= 40)
+    labels = LabelSet(np.arange(1, 81), np.array([0] * 40 + [1] * 40), name="ct")
+    elsewhere = ft.space("all")
+
+    assert elsewhere.mask == "all"
+    # propagation needs its reference inside the target, or that check fires first
+    scoped = LabelSet(np.arange(1, 41), np.array([0] * 20 + [1] * 20), mask="half")
+    for call in (
+        lambda: ft.triage_labels(labels, mask="half", space=elsewhere),
+        lambda: ft.neighborhood_purity(labels, mask="half", space=elsewhere),
+        lambda: ft.propagate_labels(scoped, to="half", space=elsewhere),
+        lambda: ft.project_labels(
+            np.zeros((1, 3)), scoped, cell_ids=[9001], space=elsewhere
+        ),
+    ):
+        with pytest.raises(ValueError, match="was fit on mask 'all'"):
+            call()
+
+    # a space built directly carries no mask, which is the deliberate opt-out
+    from cellpax.space import FittedSpace
+
+    unowned = FittedSpace.fit(
+        ft.features("all", scaled=True), columns=("m0", "m1", "m2")
+    )
+    assert unowned.mask is None
+    assert ft.triage_labels(labels, mask="half", space=unowned).height == 40
+
+    # cluster still accepts a parent's space for a child mask, as it documents
+    ft.cluster(mask="half", space=elsewhere, n_times=2, seed=0, n_jobs=1, name="child")
+    assert ft.clustering("child").mask == "half"
+
+
 # -- clipping rules -------------------------------------------------------------
 
 

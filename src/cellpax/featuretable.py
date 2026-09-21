@@ -1891,6 +1891,71 @@ class FeatureTable:
             raise ValueError(f"Not declared as features: {unknown}")
         return chosen
 
+    def _validated_space(
+        self,
+        space: FittedSpace,
+        mask: str | None,
+        columns: str | FeatureCollection | Sequence[str] | None,
+        *,
+        population: str = "the mask",
+        cross_mask: bool = False,
+    ) -> list[str]:
+        """Check a caller-supplied ``space=`` against the columns and cells it serves.
+
+        Every ``space=`` consumer routes through here, so a new one cannot quietly
+        skip a check — which is how ``triage_labels`` came to be the only one
+        without the population check after the others gained it.
+
+        Returns the space's own columns. They *replace* ``columns`` rather than
+        merely agreeing with it: a space carries its column order, and
+        ``transform`` expects rows in that order.
+
+        The population check is on by default. ``cross_mask=True`` opts out, for
+        the consumers where a space fit elsewhere is deliberate — ``cluster``
+        documents passing a parent's space for a child mask, and ``embed`` and
+        ``parametrize`` follow it. A space built directly through
+        :meth:`~cellpax.space.FittedSpace.fit` carries no mask and is never
+        checked, which is the escape hatch for a deliberate cross-population
+        comparison.
+
+        Parameters
+        ----------
+        space : FittedSpace
+            The caller's representation.
+        mask : str or None
+            The population the space is about to be applied to.
+        columns : str, FeatureCollection, sequence of str, or None
+            The caller's column choice, which must not contradict the space's.
+        population : str, default 'the mask'
+            Noun phrase naming ``mask`` in the error message.
+        cross_mask : bool, default False
+            Skip the population check.
+
+        Returns
+        -------
+        list of str
+            The space's columns, in its own order.
+
+        Raises
+        ------
+        ValueError
+            If ``columns`` contradicts the space, or it was fit on another mask.
+        """
+        cols = list(space.columns)
+        if columns is not None and self._resolve_columns(columns) != cols:
+            raise ValueError(
+                f"space= was fit on {cols}, which disagrees with columns=; "
+                f"omit columns= to use the space's own"
+            )
+        if not cross_mask and space.mask is not None and space.mask != mask:
+            raise ValueError(
+                f"space= was fit on mask {space.mask!r}, but {population} is "
+                f"{mask!r}; a PCA rotates to its own population's correlation "
+                f"structure (and any feature_weights with it), so the two have to "
+                f"be the same mask — refit with ft.space({mask!r}, ...)"
+            )
+        return cols
+
     # -- preprocessing ---------------------------------------------------------
 
     def preprocess(
@@ -2177,12 +2242,7 @@ class FeatureTable:
                     "space= already fixes the representation; apply alpha via "
                     "space.with_alpha(...) before passing it"
                 )
-            if columns is not None and list(space.columns) != cols:
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
-            cols = list(space.columns)
+            cols = self._validated_space(space, mask, columns, cross_mask=True)
             pca = None  # params marker: representation came from a passed space
             # the space applies ITS OWN frozen scaler (transform, not
             # transform_scaled): a parent's space passed for a child mask must
@@ -2340,20 +2400,9 @@ class FeatureTable:
         if space is None:
             features = self.features(name, scaled=True, columns=columns)
         else:
-            if columns is not None and self._resolve_columns(columns) != list(
-                space.columns
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
-            if space.mask is not None and space.mask != name:
-                raise ValueError(
-                    f"space= was fit on mask {space.mask!r}, but purity is being "
-                    f"evaluated on {name!r}; a PCA rotates to its own population's "
-                    f"correlation structure (and any feature_weights with it), so "
-                    f"the two have to be the same mask"
-                )
+            self._validated_space(
+                space, name, columns, population="the mask being evaluated"
+            )
             # the space's own frozen scaler, so a cross-mask space stays coherent
             features = space.transform(
                 self.features(name, scaled=False, columns=list(space.columns))
@@ -2590,20 +2639,7 @@ class FeatureTable:
                     "space= already fixes the representation; drop pca= (it would "
                     "be silently ignored otherwise)"
                 )
-            if columns is not None and list(space.columns) != self._resolve_columns(
-                columns
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
-            if space.mask is not None and space.mask != target:
-                raise ValueError(
-                    f"space= was fit on mask {space.mask!r}, but the target mask is "
-                    f"{target!r}; a PCA rotates to its own population's correlation "
-                    f"structure (and any feature_weights with it), so the two have "
-                    f"to be the same mask — refit with ft.space({target!r}, ...)"
-                )
+            self._validated_space(space, target, columns, population="the target mask")
             # the space applies ITS OWN frozen scaler (transform, not
             # transform_scaled), so a weighted or whitened fit built elsewhere
             # stays the geometry the labels were clustered in
@@ -2850,22 +2886,9 @@ class FeatureTable:
                     "space= already fixes the representation; drop pca= (it would "
                     "be silently ignored otherwise)"
                 )
-            if columns is not None and list(space.columns) != self._resolve_columns(
-                columns
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
-            if space.mask is not None and space.mask != source:
-                raise ValueError(
-                    f"space= was fit on mask {space.mask!r}, but the "
-                    f"reference's mask is {source!r}; a PCA rotates to its own "
-                    f"population's correlation "
-                    f"structure (and any feature_weights with it), so the two have "
-                    f"to be the same mask — refit with ft.space({source!r}, ...)"
-                )
-            cols = list(space.columns)
+            cols = self._validated_space(
+                space, source, columns, population="the reference's mask"
+            )
         else:
             cols = self._resolve_columns(columns)
         matrix, new_ids = self._incoming_rows(data, cols, cell_ids)
@@ -3175,13 +3198,7 @@ class FeatureTable:
         if space is None:
             data = self.features(mask, scaled=True, columns=columns)
         else:
-            if columns is not None and self._resolve_columns(columns) != list(
-                space.columns
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
+            self._validated_space(space, mask, columns, cross_mask=True)
             # the space's own frozen scaler, so a cross-mask space stays coherent
             data = space.transform(
                 self.features(mask, scaled=False, columns=list(space.columns))
@@ -3770,14 +3787,7 @@ class FeatureTable:
         else:
             # a space carries its own columns; a conflicting columns= would be
             # silently discarded otherwise, so it raises like cluster's does
-            if columns is not None and self._resolve_columns(columns) != list(
-                space.columns
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
-            cols = list(space.columns)
+            cols = self._validated_space(space, mask, columns, cross_mask=True)
             # the space's own frozen scaler, so a cross-mask space stays coherent
             data = space.transform(self.features(mask, scaled=False, columns=cols))
         internal_reduction: str | None = None
@@ -4006,7 +4016,10 @@ class FeatureTable:
             The representation neighbours are found in. ``None`` uses the mask's
             ``pca(0.95)`` fit, matching ``cluster``'s default, so the verdict is about the
             space the labels came from. Pass one built with an ``alpha`` to triage in a
-            whitened space.
+            whitened space, or a weighted one to triage in the space a weighted
+            clustering actually used. Must have been fit on the mask being triaged:
+            a verdict read off another population's geometry is a verdict about a
+            geometry these labels never came from.
 
         Returns
         -------
@@ -4025,12 +4038,10 @@ class FeatureTable:
         )
         cell_ids = self._cell_ids(name)
         codes = self._align_over_clustering(resolved, cell_ids)
-        if space is not None and columns is not None:
-            if self._resolve_columns(columns) != list(space.columns):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees "
-                    f"with columns=; omit columns= to use the space's own"
-                )
+        if space is not None:
+            self._validated_space(
+                space, name, columns, population="the mask being triaged"
+            )
         fitted = space if space is not None else self.space(name, columns=columns)
         # the space's own frozen scaler (transform, not transform_scaled), so a
         # cross-mask space stays coherent; identical for the same-mask default
@@ -4590,14 +4601,7 @@ class FeatureTable:
         cell_ids = cell_ids[keep]
 
         if space is not None:
-            if columns is not None and list(space.columns) != list(
-                self._resolve_columns(columns)
-            ):
-                raise ValueError(
-                    f"space= was fit on {list(space.columns)}, which disagrees with "
-                    "columns=; omit columns= to use the space's own"
-                )
-            cols = list(space.columns)
+            cols = self._validated_space(space, target, columns, cross_mask=True)
             # the space's own frozen scaler, matching cluster()/embed(): the curve
             # has to be fitted in the geometry the clusters were found in, or the
             # loadings describe a rotation nothing else used
