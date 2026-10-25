@@ -481,6 +481,7 @@ def test_clipped_scaler_factory_carries_its_configuration() -> None:
         "upper": 99.0,
         "mode": "sigma",
         "n_sigma": 3.0,
+        "base": "robust",
     }
     assert factory().named_steps["clipper"].n_sigma == 3.0
 

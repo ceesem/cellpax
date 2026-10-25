@@ -31,6 +31,10 @@ clustering, labeling, embedding, comparison, and persistence).
 
 ::: cellpax.clustering.quantile_scaler_factory
 
+::: cellpax.clustering.IdentityScaler
+
+::: cellpax.clustering.identity_scaler_factory
+
 ## Joining datasets
 
 Tables from separate datasets, harmonized into one space (see the guide's
@@ -45,6 +49,23 @@ Tables from separate datasets, harmonized into one space (see the guide's
 ::: cellpax.validate.cross_dataset_classification
 
 ::: cellpax.validate.TransferScore
+
+## Semi-aligned clustering
+
+Each dataset clustered in its own features, with an aligned embedding used only as
+the bridge that checks whether a partition reappears in the other dataset (see the
+guide's [Semi-aligned clustering](../guide.md#semi-aligned-clustering)). Built with
+`FeatureTable.transfer_bridge`.
+
+::: cellpax.bridge.TransferBridge
+
+::: cellpax.bridge.BridgeScore
+
+::: cellpax.bridge.GrainCorrespondence
+
+::: cellpax.bridge.VerdictRule
+
+::: cellpax.bridge.Carry
 
 ## Labels
 
@@ -87,6 +108,8 @@ Tables from separate datasets, harmonized into one space (see the guide's
 ::: cellpax.diagnostics.feature_correlation
 
 ::: cellpax.diagnostics.block_weights
+
+::: cellpax.diagnostics.effective_features
 
 ::: cellpax.diagnostics.tie_report
 

@@ -690,8 +690,11 @@ _STANDARD = "standard"
 _ROBUST = "robust"
 _ROBUST_PERCENTILE = "robust_percentile"
 _ROBUST_SIGMA = "robust_sigma"
+_STANDARD_PERCENTILE = "standard_percentile"
+_STANDARD_SIGMA = "standard_sigma"
 _QUANTILE = "quantile"
 _PERCENTILE_QUANTILE = "percentile_quantile"
+_IDENTITY = "identity"
 
 
 def _quantile_records(
@@ -775,17 +778,26 @@ def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.nd
             )
             _quantile_records(scaler, meta, arrays)
             return meta, arrays
-        if order != ["scaler", "clipper"] or type(scaler).__name__ != "RobustScaler":
+        base = type(scaler).__name__
+        if order != ["scaler", "clipper"] or base not in {
+            "RobustScaler",
+            "StandardScaler",
+        }:
             raise TypeError(
-                "only Pipeline([('scaler', RobustScaler()), ('clipper', ...)]) and "
-                "Pipeline([('clipper', PercentileClipper()), ('scaler', "
-                f"QuantileTransformer())]) pipelines can be frozen, got steps {order}"
+                "only Pipeline([('scaler', RobustScaler() or StandardScaler()), "
+                "('clipper', ...)]) and Pipeline([('clipper', PercentileClipper()), "
+                f"('scaler', QuantileTransformer())]) pipelines can be frozen, got "
+                f"steps {order}"
             )
-        arrays["scaler__center_"] = np.asarray(scaler.center_, dtype=float)
+        robust = base == "RobustScaler"
+        if robust:
+            arrays["scaler__center_"] = np.asarray(scaler.center_, dtype=float)
+        else:
+            arrays["scaler__mean_"] = np.asarray(scaler.mean_, dtype=float)
         arrays["scaler__scale_"] = np.asarray(scaler.scale_, dtype=float)
         name = type(clipper).__name__
         if name == "PercentileClipper":
-            meta["kind"] = _ROBUST_PERCENTILE
+            meta["kind"] = _ROBUST_PERCENTILE if robust else _STANDARD_PERCENTILE
             meta["lower"] = float(clipper.lower)
             meta["upper"] = float(clipper.upper)
             arrays["clipper__lower_bounds_"] = np.asarray(
@@ -797,7 +809,7 @@ def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.nd
         elif name == "SigmaClipper":
             # Nothing fitted to store, which is the reason to prefer it: a frozen
             # space carries no clip bounds for a future dataset to shift.
-            meta["kind"] = _ROBUST_SIGMA
+            meta["kind"] = _ROBUST_SIGMA if robust else _STANDARD_SIGMA
             meta["n_sigma"] = float(clipper.n_sigma)
         else:
             raise TypeError(f"cannot freeze clipper of type {name}")
@@ -815,14 +827,35 @@ def _scaler_records(fitted: Any) -> tuple[dict[str, Any] | None, dict[str, np.nd
     elif name == "QuantileTransformer":
         meta["kind"] = _QUANTILE
         _quantile_records(inner, meta, arrays)
+    elif name == "IdentityScaler":
+        meta["kind"] = _IDENTITY
+        meta["n_features"] = int(inner.n_features_in_)
     else:
         raise TypeError(
             f"cannot freeze a scaler of type {name}; supported: StandardScaler, "
-            "RobustScaler, QuantileTransformer, RobustScaler + "
+            "RobustScaler, QuantileTransformer, IdentityScaler, "
+            "RobustScaler/StandardScaler + "
             "PercentileClipper/SigmaClipper pipelines, and PercentileClipper + "
             "QuantileTransformer pipelines"
         )
     return meta, arrays
+
+
+def _base_scaler_from_records(standard: bool, arrays: dict[str, np.ndarray]) -> Any:
+    """Rebuild the fitted StandardScaler or RobustScaler half of a frozen scaler."""
+    from sklearn.preprocessing import RobustScaler, StandardScaler
+
+    scale = np.asarray(arrays["scaler__scale_"], dtype=float)
+    if standard:
+        scaler: Any = StandardScaler()
+        scaler.mean_ = np.asarray(arrays["scaler__mean_"], dtype=float)
+        scaler.var_ = scale**2
+    else:
+        scaler = RobustScaler()
+        scaler.center_ = np.asarray(arrays["scaler__center_"], dtype=float)
+    scaler.scale_ = scale
+    scaler.n_features_in_ = scale.size
+    return scaler
 
 
 def _scaler_from_records(
@@ -832,14 +865,16 @@ def _scaler_from_records(
     if meta is None:
         return None
     from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import RobustScaler, StandardScaler
 
-    from cellpax.clustering import PercentileClipper, SigmaClipper
+    from cellpax.clustering import IdentityScaler, PercentileClipper, SigmaClipper
     from cellpax.featuretable import FittedScaler
 
     kind = meta["kind"]
     inner: Any
-    if kind == _QUANTILE:
+    if kind == _IDENTITY:
+        inner = IdentityScaler()
+        inner.n_features_in_ = int(meta["n_features"])
+    elif kind == _QUANTILE:
         inner = _quantile_from_records(meta, arrays)
     elif kind == _PERCENTILE_QUANTILE:
         quantile_clipper = PercentileClipper(meta["lower"], meta["upper"])
@@ -855,20 +890,18 @@ def _scaler_from_records(
                 ("scaler", _quantile_from_records(meta, arrays)),
             ]
         )
-    elif kind == _STANDARD:
-        inner = StandardScaler()
-        inner.mean_ = np.asarray(arrays["scaler__mean_"], dtype=float)
-        inner.scale_ = np.asarray(arrays["scaler__scale_"], dtype=float)
-        inner.var_ = inner.scale_**2
-        inner.n_features_in_ = inner.mean_.size
-    else:
-        robust = RobustScaler()
-        robust.center_ = np.asarray(arrays["scaler__center_"], dtype=float)
-        robust.scale_ = np.asarray(arrays["scaler__scale_"], dtype=float)
-        robust.n_features_in_ = robust.center_.size
-        if kind == _ROBUST:
-            inner = robust
-        elif kind == _ROBUST_PERCENTILE:
+    elif kind in {_STANDARD, _ROBUST}:
+        inner = _base_scaler_from_records(kind == _STANDARD, arrays)
+    elif kind in {
+        _ROBUST_PERCENTILE,
+        _ROBUST_SIGMA,
+        _STANDARD_PERCENTILE,
+        _STANDARD_SIGMA,
+    }:
+        base = _base_scaler_from_records(
+            kind in {_STANDARD_PERCENTILE, _STANDARD_SIGMA}, arrays
+        )
+        if kind in {_ROBUST_PERCENTILE, _STANDARD_PERCENTILE}:
             clipper: Any = PercentileClipper(meta["lower"], meta["upper"])
             clipper.lower_bounds_ = np.asarray(
                 arrays["clipper__lower_bounds_"], dtype=float
@@ -876,13 +909,12 @@ def _scaler_from_records(
             clipper.upper_bounds_ = np.asarray(
                 arrays["clipper__upper_bounds_"], dtype=float
             )
-            inner = Pipeline([("scaler", robust), ("clipper", clipper)])
-        elif kind == _ROBUST_SIGMA:
-            sigma_clipper = SigmaClipper(meta["n_sigma"])
-            sigma_clipper.n_features_in_ = robust.center_.size
-            inner = Pipeline([("scaler", robust), ("clipper", sigma_clipper)])
         else:
-            raise ValueError(f"unknown frozen scaler kind {kind!r}")
+            clipper = SigmaClipper(meta["n_sigma"])
+            clipper.n_features_in_ = base.n_features_in_
+        inner = Pipeline([("scaler", base), ("clipper", clipper)])
+    else:
+        raise ValueError(f"unknown frozen scaler kind {kind!r}")
     shifts = meta.get("shifts")
     return FittedScaler(
         scaler=inner,

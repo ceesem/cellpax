@@ -101,11 +101,77 @@ def _scaler_tag(factory: Any) -> str | dict[str, Any]:
     )
 
 
+def _space_specs_to_manifest(table: Any) -> dict[str, dict[str, Any]]:
+    """Record each declared space so a reload refits it the same way.
+
+    A weighting given as a method name or array is recorded as such. A callable
+    can't be, so its weights are frozen to the values of the current fit — the
+    reloaded space reproduces this fit exactly, but won't recompute them if the
+    population or columns change later.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for name, spec in getattr(table, "_space_specs", {}).items():
+        boost = dict(spec.boost) if spec.boost else None
+        if spec.weights is None or isinstance(spec.weights, str):
+            weights: Any = spec.weights
+        elif callable(spec.weights):
+            frozen = table.fitted_space(name).feature_weights
+            weights = None if frozen is None else [float(w) for w in frozen]
+            boost = None  # already folded into the frozen weights
+        else:
+            weights = [float(w) for w in spec.weights]
+        out[name] = {
+            "mask": spec.mask,
+            "columns": (
+                list(spec.columns) if isinstance(spec.columns, tuple) else spec.columns
+            ),
+            "scaler": None if spec.scaler is None else _scaler_tag(spec.scaler),
+            "weights": weights,
+            "boost": boost,
+            "explained_variance": spec.explained_variance,
+            "variance_is_count": isinstance(spec.explained_variance, int),
+            "alpha": spec.alpha,
+            "eigenvalue_floor": spec.eigenvalue_floor,
+            "seed": spec.seed,
+        }
+    return out
+
+
+def _space_specs_from_manifest(records: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    from cellpax.featuretable import _SpaceSpec
+
+    specs = {}
+    for name, rec in records.items():
+        weights = rec["weights"]
+        if isinstance(weights, list):
+            weights = np.asarray(weights, dtype=float)
+        columns = rec["columns"]
+        variance = rec["explained_variance"]
+        specs[name] = _SpaceSpec(
+            mask=rec["mask"],
+            columns=tuple(columns) if isinstance(columns, list) else columns,
+            scaler=None if rec["scaler"] is None else _factory_from_tag(rec["scaler"]),
+            weights=weights,
+            boost=rec.get("boost"),
+            explained_variance=int(variance)
+            if rec.get("variance_is_count")
+            else float(variance),
+            alpha=float(rec["alpha"]),
+            eigenvalue_floor=float(rec["eigenvalue_floor"]),
+            seed=rec["seed"],
+        )
+    return specs
+
+
 def _factory_from_tag(tag: str | dict[str, Any]) -> Any:
     from cellpax.clustering import clipped_scaler_factory, make_clipped_scaler
     from cellpax.featuretable import _default_scaler_factory
 
     if isinstance(tag, dict):
+        if tag.get("kind") == "identity":
+            from cellpax.clustering import identity_scaler_factory
+
+            return identity_scaler_factory()
         if tag.get("kind") == "quantile":
             from cellpax.clustering import quantile_scaler_factory
 
@@ -127,6 +193,7 @@ def _factory_from_tag(tag: str | dict[str, Any]) -> Any:
             upper=tag.get("upper", 99.9),
             mode=tag.get("mode", "percentile"),
             n_sigma=tag.get("n_sigma", 5.0),
+            base=tag.get("base", "robust"),
         )
     known = {"standard": _default_scaler_factory, "clipped": make_clipped_scaler}
     if tag not in known:
@@ -285,6 +352,17 @@ def _arrays_frame(arrays: dict[str, np.ndarray]) -> pl.DataFrame:
                     "ndim": np.full(block.size, np.asarray(value).ndim, dtype=np.int64),
                 }
             )
+        )
+    if not frames:
+        # an identity scaler with no reduction has nothing fitted to store
+        return pl.DataFrame(
+            schema={
+                "array": pl.String,
+                "row": pl.Int64,
+                "col": pl.Int64,
+                "value": pl.Float64,
+                "ndim": pl.Int64,
+            }
         )
     return pl.concat(frames)
 
@@ -511,6 +589,7 @@ def _save_feature_table(
         "collections": {n: list(c.columns) for n, c in table._collections.items()},
         "transforms": dict(table._transforms),
         "validity": dict(getattr(table, "_validity", {})),
+        "space_specs": _space_specs_to_manifest(table),
         "scaler": _scaler_tag(table._scaler_factory),
         "embeddings": [[mask, ename] for (mask, ename) in table._embeddings],
         # the calls behind stored coordinates — the model itself is session-only,
@@ -640,6 +719,7 @@ def _load_feature_table(folio: DataFolio, name: str, *, scaler_factory: Any) -> 
     ft._label_meta = _labels_from_manifest(manifest)
     ft._transforms = dict(manifest["transforms"])
     ft._validity = dict(manifest.get("validity", {}))
+    ft._space_specs = _space_specs_from_manifest(manifest.get("space_specs", {}))
     ft._collections = {
         n: FeatureCollection(n, tuple(cols))
         for n, cols in manifest["collections"].items()

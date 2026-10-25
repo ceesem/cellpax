@@ -2,6 +2,98 @@
 
 ## Unreleased — conformal assignment
 
+- **`ft.define_space(name, mask, columns=, scaler=, weights=, boost=, ...)`** declares a
+  named space; every `space=` consumer (`cluster`, `embed`, `propagate_labels`,
+  `project_labels`, `neighborhood_purity`, `triage_labels`, `boundary_report`,
+  `transfer_bridge`, `parametrize`, `overcluster`) accepts the name, and a population left
+  `None` defaults to the space's mask. The scaler is per space (`None` follows the table);
+  weights are recomputed from the space's own scaled features. `ft.spaces`,
+  `ft.fitted_space(name)`, `ft.drop_space(name)`; declarations persist.
+- **`Recovery.by_label()` / `Recovery.confusion()`**: per-label recovery (n, recovered,
+  abstained, top confusion) and the full label × recovered-as table, named by the reference.
+- **`set_validity` warns when it replaces an existing domain**, since a column holds one
+  domain and per-class declarations over shared columns kept only the last.
+- **`with ft.using_scaler_factory(factory):`** scales under a temporary rule and
+  restores the outer factory and its cached fits on exit. Results made inside the
+  block are kept, not dropped; `save` and `set_scaler_factory` raise inside it.
+- **`ft.transfer_bridge(a, b, columns=Z, strata=…)`** → **`TransferBridge`** (new
+  module `cellpax.bridge`): semi-aligned clustering. Each dataset is clustered in its
+  own features, and an aligned embedding is used only as the bridge that checks whether
+  a partition reappears in the other dataset. `a` and `b` are masks, one population per
+  dataset.
+  - `scale=False` votes in the bridge columns' raw values instead of standardizing
+    them over both populations. Use it for an embedding whose per-dimension scale
+    is meaningful, such as a VAE latent: standardizing gives its near-inactive,
+    mostly-noise dimensions equal weight. Only the bridge coordinates change.
+  - `scale="per_mask"` fits one scaler per population, which removes each dataset's
+    own offset and spread in every bridge column. `scaler_factory=` picks the scaler,
+    e.g. `quantile_scaler_factory()` for a per-dataset rank transform. Use this for a
+    bridge in shared measurements rather than an aligned embedding.
+  - `score_runs(clus_a, clus_b)` → `GrainCorrespondence`. It scores every stored Leiden
+    run pair at matching realized grain without rebuilding a consensus. Each partition
+    is carried with one sparse one-hot product against vote matrices built once.
+  - Each pair reports:
+    - `excess`: AMI over a random-Voronoi null at the same counts.
+    - `efficiency`: AMI over the partition's own within-dataset ceiling through the
+      bridge, which separates bridge blur from irreproducibility.
+    - `strata_ami` / `strata_excess`: agreement inside each stratum, so the subdivision
+      of a subclass is scored and the subclasses themselves are not.
+    - Per-cluster verdict counts under `VerdictRule` (`reproduces`, `weak`, `refuted`,
+      `unverifiable`, `absent`) with the null's `reproduces` count, plus coverage.
+  - `curve()` pools pairs into log-spaced grain bins. `suggest_band()` applies the
+    one-standard-error rule (on `reproduces_excess` by default) and returns each
+    dataset's resolution range. It flags and warns when the band sits at the edge of
+    the sweep.
+  - `score_labels` / `score` give a `BridgeScore` with a per-cluster frame and
+    `verdicts()`. Run pairs and direct scores share one soft-purity path, so they agree.
+  - Mutual-only cross edges let types one dataset lacks abstain.
+  - `score_consensus(clus_a, clus_b, band=…)` narrows each clustering to its band,
+    with the resolution minimum locked and the maximum taken from the band. It cuts
+    the re-consensed hierarchy at every nested level and scores the level pairs with
+    the same readings and null as runs.
+  - `refine_columns=` diffuses every vote (cross, ceiling and null alike) over the
+    receiving population's own kNN graph, using the bridge as a label-spreading prior.
+    Cells with no bridge vote stay abstained.
+  - `spaces={mask: FittedSpace}` draws the null, and with `refine_columns=True` the
+    refinement, in each population's own clustering space (block-weighted, say)
+    instead of plain scaled columns.
+  - Verdicts are two-sided: `reproduces` needs a mutual best match passing both ways,
+    and the new `nested` and `split` verdicts name one-to-many correspondences, so
+    over-splitting no longer counts as reproduction. `BridgeScore.anchors()` lists the
+    proposed one-to-one, split and nested correspondences.
+  - Headline shares (`reproduce_share`, `anchored_share`, `anchored_cells`) are taken
+    over *all* counted clusters, unverifiable ones included.
+  - `curve` and `suggest_band` pool each run's best correspondence (`matched()`) by
+    default.
+  - The within-dataset ceiling is never refined, which keeps it leave-one-out.
+  - `transfer_bridge(mask=…)` holds out the rest of each population (`held_out`), so one
+    spatial half can choose while the other reports.
+  - `GrainCorrespondence.pairs()` pools run pairs per resolution pair.
+    `complement(side, n_clusters_min=…, …)` takes a band chosen in one dataset and
+    returns the corresponding band in the other: best partners by `ami`, a band
+    tolerant to one SE, and the ridge. It warns at sweep edges and at the `band_ratio`
+    limit. `suggest_band` adds a joint `best_pair`.
+  - Cells missing bridge values are clustered as usual but left out of the bridge.
+    They're recorded as `unbridged` and ignored when a clustering is aligned. A
+    warning reports the share, and `min_bridged=0.8` refuses a population too
+    sparsely covered to stand for. `bridged_fraction()` reports coverage.
+
+- **`identity_scaler_factory()`** / **`IdentityScaler`**: a no-op scaler for features
+  that are already scaled, such as embedding coordinates. Unlike an ad-hoc
+  `FunctionTransformer` factory, it saves and reloads through the manifest and freezes
+  into `FittedSpace`.
+- **`block_weights(method="redundancy")`**: a continuous weighting with no dendrogram.
+  Column *j* counts for `1 / Σ_k ρ²_jk` of its variance, and the returned multiplier is
+  the square root of that. Copies share one unit, independent columns keep 1, and an
+  equicorrelated group totals its participation ratio. The `r²` values are debiased for
+  sample size. `block_threshold` and `linkage_method` now default to `None` and are
+  refused by this method.
+- **`effective_features`**: per-feature variance weight, multiplier and most-correlated
+  partner, with optional families (`families=ft.var`), for the per-family and total
+  effective number of features.
+- **`make_clipped_scaler(base="standard")`** / **`clipped_scaler_factory(base=…)`**:
+  z-score then clip, so `n_sigma` is in SDs. Both clip modes freeze into `FittedSpace`
+  (`standard_sigma`, `standard_percentile`) and persist through the manifest.
 - **`join_datasets(tables, scaler_factory=..., strata=...)`** (also
   `FeatureTable.join_datasets`) puts tables from separate datasets into one space.
   - Each dataset, or each `(dataset, stratum)`, gets its own fit, and every other

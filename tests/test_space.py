@@ -298,6 +298,66 @@ def test_a_sigma_clip_contributes_no_fitted_bounds() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("mode", "kind"),
+    [("sigma", "standard_sigma"), ("percentile", "standard_percentile")],
+)
+def test_a_standard_clipped_scaler_freezes_and_restores(mode, kind) -> None:
+    from cellpax.clustering import make_clipped_scaler
+    from cellpax.featuretable import FittedScaler
+
+    rng = np.random.default_rng(0)
+    raw = rng.standard_t(3, size=(200, 4)) * 2.0 + 5.0
+    scaler = FittedScaler(
+        scaler=make_clipped_scaler(mode=mode, n_sigma=3.0, base="standard"),
+        transforms=[None] * 4,
+    )
+    scaler.scaler.fit(raw)
+    space = FittedSpace.fit(scaler.transform(raw), columns=_columns(raw), scaler=scaler)
+
+    meta, arrays = space.to_records()
+    assert meta["scaler"]["kind"] == kind
+    assert "scaler__mean_" in arrays and "scaler__center_" not in arrays
+    held_out = rng.standard_t(3, size=(50, 4)) * 2.0 + 5.0
+    np.testing.assert_allclose(
+        FittedSpace.from_records(meta, arrays).transform(held_out),
+        space.transform(held_out),
+    )
+
+
+def test_make_clipped_scaler_defaults_to_robust_and_validates_base() -> None:
+    from sklearn.preprocessing import RobustScaler, StandardScaler
+
+    from cellpax.clustering import make_clipped_scaler
+
+    assert isinstance(make_clipped_scaler().named_steps["scaler"], RobustScaler)
+    assert isinstance(
+        make_clipped_scaler(base="standard").named_steps["scaler"], StandardScaler
+    )
+    with pytest.raises(ValueError, match="base must be"):
+        make_clipped_scaler(base="minmax")
+
+
+def test_redundancy_weights_freeze_with_the_fit() -> None:
+    """Weights from the mask's scaled rows ride through transform and persistence."""
+    from cellpax.diagnostics import block_weights
+
+    data = _redundant_block()
+    names = _columns(data)
+    w = block_weights(data, names, method="redundancy")
+    plain, weighted = _fit(data), _fit(data, feature_weights=w)
+    assert weighted.explained_variance_ratio_[0] < plain.explained_variance_ratio_[0]
+
+    meta, arrays = weighted.to_records()
+    restored = FittedSpace.from_records(meta, arrays)
+    np.testing.assert_allclose(restored.feature_weights, w)
+    held_out = np.random.default_rng(1).normal(size=(20, data.shape[1]))
+    expected = (held_out * w - weighted.mean_) @ weighted.components_.T
+    np.testing.assert_allclose(
+        restored.scores(held_out), expected, rtol=1e-10, atol=1e-10
+    )
+
+
 def test_an_unfreezable_scaler_raises_rather_than_downgrading() -> None:
     from cellpax.featuretable import FittedScaler
 

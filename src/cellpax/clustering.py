@@ -33,7 +33,7 @@ from scipy.sparse import hstack as sparse_hstack
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 
 if TYPE_CHECKING:
     from cellpax.labels import LabelSet
@@ -148,8 +148,9 @@ class SigmaClipper(BaseEstimator, TransformerMixin):
     populations, which a percentile rule pulls toward the bulk by construction.
 
     ``n_sigma`` is in the units of whatever scaled the data, and in
-    :func:`make_clipped_scaler` that is :class:`~sklearn.preprocessing.RobustScaler`,
-    which divides by the **IQR, not the standard deviation**. For a Gaussian
+    :func:`make_clipped_scaler` that is by default
+    :class:`~sklearn.preprocessing.RobustScaler`, which divides by the **IQR, not the
+    standard deviation** (``base="standard"`` makes it genuine SDs). For a Gaussian
     IQR ≈ 1.349σ, so ``n_sigma=5`` is roughly ±6.7 Gaussian σ — do not read ``5.0``
     as five standard deviations. Useful sweep range is nearer 3–5 than 5–10.
 
@@ -226,14 +227,78 @@ class SigmaClipper(BaseEstimator, TransformerMixin):
         return np.asarray(X)
 
 
+class IdentityScaler(BaseEstimator, TransformerMixin):
+    """Pass features through unchanged, for columns that arrive already scaled.
+
+    Use it, through :func:`identity_scaler_factory`, when the features are on a common
+    scale already — learned embedding coordinates, or columns normalized upstream — so
+    that refitting a scaler would only rescale what was meant to be compared as-is. Any
+    per-feature ``preprocess`` transforms still apply; only the scaler step is a no-op.
+
+    Attributes
+    ----------
+    n_features_in_ : int
+        Number of features seen at ``fit``; the only fitted state.
+    """
+
+    def fit(self, X: np.ndarray, y: Any = None) -> IdentityScaler:
+        """Record the feature count; there is nothing else to fit.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Feature matrix used only for its width.
+        y : object, optional
+            Ignored; present for scikit-learn API compatibility.
+
+        Returns
+        -------
+        IdentityScaler
+            This scaler.
+        """
+        self.n_features_in_ = np.asarray(X).shape[1]
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Return ``X`` unchanged.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            The same matrix.
+        """
+        return np.asarray(X)
+
+    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
+        """Return ``X`` unchanged.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            The same matrix.
+        """
+        return np.asarray(X)
+
+
 def make_clipped_scaler(
     lower: float = 0.1,
     upper: float = 99.9,
     *,
     mode: Literal["percentile", "sigma"] = "percentile",
     n_sigma: float = 5.0,
+    base: Literal["robust", "standard"] = "robust",
 ) -> Pipeline:
-    """RobustScaler followed by clipping (dfc's default scaler).
+    """A scaler followed by clipping — RobustScaler by default (dfc's default scaler).
 
     Parameters
     ----------
@@ -242,13 +307,21 @@ def make_clipped_scaler(
     mode : {'percentile', 'sigma'}, default 'percentile'
         Which clipping rule to use. ``'percentile'`` is the historical behaviour.
     n_sigma : float, default 5.0
-        Bound for ``mode="sigma"``, in the units of the preceding ``RobustScaler`` — that
-        is **IQR units, not standard deviations**. Ignored by ``mode="percentile"``.
+        Bound for ``mode="sigma"``, in the units of the preceding scaler — **IQR units**
+        under ``base="robust"``, standard deviations under ``base="standard"``. Ignored by
+        ``mode="percentile"``.
+    base : {'robust', 'standard'}, default 'robust'
+        The scaler that runs before the clipper. ``'standard'`` z-scores, so the scaled
+        columns have unit variance up to what the clip removes — the units
+        :func:`~cellpax.diagnostics.block_weights`' ``'redundancy'`` method reads its
+        weights in. Its mean and SD are fit on the *unclipped* data, so the outliers
+        being clipped widen the bound that clips them; negligible at thousands of cells,
+        worth knowing at hundreds.
 
     Returns
     -------
     sklearn.pipeline.Pipeline
-        ``RobustScaler`` then the chosen clipper. Pass the *factory*
+        The base scaler then the chosen clipper. Pass the *factory*
         (:func:`clipped_scaler_factory`) rather than this to
         ``FeatureTable(scaler_factory=...)``, since each ``(mask, columns)`` pair needs its
         own fit.
@@ -261,8 +334,8 @@ def make_clipped_scaler(
     Prefer ``mode="sigma"`` for cohorts of a few hundred cells, where a percentile bound
     is set by one or two observations and an outlier ends up choosing its own bound, and
     wherever a rare-but-real population must not be dragged toward the bulk. See
-    :class:`SigmaClipper` for what ``n_sigma`` actually measures — it is IQR units, not
-    standard deviations.
+    :class:`SigmaClipper` for what ``n_sigma`` actually measures — under the default
+    ``base="robust"`` it is IQR units, not standard deviations.
 
     Clipping runs *after* scaling in both modes, which is what gives ``n_sigma``
     its units.
@@ -274,10 +347,16 @@ def make_clipped_scaler(
     else:
         raise ValueError(
             f"mode must be 'percentile' or 'sigma', got {mode!r}; "
-            "'sigma' clips at ±n_sigma in RobustScaler (IQR) units and is the "
+            "'sigma' clips at ±n_sigma in the base scaler's units and is the "
             "sample-size-independent choice"
         )
-    return Pipeline([("scaler", RobustScaler()), ("clipper", clipper)])
+    if base == "robust":
+        scaler: Any = RobustScaler()
+    elif base == "standard":
+        scaler = StandardScaler()
+    else:
+        raise ValueError(f"base must be 'robust' or 'standard', got {base!r}")
+    return Pipeline([("scaler", scaler), ("clipper", clipper)])
 
 
 def clipped_scaler_factory(
@@ -286,6 +365,7 @@ def clipped_scaler_factory(
     *,
     mode: Literal["percentile", "sigma"] = "percentile",
     n_sigma: float = 5.0,
+    base: Literal["robust", "standard"] = "robust",
 ) -> Callable[[], Pipeline]:
     """Return a zero-argument factory producing a fresh clipped scaler.
 
@@ -296,7 +376,10 @@ def clipped_scaler_factory(
     mode : {'percentile', 'sigma'}, default 'percentile'
         Which clipping rule the produced scalers use.
     n_sigma : float, default 5.0
-        Bound for ``mode="sigma"``, in IQR units — see :class:`SigmaClipper`.
+        Bound for ``mode="sigma"``, in the base scaler's units — see
+        :class:`SigmaClipper`.
+    base : {'robust', 'standard'}, default 'robust'
+        The scaler ahead of the clipper — see :func:`make_clipped_scaler`.
 
     Returns
     -------
@@ -313,7 +396,9 @@ def clipped_scaler_factory(
     """
 
     def factory() -> Pipeline:
-        return make_clipped_scaler(lower=lower, upper=upper, mode=mode, n_sigma=n_sigma)
+        return make_clipped_scaler(
+            lower=lower, upper=upper, mode=mode, n_sigma=n_sigma, base=base
+        )
 
     factory._cellpax_scaler_params = {  # type: ignore[attr-defined]
         "kind": "clipped",
@@ -321,6 +406,7 @@ def clipped_scaler_factory(
         "upper": float(upper),
         "mode": mode,
         "n_sigma": float(n_sigma),
+        "base": base,
     }
     return factory
 
@@ -407,6 +493,27 @@ def quantile_scaler_factory(
         "subsample": int(subsample),
         "random_state": int(random_state),
     }
+    return factory
+
+
+def identity_scaler_factory() -> Callable[[], Any]:
+    """Return a factory producing an :class:`IdentityScaler`, for pre-scaled features.
+
+    Pass the result as ``FeatureTable(scaler_factory=identity_scaler_factory())`` when
+    the feature columns are already on the scale distances should be measured in.
+    Unlike an ad-hoc ``FunctionTransformer`` factory, it carries its configuration, so
+    the table saves, reloads, and freezes into a ``FittedSpace``.
+
+    Returns
+    -------
+    callable
+        A zero-argument callable returning a fresh :class:`IdentityScaler`.
+    """
+
+    def factory() -> Any:
+        return IdentityScaler()
+
+    factory._cellpax_scaler_params = {"kind": "identity"}  # type: ignore[attr-defined]
     return factory
 
 

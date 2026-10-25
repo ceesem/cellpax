@@ -19,10 +19,12 @@ Design principles honored here (from the dfc audit):
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import warnings
 import zlib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
     from anndata import AnnData
 
     from cellpax.assign import Assignment
+    from cellpax.bridge import TransferBridge
     from cellpax.clustering import Clustering, SimilarityMatrix
     from cellpax.compare import Comparison
     from cellpax.gradient import Gradient
@@ -783,6 +786,50 @@ class _CollectionAccessor:
         return f"FeatureCollections({self.names})"
 
 
+@dataclass(frozen=True)
+class _SpaceSpec:
+    """A declared space: everything ``FittedSpace`` needs, held until first use."""
+
+    mask: str
+    columns: str | tuple[str, ...] | None
+    scaler: Any
+    weights: Any
+    boost: Mapping[str, float] | None
+    explained_variance: float | int
+    alpha: float
+    eigenvalue_floor: float
+    seed: int | None
+
+
+def _accepts_space_name(mask_param: str | None):
+    """Let a ``space=`` consumer take the name of a :meth:`FeatureTable.define_space`.
+
+    A name resolves to its fitted space, and when the method's population argument
+    (``mask_param``) is left ``None`` it defaults to the space's own mask — the
+    population the space was declared for. An explicit population still goes
+    through the method's usual ``_validated_space`` check.
+    """
+
+    def decorate(method):
+        signature = inspect.signature(method)
+
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            bound = signature.bind(self, *args, **kwargs)
+            space = bound.arguments.get("space")
+            if isinstance(space, str):
+                spec = self._space_spec(space)
+                bound.arguments["space"] = self.fitted_space(space)
+                if mask_param is not None and bound.arguments.get(mask_param) is None:
+                    bound.arguments[mask_param] = spec.mask
+                return method(*bound.args, **bound.kwargs)
+            return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
 class FeatureTable:
     """A polars-native cell table with named masks and on-the-fly scaling.
 
@@ -868,6 +915,14 @@ class FeatureTable:
             scaler_factory or _default_scaler_factory
         )
         self._scaler_cache: dict[tuple[str, tuple[str, ...]], FittedScaler] = {}
+        # (factory, scaler cache, space cache) set aside by each enclosing
+        # using_scaler_factory block, restored on exit
+        self._scaler_stack: list[tuple[Any, dict, dict]] = []
+        # define_space declarations, and the fits of those with their own scaler
+        # (the rest live in _space_cache via space()), keyed by name with the
+        # columns they were fit on so a redefined collection refits
+        self._space_specs: dict[str, _SpaceSpec] = {}
+        self._named_space_cache: dict[str, tuple[tuple[str, ...], FittedSpace]] = {}
         # the scaling+PCA a clustering is computed in, keyed on the *fit* only: alpha and
         # eigenvalue_floor are views over it, so a whitening sweep cannot refit the space
         self._space_cache: dict[
@@ -1163,6 +1218,14 @@ class FeatureTable:
         column = _mask_column(name)
         if column not in self._df.columns:
             raise KeyError(f"Unknown mask {name!r}; available: {self.masks}")
+        declared = sorted(
+            n for n, spec in self._space_specs.items() if spec.mask == name
+        )
+        if declared:
+            raise ValueError(
+                f"mask {name!r} is the population of space(s) {declared}; drop_space "
+                f"or redefine them before dropping it"
+            )
         backed = sorted(f for f, m in self._validity.items() if m == name)
         if backed:
             raise ValueError(
@@ -1177,6 +1240,15 @@ class FeatureTable:
         self._scaler_cache = {
             key: fitted for key, fitted in self._scaler_cache.items() if key[0] != mask
         }
+        # a mask redefined inside a using_scaler_factory block is stale for the
+        # set-aside rules too, or exiting the block would restore the old membership
+        for _, scalers, spaces in self._scaler_stack:
+            for cache in (scalers, spaces):
+                for key in [key for key in cache if key[0] == mask]:
+                    del cache[key]
+        for space_name, spec in self._space_specs.items():
+            if spec.mask == mask:
+                self._named_space_cache.pop(space_name, None)
         # an embedding model fit in the old scaled space would silently project new
         # cells into coordinates the stored ones no longer share, so it goes too
         self._embedding_models = {
@@ -1208,6 +1280,8 @@ class FeatureTable:
 
     def _invalidate_feature_fits(self, reason: str) -> None:
         """Drop every fit and stored result whose scaled space no longer exists."""
+        self._clear_set_aside_caches()
+        self._named_space_cache = {}
         self._scaler_cache = {}
         self._embedding_models = {}
         self._space_cache = {}
@@ -1326,6 +1400,15 @@ class FeatureTable:
             for cname, collection in self._collections.items():
                 lines.append(f"  {cname:<24} {len(collection.columns):>3} columns")
 
+        if self._space_specs:
+            lines.append(f"\nspaces ({len(self._space_specs)})")
+            for row in self.spaces.iter_rows(named=True):
+                lines.append(
+                    f"  {row['name']:<24} on {row['mask']!r}: {row['columns']} "
+                    f"({row['n_features']}), scaler {row['scaler']}, "
+                    f"weights {row['weights']}"
+                )
+
         if self._validity:
             lines.append("\nvalidity domains")
             by_mask: dict[str, list[str]] = {}
@@ -1425,6 +1508,11 @@ class FeatureTable:
         FeatureTable
             This table, after invalidating results fitted in the old scaled space.
         """
+        if self._scaler_stack:
+            raise RuntimeError(
+                "set_scaler_factory inside a using_scaler_factory block; the block "
+                "restores its outer factory on exit, so swap after it instead"
+            )
         validated = _validate_scaler_factory(scaler_factory)
         if validated is self._scaler_factory:
             return self
@@ -1433,6 +1521,54 @@ class FeatureTable:
             "the scaler factory was swapped, changing every scaled value"
         )
         return self
+
+    @contextmanager
+    def using_scaler_factory(self, scaler_factory: Any) -> Iterator["FeatureTable"]:
+        """Scale under a different rule for the duration of a ``with`` block.
+
+        The temporary form of :meth:`set_scaler_factory`, for a one-off pass in
+        another space — clustering on a pre-tuned embedding under the identity
+        scaler, say, in a table that otherwise sigma-clips::
+
+            with ft.using_scaler_factory(cpx.identity_scaler_factory()):
+                ft.cluster("exc", columns="zembed", name="z_subclass")
+
+        Scalers and clustering spaces are fit fresh inside the block and
+        discarded on exit, when the outer factory and its cached fits come back
+        untouched. Nothing else is managed: embeddings, clusterings, and labels
+        made inside the block stay on the table afterwards, and keeping track of
+        which rule produced them is up to you. ``save`` and
+        ``set_scaler_factory`` are refused inside the block, since either would
+        record a rule the table is about to drop.
+
+        Parameters
+        ----------
+        scaler_factory : callable
+            Zero-argument callable returning an unfitted scikit-learn transformer.
+
+        Returns
+        -------
+        contextmanager
+            Yields this table, scaling under ``scaler_factory``.
+        """
+        validated = _validate_scaler_factory(scaler_factory)
+        self._scaler_stack.append(
+            (self._scaler_factory, self._scaler_cache, self._space_cache)
+        )
+        self._scaler_factory = validated
+        self._scaler_cache = {}
+        self._space_cache = {}
+        try:
+            yield self
+        finally:
+            self._scaler_factory, self._scaler_cache, self._space_cache = (
+                self._scaler_stack.pop()
+            )
+
+    def _clear_set_aside_caches(self) -> None:
+        for _, scalers, spaces in self._scaler_stack:
+            scalers.clear()
+            spaces.clear()
 
     def set_id_column(
         self,
@@ -1603,6 +1739,8 @@ class FeatureTable:
                 how="left",
             )
         self._var = pl.concat([self._var, new_var], how="diagonal")
+        self._clear_set_aside_caches()
+        self._named_space_cache.clear()
         self._scaler_cache.clear()
         self._embedding_models.clear()
         self._space_cache.clear()
@@ -1769,6 +1907,19 @@ class FeatureTable:
                 "the 'all' mask is the default domain; pass where=None to clear"
             )
         self.mask_series(where)  # raises with the available masks if unknown
+        # a column holds one domain, so a second declaration replaces the first —
+        # declaring per-class domains over shared columns silently keeps only the last
+        replaced = {
+            self._validity[c] for c in chosen if self._validity.get(c, where) != where
+        }
+        if replaced:
+            n = sum(1 for c in chosen if self._validity.get(c, where) != where)
+            warnings.warn(
+                f"set_validity replaced the domain of {n} column(s) previously valid "
+                f"on {sorted(replaced)} with {where!r}; a column has one domain, so "
+                f"to keep both, declare a mask covering their union",
+                stacklevel=2,
+            )
         for column in chosen:
             self._validity[column] = where
         return self
@@ -2022,6 +2173,7 @@ class FeatureTable:
 
     # -- clustering ------------------------------------------------------------
 
+    @_accepts_space_name("mask")
     def cluster(
         self,
         mask: str | None = None,
@@ -2040,7 +2192,7 @@ class FeatureTable:
         pca: bool | float = 0.95,
         alpha: float = 0.0,
         eigenvalue_floor: float = 0.0,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         feature_weights: np.ndarray | None = None,
         seed: int | None = None,
         n_jobs: int = -1,
@@ -2098,7 +2250,7 @@ class FeatureTable:
             Added to each eigenvalue before the ``alpha`` scaling, bounding how much a
             near-degenerate component can be amplified. ``ft.space(mask).noise_floor`` is
             the recommended value whenever ``alpha > 0``.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             Pre-fitted representation. It cannot be combined with ``pca``, ``alpha``,
             ``eigenvalue_floor``, or ``feature_weights`` choices.
         feature_weights : ndarray, optional
@@ -2344,6 +2496,7 @@ class FeatureTable:
             self._clusterings[name] = result
         return result
 
+    @_accepts_space_name("mask")
     def neighborhood_purity(
         self,
         labels: "LabelSet | str",
@@ -2351,7 +2504,7 @@ class FeatureTable:
         mask: str | None = None,
         columns: str | FeatureCollection | Sequence[str] | None = None,
         n_neighbors: int = 20,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
     ) -> pl.DataFrame:
         """Per-cell label purity among self-excluded nearest feature-space neighbors.
 
@@ -2372,7 +2525,7 @@ class FeatureTable:
             Feature space used to find neighbors.
         n_neighbors : int, default=20
             Number of self-excluded neighbors per cell.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             The representation neighbors are found in, from :meth:`space`. ``None``
             — the default — uses the **raw scaled features at full
             dimensionality**, unlike ``cluster``, which reduces to ``pca(0.95)``.
@@ -2418,6 +2571,7 @@ class FeatureTable:
             }
         )
 
+    @_accepts_space_name("to")
     def propagate_labels(
         self,
         labels: "LabelSet | str",
@@ -2428,7 +2582,7 @@ class FeatureTable:
         ladder: Sequence[str | FeatureCollection] | None = None,
         n_neighbors: int = 30,
         pca: bool | float = 0.95,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         weights: Literal["uniform", "distance"] | None = None,
         preserve_labeled: bool = True,
         min_confidence: float | None = None,
@@ -2532,7 +2686,7 @@ class FeatureTable:
             Neighborhood size.
         pca : bool or float, default=0.95
             PCA switch or explained-variance target.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             Pre-fitted representation to propagate in, replacing the target
             mask's default fit; required to match a clustering built with
             ``feature_weights`` or its own space. Must have been fit on ``to``.
@@ -2743,6 +2897,7 @@ class FeatureTable:
             )
         return matrix, ids
 
+    @_accepts_space_name("mask")
     def project_labels(
         self,
         data: pl.DataFrame | np.ndarray,
@@ -2754,7 +2909,7 @@ class FeatureTable:
         method: Literal["vote", "spread"] = "vote",
         n_neighbors: int = 30,
         pca: bool | float = 0.95,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         weights: Literal["uniform", "distance"] | None = None,
         min_confidence: float | None = None,
         mutual: bool = True,
@@ -2837,7 +2992,7 @@ class FeatureTable:
             Neighborhood size.
         pca : bool or float, default=0.95
             PCA switch or explained-variance target.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             Pre-fitted representation both populations go through, replacing
             the mask's default fit; required to match a clustering built with
             ``feature_weights`` or its own space. Must have been fit on the
@@ -3134,6 +3289,7 @@ class FeatureTable:
             rung_recovery=recoveries,
         )
 
+    @_accepts_space_name("mask")
     def overcluster(
         self,
         mask: str | None = None,
@@ -3145,7 +3301,7 @@ class FeatureTable:
         graph_type: str = "knn",
         prune: float = 0.0,
         min_cluster_size: int = 1,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         seed: int | None = None,
         name: str = "leiden",
     ) -> "LabelSet":
@@ -3171,7 +3327,7 @@ class FeatureTable:
             Jaccard floor for ``graph_type="snn_jaccard"``; ignored otherwise.
         min_cluster_size : int, default 1
             Clusters smaller than this become ``-1``.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             The representation to partition, from :meth:`space`. ``None`` — the default —
             uses the **raw scaled features at full dimensionality**, unlike ``cluster``,
             which reduces to ``pca(0.95)``. That asymmetry used to be implicit; pass
@@ -3673,6 +3829,7 @@ class FeatureTable:
 
     # -- embeddings ------------------------------------------------------------
 
+    @_accepts_space_name("mask")
     def embed(
         self,
         mask: str | None = None,
@@ -3681,7 +3838,7 @@ class FeatureTable:
         columns: str | FeatureCollection | Sequence[str] | None = None,
         n_components: int = 2,
         name: str | None = None,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         seed: int | None = None,
         **kwargs: Any,
     ) -> pl.DataFrame:
@@ -3706,7 +3863,7 @@ class FeatureTable:
             embedding two column sets with the same ``method`` does not silently overwrite
             one another. A raw column list carries no name, so pass ``name`` explicitly
             when embedding one.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             The representation to embed, from :meth:`space`. ``None`` — the default —
             embeds the mask's **raw scaled features at full dimensionality**. Passing one
             embeds ``space.transform_scaled(...)`` instead, so the picture is of a reduced
@@ -3972,6 +4129,7 @@ class FeatureTable:
                     stacklevel=3,
                 )
 
+    @_accepts_space_name("mask")
     def triage_labels(
         self,
         labels: "LabelSet | str",
@@ -3980,7 +4138,7 @@ class FeatureTable:
         columns: str | FeatureCollection | Sequence[str] | None = None,
         n_neighbors: int = 30,
         majority: float = 0.5,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
     ) -> pl.DataFrame:
         """Classify each cell by what its feature-space neighbours are labelled.
 
@@ -4012,7 +4170,7 @@ class FeatureTable:
             Below it on every label, the cell is ``"mixed"``. Raising it moves cells from
             ``"own"``/``"other"`` into ``"mixed"``, i.e. demands more agreement before
             calling a cell explained.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             The representation neighbours are found in. ``None`` uses the mask's
             ``pca(0.95)`` fit, matching ``cluster``'s default, so the verdict is about the
             space the labels came from. Pass one built with an ``alpha`` to triage in a
@@ -4480,6 +4638,7 @@ class FeatureTable:
             },
         )
 
+    @_accepts_space_name("mask")
     def parametrize(
         self,
         mask: str | None = None,
@@ -4489,7 +4648,7 @@ class FeatureTable:
         columns: str | FeatureCollection | Sequence[str] | None = None,
         pca: bool | float = 0.95,
         span: float = 0.1,
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         orient_by: str | None = None,
         nuisance: Sequence[str] | None = None,
         dimension_gate: float = 2.5,
@@ -4544,7 +4703,7 @@ class FeatureTable:
             PCA switch or explained-variance target.
         span : float, default=0.3
             Principal-curve smoothing span.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             Pre-fitted representation, replacing ``columns`` and ``pca``.
         orient_by : str, optional
             Column whose correlation sets coordinate direction.
@@ -4850,6 +5009,7 @@ class FeatureTable:
             seed=seed,
         )
 
+    @_accepts_space_name(None)
     def boundary_report(
         self,
         clustering: "Clustering | str",
@@ -4859,7 +5019,7 @@ class FeatureTable:
         min_cluster_size: int = 1,
         n_neighbors: int = 15,
         density: str = "knn",
-        space: FittedSpace | None = None,
+        space: FittedSpace | str | None = None,
         **thresholds: float,
     ) -> pl.DataFrame:
         """Per-cluster-pair evidence: is each boundary a gap or a cut?
@@ -4893,7 +5053,7 @@ class FeatureTable:
             Neighborhood size for connectivity and density evidence.
         density : str, default="knn"
             Density estimator used by the boundary analysis.
-        space : FittedSpace, optional
+        space : FittedSpace or str, optional
             Explicit geometry when it cannot be reconstructed.
         **thresholds : float
             Evidence thresholds forwarded to the boundary classifier.
@@ -5174,6 +5334,288 @@ class FeatureTable:
         if alpha or eigenvalue_floor:
             fitted = fitted.with_alpha(alpha, eigenvalue_floor=eigenvalue_floor)
         return fitted
+
+    def define_space(
+        self,
+        name: str,
+        mask: str | None = None,
+        *,
+        columns: str | FeatureCollection | Sequence[str] | None = None,
+        scaler: Callable[[], Any] | None = None,
+        weights: str | np.ndarray | Callable[..., np.ndarray] | None = None,
+        boost: Mapping[str, float] | None = None,
+        explained_variance: float | int = 0.95,
+        alpha: float = 0.0,
+        eigenvalue_floor: float = 0.0,
+        seed: int | None = None,
+    ) -> "FeatureTable":
+        """Declare a named space: which cells, which features, and how they're scaled.
+
+        A space is the whole representation cells are compared in — the population
+        it's fit on, the columns, the scaling rule, any per-feature weights, and the
+        PCA. Declaring it once under a name keeps those choices together, so every
+        consumer can take ``space="name"`` instead of a hand-built
+        :class:`~cellpax.space.FittedSpace`::
+
+            ft.define_space("joint_z", "embed_qc", columns="zembed",
+                            scaler=cpx.identity_scaler_factory())
+            ft.define_space("exc_ad", "exc_has_axon", columns="ad_exc",
+                            weights="redundancy", explained_variance=1.0)
+
+            ft.cluster(space="joint_z", ...)                       # mask defaults to embed_qc
+            ft.propagate_labels(labels, space="exc_ad")            # to= defaults to exc_has_axon
+
+        The fit is lazy and cached. ``scaler`` is a property of the space: ``None``
+        uses the table's factory (and follows :meth:`set_scaler_factory` and
+        :meth:`using_scaler_factory`), while a factory here scales this space alone,
+        so an identity-scaled embedding space and a sigma-clipped feature space can
+        sit side by side. Redefining the mask, swapping or overwriting features drops
+        the fit, and the next use refits. Redefining a name replaces it.
+
+        ``weights`` are recomputed from the space's own scaled features at each fit,
+        so a weighting never has to be sliced to a different column set: a method
+        name from :func:`~cellpax.diagnostics.block_weights` (``"mfa"``,
+        ``"sqrt_k"``, ``"redundancy"``), a callable ``(scaled, columns) -> weights``,
+        or a fixed array in ``columns`` order. ``boost`` multiplies individual
+        features' weights afterwards (``{feature: factor}``).
+
+        Parameters
+        ----------
+        name : str
+            Name consumers refer to the space by.
+        mask : str, optional
+            Population the space is fit on. ``None`` uses every cell.
+        columns : str, FeatureCollection, sequence of str, or None
+            Features, resolved at each fit so a redefined collection is picked up.
+        scaler : callable, optional
+            Zero-argument scaler factory for this space; ``None`` uses the table's.
+        weights : str, numpy.ndarray, callable, or None
+            Per-feature weights applied before the PCA.
+        boost : mapping of str to float, optional
+            Extra multipliers on named features' weights.
+        explained_variance : float or int, default 0.95
+            PCA retention, as in :meth:`space`.
+        alpha : float, default 0.0
+            Whitening strength, as in :meth:`space`.
+        eigenvalue_floor : float, default 0.0
+            Eigenvalue floor for whitening, as in :meth:`space`.
+        seed : int, optional
+            Random state for the PCA fit.
+
+        Returns
+        -------
+        FeatureTable
+            This table, with the space declared.
+        """
+        if not name or "/" in name:
+            raise ValueError(f"Invalid space name {name!r}")
+        mask = mask or _DEFAULT_MASK
+        self.mask_series(mask)  # raises with the available masks if unknown
+        cols = self._resolve_columns(columns)
+        if scaler is not None:
+            scaler = _validate_scaler_factory(scaler)
+        if isinstance(weights, str):
+            if weights not in ("mfa", "sqrt_k", "redundancy"):
+                raise ValueError(
+                    f"weights={weights!r}; expected 'mfa', 'sqrt_k' or 'redundancy', "
+                    f"a callable, or an array"
+                )
+        elif weights is not None and not callable(weights):
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape != (len(cols),):
+                raise ValueError(
+                    f"weights has shape {weights.shape}; expected ({len(cols)},) to "
+                    f"match columns"
+                )
+        unknown = sorted(set(boost or {}) - set(cols))
+        if unknown:
+            raise ValueError(f"boost names features not in the space: {unknown}")
+        invalid = ~self.fully_valid(mask, columns=cols)
+        if invalid.any():
+            warnings.warn(
+                f"space {name!r}: {int(invalid.sum())} cells of mask {mask!r} fall "
+                f"outside the validity domain of its columns",
+                stacklevel=2,
+            )
+        if isinstance(columns, FeatureCollection):
+            columns = columns.name
+        elif columns is not None and not isinstance(columns, str):
+            columns = tuple(columns)
+        self._space_specs[name] = _SpaceSpec(
+            mask=mask,
+            columns=columns,
+            scaler=scaler,
+            weights=weights,
+            boost=dict(boost) if boost else None,
+            explained_variance=explained_variance,
+            alpha=alpha,
+            eigenvalue_floor=eigenvalue_floor,
+            seed=seed,
+        )
+        self._named_space_cache.pop(name, None)
+        return self
+
+    def drop_space(self, name: str) -> "FeatureTable":
+        """Remove a declared space and its cached fit.
+
+        Parameters
+        ----------
+        name : str
+            Space to remove.
+
+        Returns
+        -------
+        FeatureTable
+            This table without the space.
+        """
+        self._space_spec(name)
+        del self._space_specs[name]
+        self._named_space_cache.pop(name, None)
+        return self
+
+    def _space_spec(self, name: str) -> _SpaceSpec:
+        try:
+            return self._space_specs[name]
+        except KeyError:
+            raise KeyError(
+                f"Unknown space {name!r}; defined: {sorted(self._space_specs)}"
+            ) from None
+
+    def _space_weights(
+        self, spec: _SpaceSpec, scaled: np.ndarray, cols: list[str]
+    ) -> np.ndarray | None:
+        if spec.weights is None:
+            weights = None
+        elif isinstance(spec.weights, str):
+            from cellpax.diagnostics import block_weights
+
+            weights = block_weights(scaled, cols, method=spec.weights)
+        elif callable(spec.weights):
+            weights = np.asarray(spec.weights(scaled, cols), dtype=float)
+        else:
+            weights = spec.weights
+        if spec.boost:
+            base = np.ones(len(cols)) if weights is None else weights
+            weights = base * np.array([spec.boost.get(c, 1.0) for c in cols])
+        return weights
+
+    def fitted_space(self, name: str) -> FittedSpace:
+        """The fitted :class:`~cellpax.space.FittedSpace` behind a declared space.
+
+        Fits on first use and caches; consumers given ``space="name"`` call this.
+
+        Parameters
+        ----------
+        name : str
+            A space from :meth:`define_space`.
+
+        Returns
+        -------
+        FittedSpace
+            The frozen scaling, weights and PCA.
+        """
+        spec = self._space_spec(name)
+        cols = self._resolve_columns(spec.columns)
+        if spec.scaler is None:
+            # the table's own rule: route through space() so the fit shares its
+            # cache, its invalidation, and using_scaler_factory's swapping
+            scaled = self.features(spec.mask, scaled=True, columns=cols)
+            return self.space(
+                spec.mask,
+                columns=cols,
+                explained_variance=spec.explained_variance,
+                alpha=spec.alpha,
+                eigenvalue_floor=spec.eigenvalue_floor,
+                feature_weights=self._space_weights(spec, scaled, cols),
+                seed=spec.seed,
+            )
+        cached = self._named_space_cache.get(name)
+        if cached is None or cached[0] != tuple(cols):
+            raw = self.features(spec.mask, scaled=False, columns=cols)
+            transforms = [self._transforms.get(c) for c in cols]
+            scaler = FittedScaler(scaler=spec.scaler(), transforms=transforms).fit(raw)
+            scaled = scaler.transform(raw)
+            fitted = FittedSpace.fit(
+                scaled,
+                columns=cols,
+                scaler=scaler,
+                explained_variance=spec.explained_variance,
+                feature_weights=self._space_weights(spec, scaled, cols),
+                seed=spec.seed,
+                mask=spec.mask,
+            )
+            self._named_space_cache[name] = (tuple(cols), fitted)
+        fitted = self._named_space_cache[name][1]
+        if spec.alpha or spec.eigenvalue_floor:
+            fitted = fitted.with_alpha(
+                spec.alpha, eigenvalue_floor=spec.eigenvalue_floor
+            )
+        return fitted
+
+    @property
+    def spaces(self) -> pl.DataFrame:
+        """Catalog of declared spaces, one row each.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``name``, ``mask``, ``columns``, ``n_features``, ``scaler``,
+            ``weights`` and ``explained_variance``.
+        """
+        rows = []
+        for name, spec in self._space_specs.items():
+            if spec.scaler is None:
+                scaler = "table default"
+            else:
+                from cellpax.persist import _scaler_tag
+
+                try:
+                    tag = _scaler_tag(spec.scaler)
+                except (TypeError, ValueError):
+                    tag = "custom"
+                if isinstance(tag, str):
+                    scaler = tag
+                elif tag.get("kind") == "clipped":
+                    scaler = f"clipped ({tag['mode']}, {tag['base']})"
+                else:
+                    scaler = tag.get("kind", "custom")
+            if spec.weights is None:
+                weights = "none"
+            elif isinstance(spec.weights, str):
+                weights = spec.weights
+            elif callable(spec.weights):
+                weights = getattr(spec.weights, "__name__", "callable")
+            else:
+                weights = "fixed array"
+            if spec.boost:
+                weights += f" + boost({len(spec.boost)})"
+            rows.append(
+                {
+                    "name": name,
+                    "mask": spec.mask,
+                    "columns": (
+                        spec.columns
+                        if isinstance(spec.columns, str)
+                        else "all"
+                        if spec.columns is None
+                        else f"{len(spec.columns)} listed"
+                    ),
+                    "n_features": len(self._resolve_columns(spec.columns)),
+                    "scaler": scaler,
+                    "weights": weights,
+                    "explained_variance": str(spec.explained_variance),
+                }
+            )
+        schema = {
+            "name": pl.String,
+            "mask": pl.String,
+            "columns": pl.String,
+            "n_features": pl.Int64,
+            "scaler": pl.String,
+            "weights": pl.String,
+            "explained_variance": pl.String,
+        }
+        return pl.DataFrame(rows, schema=schema)
 
     def features_pca(
         self,
@@ -6049,6 +6491,323 @@ class FeatureTable:
             cell_ids=cell_ids,
         )
 
+    @_accepts_space_name("mask")
+    def transfer_bridge(
+        self,
+        a: str,
+        b: str,
+        *,
+        columns: str | FeatureCollection | Sequence[str],
+        mask: str | None = None,
+        strata: str | None = None,
+        n_neighbors: int = 30,
+        mutual: bool = True,
+        space: FittedSpace | str | None = None,
+        scale: bool | Literal["joint", "per_mask"] = True,
+        scaler_factory: Callable[[], Any] | None = None,
+        null_columns: str
+        | FeatureCollection
+        | Sequence[str]
+        | Literal[False]
+        | None = None,
+        refine_columns: str
+        | FeatureCollection
+        | Sequence[str]
+        | Literal[True]
+        | None = None,
+        refine_alpha: float = 0.5,
+        spaces: dict[str, FittedSpace] | None = None,
+        min_bridged: float = 0.8,
+        seed: int | None = None,
+    ) -> "TransferBridge":
+        """Freeze kNN votes between two populations in a space where they are aligned.
+
+        For semi-aligned clustering: cluster each dataset in its own features,
+        where separation is sharpest, and use ``columns`` — an aligned embedding
+        such as a shared autoencoder latent — only to ask whether a partition
+        found in one dataset reappears in the other. The returned
+        :class:`~cellpax.bridge.TransferBridge` scores label sets
+        (``score_labels``) or every stored run of two clusterings
+        (``score_runs``) against a within-dataset ceiling and a null; see
+        :mod:`cellpax.bridge` for why both are needed.
+
+        ``a`` and ``b`` are masks, one population per dataset — the masks the
+        two clusterings were run on, e.g. ``"microns_inh"`` and ``"v1dd_inh"``.
+        A joined table has one mask per dataset already, named after it. The
+        bridge features are scaled once over both populations together (or
+        go through ``space``); the null is drawn in each population's own
+        scaling, the one its clustering used. Do not cluster on the bridge
+        columns as well — a partition shaped by the bridge carries through it
+        trivially.
+
+        Parameters
+        ----------
+        a, b : str
+            Disjoint masks, one per dataset.
+        columns : str, FeatureCollection, or sequence of str
+            The bridge features.
+        mask : str, optional
+            Further restricts both populations to this mask's cells. The
+            population's other cells are *held out* rather than foreign: a
+            clustering of the whole population still aligns, with those cells
+            ignored — which is how one spatial half chooses grain and pairing
+            while the other half reports the verdicts.
+        strata : str, optional
+            Column (metadata or attached labels) naming each cell's stratum —
+            a subclass, say — for the within-strata readings, which ask whether
+            the subdivision *inside* each stratum reproduces. Values are
+            compared as strings, so names must agree between datasets.
+        n_neighbors : int, default 30
+            Votes per cell.
+        mutual : bool, default True
+            Only mutual neighbour edges vote, so a cell with no counterpart in
+            the other dataset abstains instead of being labelled anyway.
+        space : FittedSpace or str, optional
+            Pre-fitted bridge representation, fit on ``mask`` (every cell by
+            default).
+        scale : bool or {'joint', 'per_mask'}, default True
+            How the bridge columns are scaled before voting. ``True`` (or
+            ``'joint'``) fits one scaler over both populations together, so the
+            bridge has one geometry. ``'per_mask'`` fits one per population, which
+            removes each dataset's own offset and spread in every column -- with a
+            rank scaler (``scaler_factory=quantile_scaler_factory()``), any
+            monotone difference in its marginals. Use it when the bridge columns are
+            measurements both datasets share (A features within an aligned
+            subclass) rather than an aligned embedding; it assumes the two
+            populations hold broadly the same mix of types. ``False`` votes in the
+            raw values, for an embedding whose per-dimension scale is meaningful --
+            a VAE latent, whose near-inactive dimensions carry mostly noise and
+            which standardizing would weight equally, or a contrastive embedding
+            trained for its distances. Only the bridge coordinates change: the null
+            and the refinement keep each population's own scaling. Anything but the
+            default cannot be combined with ``space``.
+        scaler_factory : callable, optional
+            Zero-argument factory for the bridge scaler(s), e.g.
+            :func:`~cellpax.clustering.quantile_scaler_factory` or
+            :func:`~cellpax.clustering.clipped_scaler_factory`. Defaults to the
+            table's own. Ignored when ``scale=False``.
+        null_columns : str, FeatureCollection, sequence of str, or False, optional
+            Each population's own features for the null tessellations. ``None``
+            uses every feature not in the bridge; ``False`` disables the null.
+        refine_columns : str, FeatureCollection, or sequence of str, optional
+            Refine every vote over the receiving population's own kNN graph in
+            these features (scaled over that population's mask, as its
+            clustering was): the bridge says roughly where a cluster lands, the
+            sharper features decide its edges. Applied identically to the
+            ceiling and the null; see :meth:`~cellpax.bridge.TransferBridge.build`.
+            ``True`` refines in ``spaces`` instead.
+        refine_alpha : float, default 0.5
+            How far the refined field may drift from the bridge vote. Larger
+            values smooth small clusters away and bias the band coarser; see
+            :meth:`~cellpax.bridge.TransferBridge.build`.
+        spaces : dict of str to FittedSpace, optional
+            Each population's own representation, keyed by ``a`` / ``b`` — the
+            space its clustering ran in, e.g. a block-weighted
+            ``ft.space(mask, feature_weights=…)``. When given, the null is drawn
+            in it (``null_columns`` must then be left ``None``, or ``False`` to
+            disable the null) and ``refine_columns=True`` refines in it, so the
+            null and the refinement see the geometry the clusters were found
+            in rather than plain scaled columns. Each must be fit on its
+            population's mask.
+        min_bridged : float, default 0.8
+            Smallest share of each population that must have bridge
+            coordinates. Cells missing any bridge value (no embedding) are left
+            out of the bridge but stay in the population: they are clustered in
+            their own features as usual, and the bridge simply ignores them when
+            scoring, so every reading is over the bridged cells. A warning
+            reports how many were left out; below this share the readings would
+            describe too little of the population to stand for it, so it raises.
+        seed : int, optional
+            Seeds the null; derived from the table seed when omitted.
+
+        Returns
+        -------
+        TransferBridge
+            The frozen vote matrices, keyed by cell id, named ``(a, b)``.
+
+        Raises
+        ------
+        ValueError
+            If a population is empty, the two overlap, ``strata`` is not a
+            column, or less than ``min_bridged`` of a population has bridge
+            coordinates.
+        """
+        from cellpax.bridge import TransferBridge
+
+        for name in (a, b):
+            if name not in self.masks:
+                raise ValueError(
+                    f"no mask {name!r}; a and b are masks, one per dataset "
+                    f"(available: {self.masks})"
+                )
+        rows = {name: self.mask_series(name).to_numpy() for name in (a, b)}
+        held_out = {name: np.zeros(r.size, dtype=bool) for name, r in rows.items()}
+        if mask is not None:
+            within = self.mask_series(mask).to_numpy()
+            held_out = {name: r & ~within for name, r in rows.items()}
+            rows = {name: r & within for name, r in rows.items()}
+        for name, r in rows.items():
+            if not r.any():
+                raise ValueError(
+                    f"mask {name!r} has no cells"
+                    + (f" inside {mask!r}" if mask is not None else "")
+                )
+        if (rows[a] & rows[b]).any():
+            raise ValueError(
+                f"masks {a!r} and {b!r} share {int((rows[a] & rows[b]).sum())} "
+                f"cells; a bridge joins two disjoint populations"
+            )
+        if strata is not None and strata not in self._df.columns:
+            raise ValueError(f"strata={strata!r} is not a column of this table")
+
+        if scale not in (True, False, "joint", "per_mask"):
+            raise ValueError(
+                f"scale must be True, False, 'joint' or 'per_mask', got {scale!r}"
+            )
+        if space is not None:
+            if scale is not True and scale != "joint":
+                raise ValueError(
+                    f"scale={scale!r} sets the bridge's own scaling; a space brings its "
+                    "own representation, so pass one or the other"
+                )
+            cols = self._validated_space(space, mask or _DEFAULT_MASK, columns)
+        else:
+            cols = self._resolve_columns(columns)
+        # cells with no bridge coordinates are clustered but cannot be carried
+        has_bridge = (
+            self._df.select(
+                pl.all_horizontal(
+                    [
+                        (
+                            pl.col(c).is_not_null()
+                            & pl.col(c).cast(pl.Float64).is_finite()
+                        ).fill_null(False)
+                        for c in cols
+                    ]
+                )
+            )
+            .to_series()
+            .to_numpy()
+        )
+        unbridged = {}
+        for name in (a, b):
+            left_out = rows[name] & ~has_bridge
+            share = 1.0 - left_out.sum() / rows[name].sum()
+            if share < min_bridged:
+                raise ValueError(
+                    f"only {share:.0%} of {name!r} has bridge coordinates "
+                    f"(min_bridged={min_bridged:.0%}); readings over so few cells "
+                    f"would not stand for the population"
+                )
+            if left_out.any():
+                warnings.warn(
+                    f"{int(left_out.sum())} cells of {name!r} ({1 - share:.1%}) have "
+                    f"no bridge coordinates; they stay clustered but are left out "
+                    f"of the bridge",
+                    stacklevel=2,
+                )
+            # held-out cells are clustered too; like cells without Z, the bridge
+            # ignores them when it aligns a clustering, rather than raising
+            unbridged[name] = self._df.filter(pl.Series(left_out))[
+                self._id_column
+            ].to_numpy()
+            held_out[name] = self._df.filter(pl.Series(held_out[name]))[
+                self._id_column
+            ].to_numpy()
+            rows[name] = rows[name] & has_bridge
+
+        if null_columns is False:
+            null_cols: list[str] = []
+        elif null_columns is None:
+            null_cols = [c for c in self.feature_columns if c not in cols]
+        else:
+            null_cols = self._resolve_columns(null_columns)
+
+        frames = {name: self._df.filter(pl.Series(r)) for name, r in rows.items()}
+        raw = {name: f.select(cols).to_numpy() for name, f in frames.items()}
+        if space is not None:
+            coords = {name: space.transform(x) for name, x in raw.items()}
+        elif scale is False:
+            coords = {name: np.asarray(x, dtype=float) for name, x in raw.items()}
+        else:
+            factory = scaler_factory or self._scaler_factory
+            transforms = [self._transforms.get(c) for c in cols]
+            if scale == "per_mask":
+                # each population on its own scale: its offsets and spread removed
+                coords = {
+                    name: FittedScaler(scaler=factory(), transforms=transforms)
+                    .fit(x)
+                    .transform(x)
+                    for name, x in raw.items()
+                }
+            else:
+                # one fit over both populations, so the bridge has one geometry
+                joint = FittedScaler(scaler=factory(), transforms=transforms)
+                joint.fit(np.vstack([raw[a], raw[b]]))
+                coords = {name: joint.transform(x) for name, x in raw.items()}
+        if spaces is not None:
+            if set(spaces) != {a, b}:
+                raise ValueError(f"spaces must be keyed by both masks {a!r} and {b!r}")
+            if null_columns not in (None, False):
+                raise ValueError(
+                    "spaces= supplies the null's features; pass null_columns=None "
+                    "(or False to disable the null)"
+                )
+            for name, own in spaces.items():
+                self._validated_space(own, name, None, population=f"mask {name!r}")
+            own_features = {
+                name: spaces[name].transform(
+                    frames[name].select(list(spaces[name].columns)).to_numpy()
+                )
+                for name in (a, b)
+            }
+            null_features = {} if null_columns is False else own_features
+        else:
+            null_features = {
+                name: self._scaler(name, null_cols).transform(
+                    frames[name].select(null_cols).to_numpy()
+                )
+                for name in (a, b)
+                if null_cols
+            }
+        if refine_columns is True:
+            if spaces is None:
+                raise ValueError("refine_columns=True refines in spaces=, so pass them")
+            refine_features = own_features
+        else:
+            refine_cols = (
+                self._resolve_columns(refine_columns)
+                if refine_columns is not None
+                else []
+            )
+            refine_features = {
+                name: self._scaler(name, refine_cols).transform(
+                    frames[name].select(refine_cols).to_numpy()
+                )
+                for name in (a, b)
+                if refine_cols
+            }
+        strata_values = (
+            {name: frames[name][strata].cast(pl.String).to_numpy() for name in (a, b)}
+            if strata is not None
+            else None
+        )
+        if seed is None:
+            seed = self._derive_seed("transfer_bridge", mask, f"{a}<->{b}")
+        return TransferBridge.build(
+            coords,
+            {name: frames[name][self._id_column].to_numpy() for name in (a, b)},
+            n_neighbors=n_neighbors,
+            mutual=mutual,
+            null_features=null_features,
+            strata=strata_values,
+            refine_features=refine_features,
+            refine_alpha=refine_alpha,
+            unbridged=unbridged,
+            held_out=held_out,
+            seed=seed,
+        )
+
     def project(
         self,
         data: pl.DataFrame | np.ndarray,
@@ -6310,6 +7069,11 @@ class FeatureTable:
         FeatureTable
             This table, unchanged.
         """
+        if self._scaler_stack:
+            raise RuntimeError(
+                "save inside a using_scaler_factory block would record a temporary "
+                "scaler factory; save after the block exits"
+            )
         from cellpax.persist import save_feature_table
 
         save_feature_table(self, folio, name, overwrite=overwrite)

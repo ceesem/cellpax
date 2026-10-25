@@ -35,7 +35,7 @@ against the reference rows, whose labels are known, rather than a priori.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -72,16 +72,112 @@ class Recovery:
         Fraction left without evidence to decide.
     estimator : str
         Recovery protocol, such as ``"leave-one-out"`` or ``"5-fold"``.
+    true_codes : numpy.ndarray, optional
+        Each withheld reference cell's own label, behind :meth:`by_label`.
+    predicted_codes : numpy.ndarray, optional
+        The label recovered for each, ``-1`` where it abstained.
+    names : dict of int to str, optional
+        Cluster names for those codes, filled in by :class:`Propagation`.
     """
 
     agreement: float
     abstained: float
     estimator: str
+    true_codes: np.ndarray | None = field(default=None, repr=False, compare=False)
+    predicted_codes: np.ndarray | None = field(default=None, repr=False, compare=False)
+    names: dict[int, str] | None = field(default=None, repr=False, compare=False)
 
     @property
     def misassigned(self) -> float:
         """Reference cells that had evidence and got the wrong label from it."""
         return max(0.0, 1.0 - self.agreement - self.abstained)
+
+    def _named_pairs(self) -> pl.DataFrame:
+        if self.true_codes is None or self.predicted_codes is None:
+            raise ValueError(
+                "this Recovery carries no per-cell results (recovery was skipped, "
+                "or it was built by hand)"
+            )
+        names = self.names or {}
+        return pl.DataFrame(
+            {
+                "label": [names.get(int(c), str(c)) for c in self.true_codes],
+                "recovered_as": [
+                    None if c == -1 else names.get(int(c), str(c))
+                    for c in self.predicted_codes
+                ],
+            }
+        )
+
+    def by_label(self) -> pl.DataFrame:
+        """Recovery broken down by reference label, worst first.
+
+        The single ``agreement`` is weighted by label size, so a small label
+        recovered half the time barely moves it. This is the per-label read:
+        how many reference cells each label has, the share recovered, the
+        share abstained, and where the rest most often went.
+
+        Returns
+        -------
+        polars.DataFrame
+            ``label``, ``n``, ``recovered``, ``abstained``, ``top_confusion``
+            (the commonest wrong label, null if none) and ``top_confusion_share``.
+        """
+        pairs = self._named_pairs()
+        wrong = (
+            pairs.filter(
+                pl.col("recovered_as").is_not_null()
+                & (pl.col("recovered_as") != pl.col("label"))
+            )
+            .group_by("label", "recovered_as")
+            .len()
+            .sort("len", "recovered_as", descending=[True, False])
+            .group_by("label", maintain_order=True)
+            .first()
+            .select(
+                "label",
+                pl.col("recovered_as").alias("top_confusion"),
+                pl.col("len").alias("_top"),
+            )
+        )
+        return (
+            pairs.group_by("label")
+            .agg(
+                pl.len().alias("n"),
+                (pl.col("recovered_as") == pl.col("label")).mean().alias("recovered"),
+                pl.col("recovered_as").is_null().mean().alias("abstained"),
+            )
+            .join(wrong, on="label", how="left")
+            .with_columns(
+                (pl.col("_top").fill_null(0) / pl.col("n")).alias("top_confusion_share")
+            )
+            .drop("_top")
+            .sort("recovered", "label")
+        )
+
+    def confusion(self) -> pl.DataFrame:
+        """Counts of each reference label against the label it was recovered as.
+
+        Returns
+        -------
+        polars.DataFrame
+            One row per reference label, one column per recovered label, and an
+            ``abstained`` column when any cell abstained.
+        """
+        pairs = self._named_pairs().with_columns(
+            pl.col("recovered_as").fill_null("abstained")
+        )
+        order = sorted(set(pairs["recovered_as"]) - {"abstained"})
+        if "abstained" in set(pairs["recovered_as"]):
+            order.append("abstained")
+        table = (
+            pairs.group_by("label", "recovered_as")
+            .len()
+            .pivot(on="recovered_as", index="label", values="len")
+            .fill_null(0)
+            .sort("label")
+        )
+        return table.select("label", *[c for c in order if c in table.columns])
 
 
 def _check(features: np.ndarray, codes: np.ndarray, preserve_labeled: bool):
@@ -230,9 +326,16 @@ def propagate_knn(
             seed=seed,
         )
     else:
-        agreement = float((support.argmax(axis=1)[fit_rows] == codes[fit_rows]).mean())
+        predicted = support.argmax(axis=1)[fit_rows]
+        agreement = float((predicted == codes[fit_rows]).mean())
         # a vote always finds k neighbors, so it can never abstain
-        recovery = Recovery(agreement, 0.0, "leave-one-out")
+        recovery = Recovery(
+            agreement,
+            0.0,
+            "leave-one-out",
+            true_codes=codes[fit_rows],
+            predicted_codes=predicted,
+        )
     return out, confidence, recovery
 
 
@@ -252,14 +355,24 @@ def _vote_recovery(
     slightly lower because each fold votes from a thinner reference.
     """
     recovered = 0
+    true, predicted = [], []
     for held in _stratified_folds(codes, fit_rows, folds, seed):
         if held.size == 0:
             continue
         kept = np.setdiff1d(fit_rows, held)
         k = int(min(n_neighbors, kept.size))
         support = _vote_support(features, codes, kept, k, weights)
-        recovered += int((support[held].argmax(axis=1) == codes[held]).sum())
-    return Recovery(recovered / fit_rows.size, 0.0, f"{folds}-fold")
+        guess = support[held].argmax(axis=1)
+        recovered += int((guess == codes[held]).sum())
+        true.append(codes[held])
+        predicted.append(guess)
+    return Recovery(
+        recovered / fit_rows.size,
+        0.0,
+        f"{folds}-fold",
+        true_codes=np.concatenate(true),
+        predicted_codes=np.concatenate(predicted),
+    )
 
 
 def _vote_support(
@@ -534,6 +647,7 @@ def _spread_recovery(
     if folds < 2 or fit_rows.size < folds:
         return Recovery(float("nan"), float("nan"), "none")
     recovered = unreachable = 0
+    true, predicted = [], []
     for held in _stratified_folds(codes, fit_rows, folds, seed):
         if held.size == 0:
             continue
@@ -550,10 +664,19 @@ def _spread_recovery(
         )
         arriving = field[held]
         reached = arriving.sum(axis=1) > 0
-        recovered += int(((arriving.argmax(axis=1) == codes[held]) & reached).sum())
+        guess = np.where(reached, arriving.argmax(axis=1), -1)
+        recovered += int((guess == codes[held]).sum())
         unreachable += int((~reached).sum())
+        true.append(codes[held])
+        predicted.append(guess)
     total = fit_rows.size
-    return Recovery(recovered / total, unreachable / total, f"{folds}-fold")
+    return Recovery(
+        recovered / total,
+        unreachable / total,
+        f"{folds}-fold",
+        true_codes=np.concatenate(true),
+        predicted_codes=np.concatenate(predicted),
+    )
 
 
 # -- calibrating min_confidence ----------------------------------------------------
@@ -681,14 +804,22 @@ class Propagation:
         self._labels = labels
         self._reference = reference
         self._confidence = np.asarray(confidence, dtype=float)
-        self._recovery = recovery
+        names = {i: label.name for i, label in reference.meta.items()}
+        self._recovery = None if recovery is None else replace(recovery, names=names)
         self._method = method
         self._n_neighbors = int(n_neighbors)
         self._space = space
         self._params = params
         self._rungs = None if rungs is None else np.asarray(rungs, dtype=np.int64)
         self._rung_names = None if rung_names is None else list(rung_names)
-        self._rung_recovery = rung_recovery
+        self._rung_recovery = (
+            None
+            if rung_recovery is None
+            else {
+                rung: None if rec is None else replace(rec, names=names)
+                for rung, rec in rung_recovery.items()
+            }
+        )
 
     @property
     def labels(self) -> "LabelSet":

@@ -295,6 +295,7 @@ def test_a_configured_clipped_factory_round_trips_its_bounds(tmp_path) -> None:
     for key, factory in (
         ("sigma4", clipped_scaler_factory(mode="sigma", n_sigma=4.0)),
         ("pct1", clipped_scaler_factory(1.0, 99.0)),
+        ("std3", clipped_scaler_factory(mode="sigma", n_sigma=3.0, base="standard")),
     ):
         rng = np.random.default_rng(0)
         df = pl.DataFrame(
@@ -311,6 +312,27 @@ def test_a_configured_clipped_factory_round_trips_its_bounds(tmp_path) -> None:
         save_feature_table(ft, path, name=key)
         back = load_feature_table(path, name=key)
         np.testing.assert_allclose(before, back.features(scaled=True))
+
+
+def test_identity_scaler_leaves_features_unscaled_and_round_trips(tmp_path) -> None:
+    from cellpax import identity_scaler_factory, load_feature_table, save_feature_table
+
+    rng = np.random.default_rng(0)
+    df = pl.DataFrame(
+        {
+            "cell_id": pl.Series(range(1, 41), dtype=pl.Int64),
+            **{f"m{i}": rng.normal(3.0, 5.0, size=40) for i in range(4)},
+        }
+    )
+    cols = [f"m{i}" for i in range(4)]
+    ft = FeatureTable(df, features=cols, scaler_factory=identity_scaler_factory())
+    raw = ft.features(scaled=False)
+    np.testing.assert_allclose(ft.features(scaled=True), raw)
+    path = tmp_path / "identity.zarr"
+    save_feature_table(ft, path, name="identity")
+    back = load_feature_table(path, name="identity")
+    assert back._scaler_factory._cellpax_scaler_params == {"kind": "identity"}
+    np.testing.assert_allclose(back.features(scaled=True), raw)
 
 
 def test_an_unrecognised_scaler_factory_refuses_to_save(tmp_path) -> None:
@@ -401,6 +423,62 @@ def test_set_scaler_factory_drops_results_computed_under_the_old_rule() -> None:
     ft.embed(method="pca", n_components=2, name="p")
     ft.set_scaler_factory(factory)
     assert ("all", "p") in ft._embeddings
+
+
+def test_using_scaler_factory_scales_temporarily_and_restores_the_outer_fits() -> None:
+    from cellpax.clustering import identity_scaler_factory
+
+    ft = _outlier_table()
+    outer = ft.features(scaled=True)
+    outer_scaler = ft.scaler()
+    ft.embed(method="pca", n_components=2, name="p")
+
+    with ft.using_scaler_factory(identity_scaler_factory()):
+        np.testing.assert_allclose(ft.features(scaled=True), ft.features(scaled=False))
+        ft.cluster(n_neighbors=10, n_times=2, n_jobs=1, name="inner")
+
+    # the outer rule comes back with its cached fit, not a refit
+    assert ft.scaler() is outer_scaler
+    np.testing.assert_allclose(ft.features(scaled=True), outer)
+    # results from either side of the block are left alone
+    assert ("all", "p") in ft._embeddings
+    assert "inner" in ft._clusterings
+
+
+def test_using_scaler_factory_restores_after_an_error() -> None:
+    from cellpax.clustering import identity_scaler_factory
+
+    ft = _outlier_table()
+    factory = ft._scaler_factory
+    with pytest.raises(ZeroDivisionError):
+        with ft.using_scaler_factory(identity_scaler_factory()):
+            1 / 0
+    assert ft._scaler_factory is factory and not ft._scaler_stack
+
+
+def test_using_scaler_factory_refuses_save_and_swap(tmp_path) -> None:
+    from cellpax.clustering import clipped_scaler_factory, identity_scaler_factory
+
+    ft = _outlier_table()
+    with ft.using_scaler_factory(identity_scaler_factory()):
+        with pytest.raises(RuntimeError, match="save after the block"):
+            ft.save(tmp_path / "folio", "a")
+        with pytest.raises(RuntimeError, match="swap after it"):
+            ft.set_scaler_factory(clipped_scaler_factory(mode="sigma"))
+    ft.save(tmp_path / "folio", "a")
+
+
+def test_mask_redefined_inside_using_scaler_factory_is_stale_outside() -> None:
+    from cellpax.clustering import identity_scaler_factory
+
+    ft = _outlier_table()
+    ft.add_mask("sub", pl.col("cell_id") > 10)
+    before = ft.scaler("sub")
+    with ft.using_scaler_factory(identity_scaler_factory()):
+        ft.add_mask("sub", pl.col("cell_id") > 30)
+    # the set-aside fit was for the old membership, so it must not come back
+    assert ft.scaler("sub") is not before
+    assert ft.features("sub", scaled=True).shape[0] == 30
 
 
 def test_load_with_a_scaler_override_reuses_an_existing_analysis(tmp_path) -> None:

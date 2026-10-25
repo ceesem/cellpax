@@ -1025,9 +1025,11 @@ class LabelSet:
             raise ValueError(f"unknown mode {mode!r}; use 'disjoint' or 'priority'")
         sources = [self, *others]
         if mode == "disjoint":
-            seen: set[int] = set()
+            seen: set[Any] = set()
             for source in sources:
-                cells = {int(c) for c in source._cell_ids}
+                # ids as they are: string ids are valid keys, and numpy scalars
+                # hash equal to their Python counterparts (as in codes_for)
+                cells = set(source._cell_ids.tolist())
                 if seen & cells:
                     raise ValueError("combine requires disjoint cell sets")
                 seen |= cells
@@ -1050,11 +1052,11 @@ class LabelSet:
 
         cell_ids: list[Any] = []
         labels: list[int] = []
-        position: dict[int, int] = {}
+        position: dict[Any, int] = {}
         for source, remap in zip(sources, remaps):
             for cell_id, code in zip(source._cell_ids, source._labels):
                 code = int(code)
-                key = int(cell_id)
+                key = cell_id
                 if key not in position:
                     position[key] = len(cell_ids)
                     cell_ids.append(cell_id)

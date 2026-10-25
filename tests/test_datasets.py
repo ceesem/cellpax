@@ -18,6 +18,7 @@ from cellpax import (
     clipped_scaler_factory,
     cross_dataset_classification,
     dataset_mixing,
+    identity_scaler_factory,
     join_datasets,
     list_analyses,
     quantile_scaler_factory,
@@ -127,8 +128,17 @@ def test_quantile_scaler_factory_carries_its_configuration() -> None:
         quantile_scaler_factory(),
         clipped_scaler_factory(),
         clipped_scaler_factory(mode="sigma"),
+        identity_scaler_factory(),
     ],
-    ids=["standard", "robust", "quantile", "clip-quantile", "robust-pct", "robust-sig"],
+    ids=[
+        "standard",
+        "robust",
+        "quantile",
+        "clip-quantile",
+        "robust-pct",
+        "robust-sig",
+        "identity",
+    ],
 )
 def test_scaler_records_round_trip_and_invert(factory) -> None:
     rng = np.random.default_rng(0)

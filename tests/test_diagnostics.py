@@ -261,6 +261,121 @@ def test_block_weights_validates_its_arguments() -> None:
         block_weights(data, "analysis")
 
 
+# -- redundancy weights ----------------------------------------------------------
+
+
+def _variance_weights(data: np.ndarray) -> np.ndarray:
+    from cellpax.diagnostics import block_weights
+
+    names = [f"f{i}" for i in range(data.shape[1])]
+    return block_weights(data, names, method="redundancy") ** 2
+
+
+def test_exact_copies_share_one_unit_whatever_their_sign() -> None:
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(300, 1))
+    w = _variance_weights(np.column_stack([x, 2 * x, -x]))
+    np.testing.assert_allclose(w, 1 / 3)
+    assert np.isclose(w.sum(), 1.0)
+
+
+def test_copies_among_independent_columns_still_count_about_once() -> None:
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(2000, 1))
+    w = _variance_weights(np.column_stack([x, x, x, rng.normal(size=(2000, 5))]))
+    assert w[:3].sum() == pytest.approx(1.0, abs=0.02)
+    np.testing.assert_allclose(w[3:], 1.0, atol=0.02)
+
+
+def test_debiasing_keeps_independent_columns_near_one_at_small_n() -> None:
+    """Raw r² averages 1/(n-1); 40 columns over 300 cells would lose ~12% to noise."""
+    rng = np.random.default_rng(0)
+    n, p = 300, 40
+    w = _variance_weights(rng.normal(size=(n, p)))
+    raw_expectation = 1 / (1 + (p - 1) / (n - 1))
+    assert w.mean() > 0.97
+    assert w.mean() - raw_expectation > 0.08
+
+
+def test_an_equicorrelated_group_sums_to_its_participation_ratio() -> None:
+    rng = np.random.default_rng(0)
+    n, k, r = 20_000, 8, 0.5
+    z = np.sqrt(r) * rng.normal(size=(n, 1)) + np.sqrt(1 - r) * rng.normal(size=(n, k))
+    eig = np.linalg.eigvalsh(np.cov(z, rowvar=False))
+    participation = eig.sum() ** 2 / (eig**2).sum()
+    assert _variance_weights(z).sum() == pytest.approx(participation, rel=0.01)
+
+
+def test_redundancy_weights_are_bounded_and_drop_constant_columns() -> None:
+    import warnings
+
+    data, _ = _with_redundant_block()
+    data = np.column_stack([data, np.full(data.shape[0], 3.0)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        w = _variance_weights(data)
+    assert w[-1] == 0.0
+    assert ((w[:-1] > 0) & (w[:-1] <= 1)).all()
+
+
+def test_redundancy_validates_its_arguments() -> None:
+    from cellpax.diagnostics import block_weights
+
+    data, names = _with_redundant_block(n=100)
+    with pytest.raises(ValueError, match="no feature dendrogram"):
+        block_weights(data, names, method="redundancy", block_threshold=0.5)
+    with pytest.raises(ValueError, match="no feature dendrogram"):
+        block_weights(data, names, method="redundancy", linkage_method="ward")
+    broken = data.copy()
+    broken[3, 2] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        block_weights(broken, names, method="redundancy")
+    with pytest.raises(ValueError, match="at least three cells"):
+        block_weights(data[:2], names, method="redundancy")
+
+
+def test_effective_features_explains_the_weights() -> None:
+    from cellpax.diagnostics import block_weights, effective_features
+
+    data, names = _with_redundant_block()
+    data = np.column_stack([data, np.zeros(data.shape[0])])
+    names = [*names, "flat"]
+    var = pl.DataFrame(
+        {
+            "feature_id": names,
+            "family": ["base"] * 3 + ["depth"] * 4 + ["count"] * 2 + ["flat"],
+        }
+    )
+    ef = effective_features(data, names, families=var)
+
+    assert ef["feature"].to_list() == names
+    np.testing.assert_allclose(
+        ef["multiplier"].to_numpy(), block_weights(data, names, method="redundancy")
+    )
+    np.testing.assert_allclose(ef["variance_weight"], ef["multiplier"] ** 2)
+    by_family = dict(
+        ef.group_by("family").agg(pl.col("variance_weight").sum()).iter_rows()
+    )
+    assert sum(by_family.values()) == pytest.approx(ef["variance_weight"].sum())
+    # indep_a and the four depth columns are one measurement five ways
+    assert by_family["base"] + by_family["depth"] == pytest.approx(3.0, abs=0.1)
+    row = ef.filter(pl.col("feature") == "depth_p10").row(0, named=True)
+    assert row["most_correlated"] in names and row["max_abs_corr"] > 0.9
+    flat = ef.filter(pl.col("feature") == "flat").row(0, named=True)
+    assert flat["variance_weight"] == 0.0 and flat["most_correlated"] is None
+
+
+def test_effective_features_takes_a_mapping_or_rejects_a_bad_frame() -> None:
+    from cellpax.diagnostics import effective_features
+
+    data, names = _with_redundant_block(n=100)
+    ef = effective_features(data, names, families={"indep_a": "x"})
+    assert ef["family"].to_list() == ["x"] + [None] * (len(names) - 1)
+    assert "family" not in effective_features(data, names).columns
+    with pytest.raises(ValueError, match="'feature_id' and 'family'"):
+        effective_features(data, names, families=pl.DataFrame({"feature_id": names}))
+
+
 # -- the bare-string guard -------------------------------------------------------
 
 

@@ -7,7 +7,8 @@ answered as a frame rather than as advice:
     Which features are measuring the same thing. Redundant blocks are what make PCA
     truncation insufficient on its own — see :class:`~cellpax.space.FittedSpace` and its
     ``alpha`` — and they are obvious in an ordered correlation matrix and invisible in an
-    unordered one.
+    unordered one. :func:`effective_features` puts a number on it: how much each feature
+    still counts once its overlap with every other is discounted.
 :func:`tie_report` / :func:`duplicate_rows`
     Whether low-cardinality features have produced cells at identical coordinates. A tie
     block is an atom in the neighbour graph: every member has the same neighbours, and
@@ -184,13 +185,59 @@ def feature_correlation(
     )
 
 
+def _redundancy(features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Variance weight ``1 / Σ_k ρ²_jk`` per column, and the correlation it came from.
+
+    Each off-diagonal ``ρ²`` is replaced by its finite-sample adjustment,
+    ``1 - (1 - r²)(n - 1)/(n - 2)`` — the adjusted R² of a one-predictor fit. Under
+    independence ``E[r²] = 1/(n - 1)``, so the raw sum carries ≈ ``(p - 1)/n`` of pure
+    noise in every denominator: eighty independent features over a thousand cells would
+    each lose ~8% of their weight for nothing. The adjustment is exactly unbiased at
+    ``ρ = 0`` and leaves ``r = ±1`` at one, so copies still share one unit — exactly when
+    they are alone, and up to the ``O(p/n)`` noise in their correlations with everything
+    else otherwise. The denominator is floored at 1 as a whole, never entry by entry:
+    an entry-wise floor would rectify that noise straight back into the bias.
+
+    Zero-variance columns are excluded from the correlation and get weight 0; their row
+    and column of the returned correlation are zero.
+    """
+    features = np.asarray(features, dtype=float)
+    if features.ndim != 2:
+        raise ValueError(f"features must be 2-D, got shape {features.shape}")
+    n, p = features.shape
+    if n < 3:
+        raise ValueError(f"redundancy weights need at least three cells, got {n}")
+    if not np.isfinite(features).all():
+        bad = int((~np.isfinite(features)).any(axis=0).sum())
+        raise ValueError(
+            f"{bad} feature(s) carry non-finite values. The space's PCA cannot be fit "
+            "on them either, so the weights would describe a space that does not exist; "
+            "resolve the missing values (or drop those features) first."
+        )
+    weights = np.zeros(p, dtype=float)
+    correlation = np.zeros((p, p), dtype=float)
+    live = np.flatnonzero(features.std(axis=0) > 0)
+    if live.size == 0:
+        return weights, correlation
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rho = np.corrcoef(features[:, live], rowvar=False).reshape(live.size, live.size)
+    rho = np.clip(np.nan_to_num(rho, nan=0.0), -1.0, 1.0)
+    np.fill_diagonal(rho, 1.0)
+    # unbiased, so unrelated pairs go slightly negative; floor the sum, not the entries
+    shared = 1.0 - (1.0 - rho**2) * (n - 1) / (n - 2)
+    np.fill_diagonal(shared, 1.0)
+    weights[live] = 1.0 / np.maximum(shared.sum(axis=1), 1.0)
+    correlation[np.ix_(live, live)] = rho
+    return weights, correlation
+
+
 def block_weights(
     features: np.ndarray,
     columns: Any,
     *,
     method: str = "mfa",
-    block_threshold: float = 0.5,
-    linkage_method: str = "average",
+    block_threshold: float | None = None,
+    linkage_method: str | None = None,
 ) -> np.ndarray:
     """Per-feature weights that stop a correlated block counting once per member.
 
@@ -205,27 +252,41 @@ def block_weights(
     ----------
     features : numpy.ndarray
         ``(n_cells, n_features)`` **scaled** matrix — the same one
-        :meth:`~cellpax.space.FittedSpace.fit` takes.
+        :meth:`~cellpax.space.FittedSpace.fit` takes, i.e.
+        ``ft.features(mask, scaled=True, columns=…)`` for the mask the space is fit on.
     columns : sequence of str
         Feature names, in the column order of ``features``. Must be actual names: a bare
         string is rejected rather than iterated into characters.
-    method : {'mfa', 'sqrt_k'}, default 'mfa'
+    method : {'mfa', 'sqrt_k', 'redundancy'}, default 'mfa'
         ``'mfa'`` divides each block by the standard deviation along its own first
         principal direction, after Escofier & Pagès' multiple factor analysis. That is an
         *adaptive* ``1/√k``: it collapses to it for a perfectly correlated block and
         barely touches a loosely correlated one, so a block of eight at r≈0.3 is not
         punished as hard as a block of eight at r≈0.99. ``'sqrt_k'`` is the plain
         size-based version.
-    block_threshold : float, default 0.5
+
+        ``'redundancy'`` needs no blocks at all. Column *j* gets the variance weight
+        ``w_j = 1 / Σ_k ρ²_jk`` over every column (``k`` includes *j*, so ``0 < w_j ≤ 1``
+        and it cannot blow up): an uncorrelated column keeps 1, *n* exact copies get
+        ``1/n`` each and together count as one, and an equicorrelated group's total is
+        its participation ratio — its effective number of independent directions. It is
+        continuous, so partial overlap *across* what a threshold would call separate
+        blocks is discounted too; the price is that an informative column sitting in a
+        crowd of correlated ones is shrunk along with them. See
+        :func:`effective_features` for the per-feature breakdown.
+    block_threshold : float, optional
         Where the feature dendrogram is cut, in ``1 - |r|`` units — see
-        :func:`feature_correlation`, which defines the blocks.
-    linkage_method : str, default 'average'
-        Linkage used to group the features.
+        :func:`feature_correlation`, which defines the blocks. Defaults to ``0.5``.
+        ``'redundancy'`` has no dendrogram and refuses it.
+    linkage_method : str, optional
+        Linkage used to group the features. Defaults to ``'average'``. ``'redundancy'``
+        refuses it.
 
     Returns
     -------
     numpy.ndarray
-        One weight per feature, aligned to ``columns``. Pass to
+        One **multiplier** per feature, aligned to ``columns`` — for ``'redundancy'`` that
+        is ``√w_j``, so column *j* contributes ``w_j`` of its scaled variance. Pass to
         ``ft.space(..., feature_weights=w)`` so the weighting is frozen with the fit and
         applied by ``transform``; multiplying by hand works for a look but leaves the
         weights outside the space, where ``embed`` and ``project`` will skip them.
@@ -234,18 +295,54 @@ def block_weights(
     -----
     Singleton blocks get weight 1.0, so an uncorrelated feature is untouched. A block
     whose leading direction has zero variance (constant features) is also left at 1.0
-    rather than dividing by zero.
+    rather than dividing by zero. ``'redundancy'`` instead gives a constant column 0 —
+    the difference is invisible downstream, since the PCA loads nothing on it either way.
+
+    ``'redundancy'`` specifics:
+
+    - **Pearson, on purpose.** PCA and Euclidean distance see second moments only, and
+      the copies/participation-ratio properties hold for Pearson ρ; a rank correlation
+      would discount monotone redundancy the space never acts on. Correlation ignores
+      the scaler's affine step, so only the per-feature transforms (``ihs``/``log``) and
+      any clipping change it — which is the argument for computing it on the scaled,
+      clipped matrix rather than the raw one.
+    - **Debiased.** Each off-diagonal ``r²`` is replaced by its adjusted form,
+      ``1 - (1 - r²)(n - 1)/(n - 2)``, and the denominator floored at 1. Raw ``r²``
+      averages ``1/(n - 1)`` for independent columns, so every weight would lose
+      ≈ ``(p - 1)/n`` to noise — ~8% for 80 features over 1000 cells.
+    - **"Contributes w_j" assumes unit-variance scaled columns**, which the default
+      ``StandardScaler`` gives. Under a robust scaler or after clipping a column's
+      contribution is ``w_j`` times its own scaled variance; the multiplier composes with
+      the scaler rather than overriding it.
+    - **Weights depend on the whole column set.** Adding a collection changes the
+      weights of the columns already there, since every column enters every denominator.
+    - **Combining with ``alpha``** is not recommended: with every component kept,
+      ``alpha=1`` is Mahalanobis distance, which no per-feature rescaling changes, so the
+      weights would only act through which components the truncation keeps. Weighting
+      also flattens the spectrum, so ``explained_variance=0.95`` retains more components
+      on a weighted space than on the unweighted one.
     """
     features = np.asarray(features, dtype=float)
     names = _feature_names(columns, features.shape[1])
-    if method not in {"mfa", "sqrt_k"}:
-        raise ValueError(f"method must be 'mfa' or 'sqrt_k', got {method!r}")
+    if method not in {"mfa", "sqrt_k", "redundancy"}:
+        raise ValueError(
+            f"method must be 'mfa', 'sqrt_k' or 'redundancy', got {method!r}"
+        )
+
+    if method == "redundancy":
+        if block_threshold is not None or linkage_method is not None:
+            raise ValueError(
+                "method='redundancy' has no feature dendrogram, so block_threshold and "
+                "linkage_method mean nothing to it; drop them"
+            )
+        weights, _ = _redundancy(features)
+        return np.sqrt(weights)
 
     sorted_matrix = feature_correlation(
         features,
         names,
-        block_threshold=block_threshold,
-        linkage_method=linkage_method,
+        block_threshold=0.5 if block_threshold is None else block_threshold,
+        linkage_method="average" if linkage_method is None else linkage_method,
     )
     position = {name: index for index, name in enumerate(names)}
     weights = np.ones(len(names), dtype=float)
@@ -264,6 +361,94 @@ def block_weights(
         if sigma > 0:
             weights[index] = 1.0 / sigma
     return weights
+
+
+def effective_features(
+    features: np.ndarray,
+    columns: Any,
+    *,
+    families: Any = None,
+) -> pl.DataFrame:
+    """How much each feature counts under ``block_weights(method='redundancy')``, and why.
+
+    Parameters
+    ----------
+    features : numpy.ndarray
+        ``(n_cells, n_features)`` **scaled** matrix — the one the space is fit on.
+    columns : sequence of str
+        Feature names, in the column order of ``features``.
+    families : polars.DataFrame or mapping, optional
+        Feature → family. A frame needs ``feature_id`` and ``family`` columns, so
+        ``ft.var`` works as-is; a mapping is ``{feature: family}``. Features it does not
+        cover get a null family.
+
+    Returns
+    -------
+    polars.DataFrame
+        One row per feature, in ``columns`` order: ``feature``, ``family`` (when
+        ``families`` was given), ``variance_weight`` (``w_j``, what the feature counts
+        for), ``multiplier`` (``√w_j``, exactly what ``block_weights`` returns),
+        ``most_correlated`` and ``max_abs_corr`` (the partner that did the most shrinking
+        — the way to spot an informative column demoted for the company it keeps).
+
+    Notes
+    -----
+    The sum of ``variance_weight`` is a readable effective number of features, and the
+    per-family sums say where the redundancy lives:
+
+    >>> ef = effective_features(scaled, names, families=ft.var)          # doctest: +SKIP
+    >>> ef["variance_weight"].sum()                                      # doctest: +SKIP
+    >>> ef.group_by("family").agg(pl.col("variance_weight").sum(),      # doctest: +SKIP
+    ...                           pl.len().alias("n_features"))
+
+    Treat the total as a per-column heuristic, not an identity: it equals the
+    participation ratio ``(tr ρ)² / tr(ρ²)`` for an equicorrelated group and drifts from
+    it otherwise. And a family's sum is not a property of the family alone — every
+    feature in ``columns`` enters every denominator, so the same family sums differently
+    next to different company.
+    """
+    features = np.asarray(features, dtype=float)
+    names = _feature_names(columns, features.shape[1])
+    weights, correlation = _redundancy(features)
+
+    # -1 on the diagonal so a feature is never its own partner; a feature correlating
+    # with nothing (or a lone column) then has no partner rather than itself
+    off = np.abs(correlation)
+    np.fill_diagonal(off, -1.0)
+    partner = off.argmax(axis=1)
+    strongest = off[np.arange(len(names)), partner]
+    has_partner = strongest > 0
+
+    data: dict[str, Any] = {"feature": names}
+    if families is not None:
+        if isinstance(families, pl.DataFrame):
+            missing = {"feature_id", "family"} - set(families.columns)
+            if missing:
+                raise ValueError(
+                    f"families frame needs 'feature_id' and 'family' columns; missing "
+                    f"{sorted(missing)}"
+                )
+            lookup = dict(
+                zip(
+                    families["feature_id"].cast(pl.Utf8).to_list(),
+                    families["family"].to_list(),
+                )
+            )
+        else:
+            lookup = dict(families)
+        data["family"] = [lookup.get(name) for name in names]
+    data["variance_weight"] = weights
+    data["multiplier"] = np.sqrt(weights)
+    data["most_correlated"] = [
+        names[j] if ok else None for j, ok in zip(partner.tolist(), has_partner)
+    ]
+    data["max_abs_corr"] = [
+        float(r) if ok else None for r, ok in zip(strongest, has_partner)
+    ]
+    schema_overrides = {"most_correlated": pl.Utf8, "max_abs_corr": pl.Float64}
+    if "family" in data:
+        schema_overrides["family"] = pl.Utf8
+    return pl.DataFrame(data, schema_overrides=schema_overrides)
 
 
 def tie_report(features: np.ndarray, columns: Any) -> pl.DataFrame:

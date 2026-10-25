@@ -320,6 +320,32 @@ its own first principal direction — Escofier & Pagès' multiple factor analysi
 loosely correlated one, so a block of eight at r≈0.3 isn't punished as hard as a block of
 eight at r≈0.99. `method="sqrt_k"` is the plain size-based version.
 
+`method="redundancy"` drops the dendrogram altogether — no `block_threshold`, no
+linkage. Column *j* counts for `w_j = 1 / Σ_k ρ²_jk` of its variance (the multiplier
+returned is `√w_j`): an uncorrelated column keeps 1, *n* copies get `1/n` each, and an
+equicorrelated group totals its participation ratio. Because it is continuous, partial
+overlap *across* what a threshold would call separate blocks is discounted too; the cost
+is that an informative column in a crowd of correlated ones is shrunk with the crowd.
+`effective_features` shows the bill per feature, with the partner that did the most
+shrinking:
+
+```python
+from cellpax import effective_features
+
+w  = block_weights(scaled, names, method="redundancy")
+ef = effective_features(scaled, names, families=ft.var)
+ef["variance_weight"].sum()                      # effective number of features
+ef.group_by("family").agg(pl.col("variance_weight").sum(), pl.len())
+```
+
+The correlations are Pearson on the scaled matrix — the second moments PCA and Euclidean
+distance actually see — and debiased for sample size: raw `r²` averages `1/(n−1)` for
+unrelated columns, which would cost 80 independent features over 1000 cells ~8% of their
+weight each. Two caveats: a column's weight depends on every other column passed, so a
+family's sum changes with the company it keeps; and "contributes `w_j`" assumes
+unit-variance scaled columns, exact under `StandardScaler` and approximate after a
+robust scaler or a clip.
+
 Two things to watch:
 
 - **Pass the weights to `ft.space(feature_weights=…)`, don't multiply by hand.** Weights
@@ -331,8 +357,44 @@ Two things to watch:
 
 `alpha` and `feature_weights` are independent — weighting is pre-PCA, whitening is
 post-PCA — so they compose, and `label` reports both (`pca(0.95, weighted, alpha=0.5)`).
-Whether either helps is an empirical question; see
+Prefer one or the other: they attack the same redundancy, and with every component kept
+`alpha=1` is Mahalanobis distance, which no per-feature weighting changes. Weighting also
+flattens the spectrum, so `explained_variance=0.95` keeps more components on a weighted
+space than on the plain one. Whether either helps is an empirical question; see
 [Validating a representation](#validating-a-representation).
+
+### Naming a space once: `define_space`
+
+A space is several choices made together: the population it's fit on, the columns, the
+scaling rule, any weights, and the PCA. `define_space` holds them under one name, and every
+`space=` consumer takes the name:
+
+```python
+ft.define_space("joint_z", "embed_qc", columns="zembed",
+                scaler=cpx.identity_scaler_factory())       # this space only
+ft.define_space("exc_ad", "exc_has_axon", columns="ad_exc",
+                weights="redundancy", explained_variance=1.0)
+
+ft.cluster(space="joint_z", ...)                     # mask defaults to embed_qc
+ft.propagate_labels(labels, space="exc_ad")          # to= defaults to exc_has_axon
+ft.spaces                                            # catalog; also in describe()
+```
+
+- **The scaler belongs to the space.** `scaler=None` follows the table's factory, so
+  `set_scaler_factory` and `using_scaler_factory` still apply. A factory given here scales
+  this space alone, so an identity-scaled embedding and a sigma-clipped feature set can
+  live in one table without swapping rules back and forth.
+- **Weights are recomputed per fit.** A `block_weights` method name (`"mfa"`, `"sqrt_k"`,
+  `"redundancy"`) or a `(scaled, columns) -> weights` callable is evaluated on the space's
+  own scaled features, so a weighting never has to be sliced to a different column set.
+  `boost={feature: factor}` multiplies afterwards. A fixed array works too.
+- **Fits are lazy and follow the table.** Redefining the mask, or swapping or overwriting
+  features, drops the cached fit and the next use refits. A mask that a space is declared
+  on can't be dropped until the space is (`drop_space`).
+- **An explicit population is still checked.** Passing `to=` or `mask=` alongside a named
+  space goes through the usual population check; the name only fills in what you left out.
+- **Declarations persist.** A callable weighting is saved as its current weights, since a
+  function can't be stored.
 
 ### Clipping small cohorts
 
@@ -373,12 +435,26 @@ and `load_feature_table(folio, name, scaler_factory=…)` is the load-time form,
 the saved analysis untouched until you save over it. A/B-ing two rules is swap →
 measure → swap back, since refits are lazy and cheap.
 
+For a one-off pass under another rule, `with ft.using_scaler_factory(factory):` swaps
+for the duration of the block and restores the outer rule *and its cached fits* on
+exit. Unlike `set_scaler_factory` it drops nothing: embeddings, clusterings and labels
+made inside the block stay on the table, and remembering which rule made them is on
+you. `save` and `set_scaler_factory` are refused inside the block.
+
+Features that arrive already scaled, such as embedding coordinates, need no scaler at
+all: `FeatureTable(df, features=cols, scaler_factory=identity_scaler_factory())` passes
+them through unchanged, and saves, reloads and freezes like the other factories.
+
 Two things to watch:
 
 - **`n_sigma` is in IQR units, not standard deviations.** `RobustScaler` divides by the
   IQR, and IQR ≈ 1.349σ for a Gaussian, so `n_sigma=5` is about ±6.7 Gaussian σ and will
   clip almost nothing on well-behaved features. A useful sweep is nearer 3–5 than 5–10;
   `clip_comparison`'s `max_abs_sigma` column says how extreme anything actually is.
+  `clipped_scaler_factory(mode="sigma", n_sigma=5.0, base="standard")` z-scores
+  instead, so `n_sigma` means genuine SDs and the clipped columns stay near unit
+  variance. The SD is fit before clipping, so the outliers widen their own bound —
+  negligible at thousands of cells. It freezes and persists like the robust form.
 - **While the percentile rule is in use, report the clip percentile against the smallest
   cluster you resolve.** At 0.1% on 21,000 cells the bound sits at ~21 cells against a
   `min_cluster_size=100` cut — clear. On a 3,000-cell cohort cut at `min_cluster_size=10`
@@ -947,6 +1023,7 @@ result = ft.propagate_labels(core, to="exc", columns="stable", n_neighbors=30)
 result.labels             # a LabelSet over all of "exc", named subclass_nn
 result.confidence         # neighbor-vote share behind each cell's label
 result.self_agreement()   # how often the vote reproduces a known core label
+result.recovery.by_label()  # the same, per label, worst first, with top confusion
 result.frame()            # cell_id + name + id + confidence
 ft.attach(result.labels)  # nothing is attached until you say so
 ```
@@ -1605,7 +1682,8 @@ propagates exactly as before.
   including features whose raw ratios were 1000×. Clip first: `quantile_scaler_factory`
   does by default.
 - Anything with an `inverse_transform` works. `StandardScaler`, `RobustScaler`,
-  `clipped_scaler_factory()` and `quantile_scaler_factory()` all round-trip through
+  `clipped_scaler_factory()`, `quantile_scaler_factory()` and
+  `identity_scaler_factory()` all round-trip through
   `save`/`load`. Any other scaler works in a session, but `join_datasets` warns that
   `save` will refuse it.
 
@@ -1701,6 +1779,251 @@ warning. Same-named clusters merge. Embeddings, clusterings and spaces do not ca
 since they were computed in the per-dataset spaces. One caveat when viewing the result:
 a `root_id` column now mixes ids from different volumes, so a neuroglancer link needs the
 right segmentation for each dataset.
+
+## Semi-aligned clustering
+
+Sometimes the features that separate types best are exactly the ones the batch effect
+distorts, and the embedding that aligns the datasets (a shared autoencoder latent, say)
+is blurrier than the features it came from. Then neither choice works on its own:
+clustering in the aligned embedding loses fine structure, and clustering in the
+features finds the datasets.
+
+The way out is to use each space for what it is good at. Cluster **each dataset in its
+own features**, then use the aligned embedding only as a **bridge**, to ask whether a
+partition found in one dataset reappears in the other. This is prediction strength
+(Tibshirani & Walther 2005) with a kNN vote in the bridge as the transfer:
+
+```python
+res = np.geomspace(0.05, 20, 14)            # sweep wide: see "Choosing the grain"
+c1 = ft.cluster("microns_inh", columns=A, resolution=res, n_times=3, pca=False)
+c2 = ft.cluster("v1dd_inh", columns=A, resolution=res, n_times=3, pca=False)
+
+bridge = ft.transfer_bridge(
+    "microns_inh", "v1dd_inh",             # the two masks that were clustered
+    columns=Z,                              # the aligned embedding
+    strata="cell_subclass",                 # optional: score the split *inside* each
+)
+grain = bridge.score_runs(c1, c2)           # every stored run pair at matching grain
+grain.curve()                               # readings pooled by grain
+grain.suggest_band()                        # the grain to cut each dataset at
+```
+
+`a` and `b` are masks, one population per dataset. A joined table already has one mask
+per dataset, named after it. Each mask's own scaling is the one its clustering used.
+The bridge columns are scaled once over both populations together. Don't add `Z` to the
+clustering columns: a partition shaped by the bridge carries through it trivially.
+
+Each mask's own scaling draws the null, unless `spaces={mask: space}` hands over the
+spaces the clusterings actually ran in (a block-weighted `ft.space(mask,
+feature_weights=…)`, say). Cells that lack bridge values are fine: they're clustered in
+their own features like any other cell. The bridge leaves them out, warns with the
+share, and ignores them when it aligns a clustering. Below `min_bridged` of a population
+(default 0.8), readings over the covered cells can't stand for it, so it raises.
+`bridge.bridged_fraction()` reports the coverage. Check *where* the missing cells are as
+well: coverage concentrated in some types or areas biases every reading toward the rest.
+
+`score_runs` reads the stored Leiden runs (`clus.partitions`) and never rebuilds a
+consensus matrix. The bridge's vote matrices are built once, so carrying any partition
+across is one sparse product. That makes the whole sweep cheap at tens of thousands of
+cells. Runs are paired by *realized* cluster count (`band_ratio=`), not by resolution,
+because the same resolution gives different grains at different dataset sizes. So the
+answer is a resolution band *per dataset*.
+
+### What each reading measures
+
+`excess` = `ami − null_ami`
+:   Agreement beyond chance. The null is random Voronoi tessellations at the same
+    realized counts, drawn independently in each dataset's own features and scored by
+    exactly the same estimator.
+
+`efficiency` = `ami / ceiling`
+:   Whether a shortfall is the bridge's fault. The ceiling carries the *same* partition
+    through the bridge inside its own dataset, leaving each cell out, so there is no
+    batch effect. A blurry bridge loses fine splits there too. Efficiency near one means
+    the cross-dataset carry lost no more than the bridge loses within one dataset.
+
+`strata_ami` / `strata_excess`
+:   Agreement within each stratum, size-weighted, and its excess over the null's. This
+    asks whether the subdivision *inside* a subclass reproduces, independent of the
+    subclasses themselves.
+
+`n_reproduces` / `reproduces_excess`
+:   Clusters (of both partitions) that reproduce, and that count over the null's. See
+    the verdicts below.
+
+### Verdicts: what each cluster's correspondence is
+
+Global AMI is carried by whatever coarse structure two partitions share, so one fine
+split that fails barely moves it. The per-cluster reading does see it. Score one pair
+to see it cluster by cluster:
+
+```python
+score = bridge.score_labels(c1_labels, c2_labels)
+score.clusters      # per cluster, per direction: purity, ceiling_purity, verdict
+score.verdicts()    # counts per verdict
+```
+
+A cluster is judged on two soft purities. `ceiling_purity` is how cleanly the bridge
+recovers it inside its own dataset. Efficiency is its purity in the other dataset
+divided by that ceiling. The thresholds live in `VerdictRule`:
+
+Each verdict is checked in **both directions**. A one-sided purity would reward
+over-splitting: two halves of a type the other dataset keeps whole would each land
+cleanly inside it and both "reproduce".
+
+| verdict | reading |
+|---|---|
+| `reproduces` | A mutual best match that clears ceiling ≥ 0.6 and efficiency ≥ 0.85 *both ways*. A one-to-one anchor. |
+| `weak` | As above, with one or both directions only clearing 0.7. |
+| `nested` | Lands cleanly in one cluster across, but that cluster's best match isn't it. It's part of something the other dataset keeps whole. |
+| `split` | Its image is impure, but mostly covered by two or more clusters across that each nest in it. The other dataset subdivides it. |
+| `refuted` | The bridge resolves it, the other dataset doesn't have it, and it isn't a split. |
+| `unverifiable` | The bridge can't see it even within its own dataset. |
+| `absent` | No counterpart cells: a type the other dataset lacks. |
+
+**Unverifiable is not support.** The bridge is trained to align the datasets, so it
+discards variation specific to one of them. That is exactly where splits driven by
+batch effects, truncation or proofreading would sit. Unverifiable clusters stay
+dataset-specific, and `suggest_names` never gives them a shared name. The headline
+shares (`reproduce_share`, `anchored_share`, `anchored_cells`) count them in the
+denominator, so a cut whose splits the bridge mostly can't see never reads as one that
+mostly reproduces.
+
+### Anchors: aligned names across the two spaces
+
+`score.anchors()` turns the verdicts into proposed correspondences, the thing to name:
+
+```python
+score = bridge.score_labels(labels_a, labels_b)
+score.anchors()   # kind, support, a, b, n_a, n_b, efficiency_ab, efficiency_ba
+```
+
+- **`one-to-one`:** a mutual best match passing both ways.
+- **`split`:** a cluster and the several clusters across that subdivide it.
+- **`nested`:** a cluster inside one across that draws its edges differently.
+
+Anchors are proposals. The grain, the cuts and the names stay decisions made with
+priors, and the null's licence is limited. It compares against two *unrelated* smooth
+partitions, so an anchor names a region of the shared space that both datasets carve
+out. It doesn't prove a discrete boundary there: two datasets slicing the same gradient
+anchor too. The run-pair standard errors also reflect Leiden seeds only, not cell
+resampling or the bridge embedding's own variability, so the band they give is narrower
+than the real uncertainty.
+
+For a cleaner read, split each dataset spatially (a checkerboard in x and z keeps every
+layer and area in both halves). Make the choices on `transfer_bridge(..., mask=half0)`,
+then read the verdicts and anchors from `mask=half1`. Cells outside a bridge's mask are
+held out, not rejected, so the same whole-population clustering scores on either half.
+With `mutual=True` (the default), only cross edges that both ends name vote. That's what
+lets the cells of a missing type abstain instead of being forced onto a neighbour.
+
+### Choosing the grain
+
+**Don't pick the peak of `ami` or `excess`.** On real data both peak at the coarsest
+split the datasets share and fall from there. Two random fine tessellations of the same
+cells share more and more information as `k` grows, so the null climbs too. Two readings
+follow fine structure instead:
+
+- `reproduces_excess` counts one-to-one reproductions over the null's. It rises while
+  finer splits keep reproducing, and turns over once new splits are mostly nested,
+  unverifiable or refuted. `anchored_cells` is the share of cells in any anchor, which is
+  the reading to watch when the goal is aligned names.
+- `strata_excess` asks the same of the subdivision inside each stratum.
+
+`curve()` and `suggest_band()` pool only each run's best correspondence by AMI
+(`grain.matched()`), not every pair within `band_ratio`. A ratio wide enough for one
+dataset to resolve an extra type also admits mismatched pairings, such as seven
+clusters against fourteen, which can only nest. `suggest_band()` applies the
+one-standard-error rule to that curve: the peak bin, plus every bin within one SE of it. It returns the band's realized counts and each
+dataset's resolution range, which feed `restrict(resolution_max=…)` per dataset. If the
+band touches the finest or coarsest grain scored, `at_edge` says so and it warns. That
+means the curve hasn't turned over yet, so extend the sweep before reading the band as a
+peak.
+
+On MICrONS vs V1DD inhibitory cells (axon + dendrite features, a 16-D autoencoder latent
+as the bridge), reproducing clusters beyond the null climbed until grain ≈25–30 and fell
+from there. Within-subclass excess peaked a little coarser, at ≈18–20. Clustering in the
+latent itself scored higher ceilings but got many more clusters *refuted*. The latent
+keeps some structure specific to each dataset, and clustering in it picks that up.
+
+### Pairing grains: a band in one dataset, its complement in the other
+
+`suggest_band` says where reproducibility peaks. Usually, though, you choose a band in
+one dataset (by realized cluster count, as with `restrict`, or by resolution) and want
+the band in the other dataset that *corresponds* to it:
+
+```python
+grain = bridge.score_runs(c1, c2, band_ratio=2.0)   # let unequal counts compete
+grain.pairs()                                        # (resolution_a, resolution_b), pooled over seeds
+comp = grain.complement("microns_inh", n_clusters_min=4, n_clusters_max=12)
+comp["resolution_v1dd_inh"], comp["tolerant_resolution_v1dd_inh"], comp["ridge"]
+```
+
+For each resolution of your band, `complement` finds the other dataset's resolution
+whose runs agree with it best. That's the *ridge*. The complementary band spans those
+best partners, and the tolerant band spans every partner within one SE of each best. It
+warns if the complement reaches the edge of the other sweep, or if partners press against
+`band_ratio`: score with `band_ratio=2` so a dataset that resolves one more type can still
+pair.
+
+The match is judged on `ami`, not on the grain readings. Choosing *which* partner
+corresponds and choosing *how fine* to cut are different questions, and the grain
+readings are biased for the first. `excess` subtracts a null that rises with the
+partner's cluster count, so it pulls every match coarse. The verdict counts grow with
+cluster count, so they pull fine. On MICrONS/V1DD inhibitory cells, AMI's partners
+tracked matched structure (partner k ≈ own k from 4 to 34). `excess` stuck at 5, 9 and
+22, and `reproduces_excess` chose partners twice as fine.
+
+The resolution bounds are an upper bound on grain, not the cut itself. Once the minimum
+is locked, `restrict` keeps every run up to the maximum and the hierarchy cut decides
+the grain. So score the two *cuts* with `score_labels` before adopting the pairing.
+
+### Scoring the consensus cut
+
+The band says where to cut. `score_consensus` checks the cut itself. It narrows each
+clustering to its band's runs, locking the resolution floor and taking the ceiling from
+the band, then cuts the re-consensed hierarchy at every `nested_labels` level. It scores
+the level pairs exactly as runs are scored:
+
+```python
+band = grain.suggest_band()
+cuts = bridge.score_consensus(c1, c2, band=band, n_levels=10)
+cuts.frame.select("level_a", "level_b", "k_a", "k_b", "reproduces_excess", "strata_excess")
+```
+
+A consensus cut should reproduce at least as well as the runs it averages. Each
+`restrict` rebuilds a consensus matrix, so the two sides are built one at a time.
+
+### Refining the vote in the target's own features
+
+A blurry bridge misplaces cells near boundaries the target's own features draw sharply.
+`refine_columns=` turns the bridge vote into a prior and diffuses it over the receiving
+population's kNN graph in those features, by label spreading
+(`F ← α·T·F + (1 − α)·F₀`, `refine_alpha=0.5`):
+
+```python
+bridge = ft.transfer_bridge("microns_inh", "v1dd_inh", columns=Z, refine_columns=A)
+```
+
+Diffusion over the target's graph pulls *any* labelling toward that graph's structure.
+It's applied identically to real partitions and the null, so `excess` stays comparable.
+It is never applied to the ceiling. There it would hand each cell's own label back
+through its neighbours, over nearly the graph its clusters came from, and the ceiling
+would stop being leave-one-out. So with refinement on, efficiency compares the refined
+carry against what the bridge *alone* recovers, and verdicts become more lenient. Use
+refinement to explore, not for the anchors you report. Cells the bridge gave no vote stay abstained:
+refinement sharpens, but it never extends coverage onto a type the other dataset lacks.
+
+`refine_alpha` sets a diffusion length, roughly `α / (1 − α)` graph steps, that doesn't
+shrink with grain. Too large a value smooths small clusters into their neighbours and
+biases the band coarser. On MICrONS/V1DD inhibitory cells, `0.5` raised within-subclass
+excess at every grain and left the fine-grain verdict counts where they were without
+refinement. `0.8` raised within-subclass excess further, but lost about a quarter of
+the reproducing clusters from k≈23 up, so its band came out much coarser. Within-subclass
+excess rises with `α` either way, so let the verdict counts choose it.
+
+`null="kmeans"` is a competitor, not a null. On genuinely discrete types k-means finds
+them too, so excess over it means "beats the simplest partitioner", not "is real".
 
 ## Persistence
 
