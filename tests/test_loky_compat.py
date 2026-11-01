@@ -18,8 +18,17 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 import cellpax_loky_compat
 from cellpax_loky_compat import _to_legacy
+
+# Where the stdlib still speaks the old format (CPython < 3.13.10), apply() stands
+# down by design, so the tests that exercise the patched path have nothing to test.
+needs_shim = pytest.mark.skipif(
+    not cellpax_loky_compat._needs_patch(),
+    reason="this interpreter's tracker format needs no shim",
+)
 
 
 def _run(body: str, **env_extra: str) -> subprocess.CompletedProcess[str]:
@@ -106,6 +115,7 @@ class TestApply:
         )
         assert cellpax_loky_compat._needs_patch() is False
 
+    @needs_shim
     def test_warns_if_the_tracker_is_already_running(self):
         """A late import cannot fix a server that is already up -- say so."""
         out = _run(
@@ -122,6 +132,7 @@ class TestApply:
         )
         assert out.stdout.strip() == "True", out.stderr
 
+    @needs_shim
     def test_importing_cellpax_applies_it(self):
         out = _run(
             """
@@ -154,6 +165,7 @@ _REFCOUNT_PROBE = """
 """
 
 
+@needs_shim
 def test_refcounted_folder_cleanup():
     """The whole point: refcounts survive translation, so folders get unlinked.
 
