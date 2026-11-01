@@ -5018,7 +5018,6 @@ class FeatureTable:
         distance_threshold: float | None = None,
         min_cluster_size: int = 1,
         n_neighbors: int = 15,
-        density: str = "knn",
         space: FittedSpace | str | None = None,
         **thresholds: float,
     ) -> pl.DataFrame:
@@ -5051,8 +5050,6 @@ class FeatureTable:
             Minimum cluster size for a generated cut.
         n_neighbors : int, default=15
             Neighborhood size for connectivity and density evidence.
-        density : str, default="knn"
-            Density estimator used by the boundary analysis.
         space : FittedSpace or str, optional
             Explicit geometry when it cannot be reconstructed.
         **thresholds : float
@@ -5143,7 +5140,6 @@ class FeatureTable:
             max_value=clustering.max_value,
             names=names,
             n_neighbors=n_neighbors,
-            density=density,
             **thresholds,
         )
 

@@ -27,9 +27,7 @@ fail differently, reported side by side per cluster pair:
     against the pair's weaker density peak. Near 0 is a deep valley or no
     contact at all; near 1 means the boundary runs through terrain as dense
     as the clusters themselves — the "northwest corner vs southwest corner"
-    signature. With the optional ``dadapy`` extra, ``density="pak"`` swaps
-    the proxy for the point-adaptive kNN estimator (Rodriguez et al.), the
-    density that Advanced Density Peaks clustering merges on.
+    signature.
 
 ``cocluster_cross_mean`` / ``cocluster_band``
     From the consensus matrix, when one is supplied: the mean co-clustering
@@ -70,23 +68,6 @@ def _knn_density(features: np.ndarray, n_neighbors: int) -> np.ndarray:
     return 1.0 / np.maximum(radius, np.finfo(float).tiny)
 
 
-def _pak_density(features: np.ndarray) -> np.ndarray:
-    """Point-adaptive kNN log-density via the optional dadapy extra."""
-    try:
-        from dadapy import Data
-    except ImportError as error:
-        raise ImportError(
-            "density='pak' needs the optional 'dadapy' package; install the "
-            "commit-pinned extra: pip install 'cellpax[dadapy]'"
-        ) from error
-    data = Data(np.ascontiguousarray(features, dtype=float), verbose=False)
-    data.compute_density_PAk()
-    log_den = np.asarray(data.log_den, dtype=float)
-    # densities enter the valley statistic only through ratios of exp(log_den);
-    # subtracting the max keeps the exponentials finite
-    return np.exp(log_den - log_den.max())
-
-
 def _knn_graph_edges(features: np.ndarray, n_neighbors: int) -> csr_matrix:
     """Symmetrised unweighted kNN adjacency (union rule), no self edges."""
     from sklearn.neighbors import kneighbors_graph
@@ -106,7 +87,6 @@ def boundary_report(
     max_value: float = 1.0,
     names: dict[int, str] | None = None,
     n_neighbors: int = 15,
-    density: str = "knn",
     min_cells: int = 10,
     dip_alpha: float = 0.05,
     valley_deep: float = 0.5,
@@ -138,10 +118,6 @@ def boundary_report(
         Neighbourhood size for both the density proxy and the cross-edge
         graph. The verdict should be checked at more than one value before
         being believed; it is a resolution parameter like any other.
-    density : {'knn', 'pak'}, default 'knn'
-        ``'knn'`` is the in-library inverse k-th-neighbour-distance proxy;
-        ``'pak'`` is dadapy's point-adaptive estimator (optional extra),
-        better calibrated when density varies across the population.
     min_cells : int, default 10
         Pairs where either cluster is smaller than this are reported with
         null statistics rather than silently dropped.
@@ -157,8 +133,6 @@ def boundary_report(
         ``valley_ratio``): sizes, the evidence columns, per-leg votes, and
         ``verdict``.
     """
-    if density not in {"knn", "pak"}:
-        raise ValueError(f"density must be 'knn' or 'pak', got {density!r}")
     import diptest as _diptest
 
     features = np.asarray(features, dtype=float)
@@ -169,11 +143,7 @@ def boundary_report(
     if len(clusters) < 2:
         raise ValueError("boundary_report needs at least two clusters")
 
-    rho = (
-        _knn_density(features, n_neighbors)
-        if density == "knn"
-        else _pak_density(features)
-    )
+    rho = _knn_density(features, n_neighbors)
     adjacency = _knn_graph_edges(features, n_neighbors)
     degrees = np.asarray(adjacency.sum(axis=1)).ravel()
     total_edges = adjacency.nnz / 2.0

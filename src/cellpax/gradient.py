@@ -77,7 +77,7 @@ def twonn_profile(
     that scale.
 
     This is a decimation proxy, not a scale-dependent estimator. For the real
-    thing (GRIDE) use the optional ``dadapy`` package.
+    thing (GRIDE) use the external ``dadapy`` package.
 
     Parameters
     ----------
@@ -149,7 +149,7 @@ def twonn_dimension(features: np.ndarray, *, decimation_levels: int = 4) -> floa
     borderline call. See :func:`twonn_profile` for the per-scale estimates this
     collapses, which are the more informative read.
 
-    For real scale-dependent analysis (GRIDE) use the optional ``dadapy``
+    For real scale-dependent analysis (GRIDE) use the external ``dadapy``
     package; this exists to gate ``parametrize``, not to settle dimensionality
     questions.
 

@@ -288,8 +288,7 @@ bridge to foreign data models rather than depending on them.
   *cut through one thing* — Hartigan's dip on the centroid axis (via the new
   `diptest` dependency), kNN cross-edge connectivity against the configuration
   null (the PAGA statistic, implemented in-library), saddle-to-peak density along
-  the boundary (in-library kNN proxy, or dadapy's PAk estimator via
-  `density="pak"`), and the consensus co-clustering profile (cross mean + the
+  the boundary (in-library kNN proxy), and the consensus co-clustering profile (cross mean + the
   intermediate-frequency band — the ensemble's own read, available nowhere else).
   Per-leg votes and a majority `verdict` (`discrete` / `continuous` /
   `ambiguous`); the columns are the result, the verdict is a summary. The table
@@ -313,9 +312,6 @@ bridge to foreign data models rather than depending on them.
   pinned: after z-scoring, a binary cluster-separating feature carries *less*
   neighbourhood information than a continuous coordinate — "separates my
   clusters" and "carries neighbourhood information" are different claims.
-- **Added the `dadapy` optional extra**, pinned to a commit: the 0.3.4 PyPI wheel
-  still declares `numpy<2.0` and an exact jax pin, while the repo has since
-  unpinned both — the extra moves to `dadapy>=0.3.5` when a fixed release exists.
 - `diptest` becomes a core dependency (small, C-backed, maintained).
 
 ## Unreleased — validity domains

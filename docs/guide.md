@@ -636,7 +636,6 @@ report.filter(pl.col("verdict") == "continuous")
 - **`valley_ratio`** — saddle-to-peak density along the boundary. Near 0 is a
   gap; near 1 means the boundary runs through terrain as dense as the
   clusters themselves — the "northwest corner vs southwest corner" signature.
-  `density="pak"` upgrades the estimator via the optional `dadapy` extra.
 - **`cocluster_cross_mean` / `cocluster_band`** — the ensemble's own read,
   from the consensus matrix: a real gap has its cross-pair co-clustering mass
   pinned near zero, while a cut continuum shows a *band* of intermediate

@@ -119,13 +119,6 @@ def test_it_refuses_a_single_cluster() -> None:
         boundary_report(features, np.zeros(features.shape[0], dtype=int))
 
 
-def test_pak_density_needs_the_extra_or_a_clear_error() -> None:
-    pytest.importorskip("dadapy")
-    features, codes = _two_gaps(120)
-    report = boundary_report(features, codes, density="pak")
-    assert report.row(0, named=True)["verdict"] == "discrete"
-
-
 # -- the table wrapper ------------------------------------------------------------
 
 
